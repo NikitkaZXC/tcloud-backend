@@ -2,7 +2,7 @@
 
 ## Проект
 
-TCloud — pet-проект: хранилище медиа в приватных Telegram-каналах через Telethon + FastAPI + PostgreSQL, всё в Docker.
+TCloud — хранилище медиа в приватных Telegram-каналах через Telethon + FastAPI + PostgreSQL, всё в Docker.
 **Источник правды — [`docs/TZ.md`](docs/TZ.md).** Код в `tcloud/` — устаревший прототип (Pyrogram/SQLite/шифрование), подлежит переписыванию под ТЗ.
 
 ## Правила работы
