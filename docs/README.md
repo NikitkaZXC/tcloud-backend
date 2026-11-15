@@ -1,0 +1,36 @@
+# Документация tcloud
+
+Хранилище медиа поверх Telegram: файлы лежат в приватных каналах (хранилищах), у каждого файла свой UUID
+и путь `tcloud/{uuid хранилища}/{папки}/{файл}`, всё управляется через REST API.
+
+Краткое описание и быстрый старт — в [`../README.md`](../README.md). Правила для Claude Code — в [`../CLAUDE.md`](../CLAUDE.md).
+Исходное техническое задание — [TZ.md](TZ.md).
+
+## Содержание
+
+### Основы
+
+| Документ | О чём |
+|---|---|
+| [overview.md](overview.md) | что делает сервис, словарь терминов, главные правила |
+| [architecture.md](architecture.md) | слои, папки, сервисы, репозитории, фабрики, транзакции, соглашения по коду |
+| [database.md](database.md) | таблицы, индексы и зачем они, миграции |
+| [security.md](security.md) | API-ключ, проверка файлов, ClamAV, SSRF, контейнер, секреты |
+| [integrations.md](integrations.md) | Telegram (Telethon) и его лимиты, ClamAV, исходящий HTTP |
+| [background-tasks.md](background-tasks.md) | конвейер загрузки, стадии, лимиты, диск, FloodWait, повторы, вебхуки |
+
+### Работа с проектом
+
+| Документ | О чём |
+|---|---|
+| [development.md](development.md) | установка, запуск локально, команды `make`, миграции, форматирование, зависимости |
+| [deployment.md](deployment.md) | Docker-образ, compose для прода, вход в Telegram, обновление |
+| [testing.md](testing.md) | unit, integration, API и нагрузочные тесты |
+
+### Процессы
+
+| Документ | О чём |
+|---|---|
+| [flows/storages.md](flows/storages.md) | хранилища: создание, подключение из `.env`, название, описание, фото |
+| [flows/folders-and-files.md](flows/folders-and-files.md) | пути, папки, метаданные, скачивание с Range, удаление |
+| [flows/uploads.md](flows/uploads.md) | загрузка с устройства, по ссылке, пачками; `send_as`, `on_conflict`, прогресс |

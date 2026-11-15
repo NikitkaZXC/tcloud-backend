@@ -1,0 +1,46 @@
+name: tcloud-dev
+
+services:
+  postgres:
+    image: postgres:18
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-tcloud}
+      POSTGRES_USER: ${POSTGRES_USER:-tcloud}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-tcloud}
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 2s
+      retries: 30
+
+  clamav:
+    image: clamav/clamav:1.5.4-debian
+    ports:
+      - "127.0.0.1:3310:3310"
+    volumes:
+      - clamdb:/var/lib/clamav
+      - ./docker/clamd.conf:/etc/clamav/clamd.conf:ro
+
+  app:
+    profiles: [app]
+    build: .
+    env_file: .env
+    environment:
+      POSTGRES_HOST: postgres
+      CLAMAV_HOST: clamav
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - session:/data/session
+      - tmp:/data/tmp
+    depends_on:
+      postgres: {condition: service_healthy}
+
+volumes:
+  pgdata:
+  session:
+  tmp:
+  clamdb:

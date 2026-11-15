@@ -1,0 +1,48 @@
+name: tcloud
+
+services:
+  app:
+    build: .
+    image: tcloud:latest
+    env_file: .env
+    environment:
+      POSTGRES_HOST: postgres
+      CLAMAV_HOST: clamav
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - session:/data/session
+      - tmp:/data/tmp
+    read_only: true
+    tmpfs: [/tmp]
+    depends_on:
+      postgres: {condition: service_healthy}
+      clamav: {condition: service_started}
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:18
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-tcloud}
+      POSTGRES_USER: ${POSTGRES_USER:-tcloud}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      retries: 10
+    restart: unless-stopped
+
+  clamav:
+    image: clamav/clamav:1.5.4-debian
+    volumes:
+      - clamdb:/var/lib/clamav
+      - ./docker/clamd.conf:/etc/clamav/clamd.conf:ro
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  session:
+  tmp:
+  clamdb:

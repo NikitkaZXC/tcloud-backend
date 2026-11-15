@@ -1,0 +1,317 @@
+import asyncio
+import os
+from collections.abc import AsyncIterator, Callable
+from functools import wraps
+from pathlib import Path
+
+from loguru import logger
+from telethon import TelegramClient as TelethonClient
+from telethon import errors, functions, helpers, types, utils
+
+from src.infrastructure.enums import MediaKind
+from src.infrastructure.integrations.telegram.exception import (
+    ChannelCheckError,
+    TelegramError,
+    TelegramFloodWaitError,
+    TelegramMessageGoneError,
+    TelegramUnavailableError,
+)
+from src.infrastructure.integrations.telegram.schemas import ChannelInfo, SentFile
+from src.infrastructure.limits import BATCH, BIG_FILE, CHUNK, FLOOD_SLEEP_THRESHOLD
+from src.infrastructure.media import Media
+
+TRANSIENT = (
+    ConnectionError,
+    OSError,
+    TimeoutError,
+    errors.ServerError,
+    errors.TimedOutError,
+    errors.RpcCallFailError,
+    errors.FilePartMissingError,
+)
+
+
+def translate_errors(method):
+    @wraps(method)
+    async def wrapper(*args, **kwargs):
+        try:
+            return await method(*args, **kwargs)
+        except errors.FloodWaitError as error:
+            raise TelegramFloodWaitError(error.seconds) from error
+        except TRANSIENT as error:
+            raise TelegramUnavailableError(
+                str(error) or type(error).__name__
+            ) from error
+        except errors.RPCError as error:
+            raise TelegramError(str(error)) from error
+
+    return wrapper
+
+
+class TelegramClient:
+    def __init__(
+        self, session: Path, api_id: int, api_hash: str, upload_workers: int = 4
+    ) -> None:
+        self.upload_workers = upload_workers
+        session.parent.mkdir(parents=True, exist_ok=True)
+        self._client = TelethonClient(
+            str(session),
+            api_id,
+            api_hash,
+            flood_sleep_threshold=FLOOD_SLEEP_THRESHOLD,
+            device_model="tcloud",
+            receive_updates=False,
+        )
+
+    async def start(self) -> None:
+        await self._client.connect()
+        if not await self._client.is_user_authorized():
+            raise RuntimeError("Telegram session is not authorized: run `make login`")
+        me = await self._client.get_me()
+        if me.bot:
+            raise RuntimeError(
+                "tcloud needs a user account: bots cannot create channels"
+            )
+        logger.info(
+            "Telegram: logged in as {} (premium={})",
+            me.username or me.id,
+            bool(me.premium),
+        )
+
+    async def stop(self) -> None:
+        await self._client.disconnect()
+
+    def connected(self) -> bool:
+        return self._client.is_connected()
+
+    @translate_errors
+    async def is_premium(self) -> bool:
+        return bool((await self._client.get_me()).premium)
+
+    async def _entity(self, chat_id: int):
+        try:
+            return await self._client.get_entity(chat_id)
+        except ValueError:
+            await self._client.get_dialogs()
+            return await self._client.get_entity(chat_id)
+
+    @translate_errors
+    async def create_channel(self, title: str, about: str) -> int:
+        result = await self._client(
+            functions.channels.CreateChannelRequest(
+                title=title, about=about, broadcast=True
+            )
+        )
+        return utils.get_peer_id(result.chats[0])
+
+    @translate_errors
+    async def check_channel(self, chat_id: int) -> None:
+        try:
+            channel = await self._entity(chat_id)
+        except ValueError as error:
+            raise ChannelCheckError(
+                f"channel {chat_id} is not available: {error}"
+            ) from error
+        if not isinstance(channel, types.Channel) or not channel.broadcast:
+            raise ChannelCheckError(f"{chat_id} is not a channel")
+        if channel.username or channel.usernames:
+            raise ChannelCheckError(f"channel {chat_id} is public (has a username)")
+        rights = channel.admin_rights
+        if not (
+            channel.creator
+            or (
+                rights
+                and rights.post_messages
+                and rights.delete_messages
+                and rights.change_info
+            )
+        ):
+            raise ChannelCheckError(
+                f"need admin rights to post, delete messages and change info in {chat_id}"
+            )
+
+    @translate_errors
+    async def channels(self, chat_ids: list[int]) -> dict[int, ChannelInfo]:
+        found = {}
+        for chat_id in chat_ids:
+            try:
+                channel = await self._entity(chat_id)
+                full = await self._client(
+                    functions.channels.GetFullChannelRequest(channel)
+                )
+            except errors.FloodWaitError:
+                raise
+            except (ValueError, errors.RPCError) as error:
+                logger.warning("Telegram channel {} is unavailable: {}", chat_id, error)
+                continue
+            has_photo = not isinstance(channel.photo, types.ChatPhotoEmpty)
+            found[chat_id] = ChannelInfo(
+                channel.title, full.full_chat.about or "", has_photo
+            )
+        return found
+
+    @translate_errors
+    async def edit_title(self, chat_id: int, title: str) -> None:
+        try:
+            await self._client(
+                functions.channels.EditTitleRequest(await self._entity(chat_id), title)
+            )
+        except errors.ChatNotModifiedError:
+            pass
+
+    @translate_errors
+    async def edit_about(self, chat_id: int, about: str) -> None:
+        try:
+            await self._client(
+                functions.messages.EditChatAboutRequest(
+                    await self._entity(chat_id), about
+                )
+            )
+        except errors.ChatAboutNotModifiedError:
+            pass
+
+    @translate_errors
+    async def set_photo(self, chat_id: int, path: Path) -> None:
+        uploaded = await self._client.upload_file(str(path))
+        photo = types.InputChatUploadedPhoto(file=uploaded)
+        await self._client(
+            functions.channels.EditPhotoRequest(await self._entity(chat_id), photo)
+        )
+
+    @translate_errors
+    async def delete_photo(self, chat_id: int) -> None:
+        try:
+            await self._client(
+                functions.channels.EditPhotoRequest(
+                    await self._entity(chat_id), types.InputChatPhotoEmpty()
+                )
+            )
+        except errors.ChatNotModifiedError:
+            pass
+
+    @translate_errors
+    async def photo(self, chat_id: int) -> bytes | None:
+        return await self._client.download_profile_photo(
+            await self._entity(chat_id), file=bytes
+        )
+
+    @translate_errors
+    async def send(
+        self,
+        chat_id: int,
+        path: Path,
+        *,
+        name: str,
+        caption: str,
+        media: Media,
+        as_file: bool,
+        thumb: Path | None,
+        progress: Callable[[int, int], None],
+    ) -> SentFile:
+        attributes = [types.DocumentAttributeFilename(name)]
+        if not as_file:
+            if media.kind == MediaKind.VIDEO:
+                attributes.append(
+                    types.DocumentAttributeVideo(
+                        duration=media.duration or 0,
+                        w=media.width,
+                        h=media.height,
+                        supports_streaming=True,
+                    )
+                )
+            elif media.kind == MediaKind.AUDIO:
+                attributes.append(
+                    types.DocumentAttributeAudio(
+                        duration=int(media.duration or 0),
+                        title=media.title,
+                        performer=media.performer,
+                    )
+                )
+            elif media.kind == MediaKind.ANIMATION:
+                attributes.append(types.DocumentAttributeAnimated())
+        handle = await self.upload(path, progress)
+        message = await self._client.send_file(
+            await self._entity(chat_id),
+            handle,
+            caption=caption,
+            force_document=as_file,
+            attributes=attributes,
+            thumb=str(thumb) if thumb else None,
+            supports_streaming=not as_file,
+            silent=True,
+        )
+        file = message.file
+        return SentFile(message.id, file.size, file.mime_type, file.width, file.height)
+
+    async def upload(
+        self, path: Path, progress: Callable[[int, int], None]
+    ) -> types.TypeInputFile:
+        size = path.stat().st_size
+        parts = max(1, -(-size // CHUNK))
+        big = size > BIG_FILE
+        file_id = helpers.generate_random_long()
+        queue = iter(range(parts))
+        done = 0
+        descriptor = os.open(path, os.O_RDONLY)
+
+        async def worker() -> None:
+            nonlocal done
+            for part in queue:
+                data = os.pread(descriptor, CHUNK, part * CHUNK)
+                if big:
+                    request = functions.upload.SaveBigFilePartRequest(
+                        file_id, part, parts, data
+                    )
+                else:
+                    request = functions.upload.SaveFilePartRequest(file_id, part, data)
+                if not await self._client(request):
+                    raise TelegramError(
+                        f"Telegram did not accept part {part} of {path.name}"
+                    )
+                done += len(data)
+                progress(done, size)
+
+        try:
+            async with asyncio.TaskGroup() as group:
+                for _ in range(min(self.upload_workers if big else 1, parts)):
+                    group.create_task(worker())
+        except* Exception as failures:
+            raise failures.exceptions[0] from None
+        finally:
+            os.close(descriptor)
+        if big:
+            return types.InputFileBig(file_id, parts, path.name)
+        return types.InputFile(file_id, parts, path.name, md5_checksum="")
+
+    @translate_errors
+    async def message_media(self, chat_id: int, message_id: int):
+        message = await self._client.get_messages(
+            await self._entity(chat_id), ids=message_id
+        )
+        if not message or not message.media:
+            raise TelegramMessageGoneError("telegram message with this file is gone")
+        return message.media
+
+    async def iter_media(self, media, offset: int, length: int) -> AsyncIterator[bytes]:
+        start = offset - offset % CHUNK
+        skip = offset - start
+        async for part in self._client.iter_download(
+            media, offset=start, request_size=CHUNK
+        ):
+            part = part[skip:]
+            skip = 0
+            if len(part) >= length:
+                yield part[:length]
+                return
+            length -= len(part)
+            yield part
+
+    @translate_errors
+    async def delete(self, chat_id: int, message_ids: list[int]) -> None:
+        if not message_ids:
+            return
+        entity = await self._entity(chat_id)
+        for start in range(0, len(message_ids), BATCH):
+            await self._client.delete_messages(
+                entity, message_ids[start : start + BATCH]
+            )

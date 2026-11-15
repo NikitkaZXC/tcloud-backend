@@ -1,18 +1,38 @@
-FROM python:3.12-slim
+FROM python:3.14-slim
 
-RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg \
-    && rm -rf /var/lib/apt/lists/* \
-    && useradd --uid 1000 --create-home tcloud \
-    && mkdir -p /data/session /data/tmp && chown -R tcloud:tcloud /data
+COPY --from=ghcr.io/astral-sh/uv:0.13.2 /uv /usr/local/bin/uv
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy \
+    UV_PROJECT_ENVIRONMENT=/app/.venv \
+    PATH="/app/.venv/bin:$PATH"
 
 WORKDIR /app
-COPY requirements.txt requirements-dev.txt ./
-ARG DEV=0
-RUN pip install --no-cache-dir -r requirements.txt \
-    && if [ "$DEV" = "1" ]; then pip install --no-cache-dir -r requirements-dev.txt; fi
-COPY . .
 
-USER tcloud
-ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends ffmpeg && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN useradd --create-home --uid 1000 appuser && \
+    mkdir -p /data/session /data/tmp && \
+    chown -R appuser:appuser /data
+
+ARG UV_SYNC_ARGS="--no-default-groups"
+
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen $UV_SYNC_ARGS --no-install-project
+
+COPY --chmod=755 scripts/docker-entrypoint.sh /
+COPY --chown=appuser:appuser . .
+
+RUN chown appuser:appuser /app
+
+USER appuser
+
 EXPOSE 8000
-CMD ["sh", "-c", "alembic upgrade head && python -m tcloud serve"]
+
+ENTRYPOINT ["/docker-entrypoint.sh"]
+
+CMD ["uvicorn", "--host=0.0.0.0", "--port=8000", "main:app"]

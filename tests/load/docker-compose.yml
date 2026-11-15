@@ -1,0 +1,19 @@
+name: tcloud-load
+
+services:
+  postgres:
+    image: postgres:18
+    environment:
+      POSTGRES_DB: tcloud_load
+      POSTGRES_USER: load
+      POSTGRES_PASSWORD: load
+    command: ["postgres", "-c", "fsync=off", "-c", "synchronous_commit=off", "-c", "max_connections=200"]
+    ports:
+      - "127.0.0.1:55432:5432"
+    tmpfs:
+      - /var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U load -d tcloud_load"]
+      interval: 2s
+      timeout: 3s
+      retries: 30

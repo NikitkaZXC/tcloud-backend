@@ -1,0 +1,13 @@
+from pydantic import BaseModel
+
+
+class AccountServiceRead(BaseModel):
+    premium: bool
+    file_limit: int
+
+
+class HealthServiceRead(BaseModel):
+    ok: bool
+    db: bool
+    telegram: bool
+    antivirus: bool

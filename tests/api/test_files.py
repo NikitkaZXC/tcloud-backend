@@ -1,0 +1,152 @@
+import uuid
+
+import pytest
+
+from tests.api.conftest import path, upload
+from tests.factories import make_image
+
+
+@pytest.fixture
+async def photo(client, storage):
+    return (await upload(client, path(storage, "a/photo.jpg"), make_image()))["file"]
+
+
+async def test_get_file(client, photo):
+    response = await client.get(f"/files/{photo['uuid']}")
+    assert response.status_code == 200 and response.json() == photo
+
+
+async def test_get_file_by_path(client, storage, photo):
+    assert (await client.get("/files/by-path", params={"path": photo["path"]})).json()[
+        "uuid"
+    ] == photo["uuid"]
+    response = await client.get(
+        "/files/by-path", params={"path": path(storage, "a/nope.jpg")}
+    )
+    assert (
+        response.status_code == 404
+        and response.json()["error"]["code"] == "file_not_found"
+    )
+
+
+async def test_file_not_found(client):
+    assert (await client.get(f"/files/{uuid.uuid4()}")).status_code == 404
+
+
+async def test_download_full(client, photo):
+    response = await client.get(f"/files/{photo['uuid']}/download")
+    assert response.status_code == 200 and response.content == make_image()
+    assert (
+        response.headers["content-type"] == "image/jpeg"
+        and response.headers["accept-ranges"] == "bytes"
+    )
+    assert "photo.jpg" in response.headers["content-disposition"]
+
+
+async def test_download_range(client, photo):
+    data = make_image()
+    response = await client.get(
+        f"/files/{photo['uuid']}/download", headers={"Range": "bytes=10-29"}
+    )
+    assert response.status_code == 206 and response.content == data[10:30]
+    assert response.headers["content-range"] == f"bytes 10-29/{len(data)}"
+    tail = await client.get(
+        f"/files/{photo['uuid']}/download", headers={"Range": "bytes=-5"}
+    )
+    assert tail.content == data[-5:]
+    outside = await client.get(
+        f"/files/{photo['uuid']}/download", headers={"Range": f"bytes={len(data)}-"}
+    )
+    assert outside.status_code == 416
+
+
+async def test_delete_file(client, telegram, photo):
+    assert (await client.delete(f"/files/{photo['uuid']}")).status_code == 204
+    assert telegram.messages() == []
+    assert (await client.get(f"/files/{photo['uuid']}")).status_code == 404
+    assert (await client.delete(f"/files/{photo['uuid']}")).status_code == 404
+
+
+async def test_create_and_list_folder(client, storage):
+    response = await client.post(
+        "/folders", json={"path": path(storage, "Отпуск/2026")}
+    )
+    assert response.status_code == 201 and response.json()["name"] == "2026"
+    root = (await client.get("/folders", params={"path": path(storage)})).json()
+    assert root["path"] == path(storage) and [
+        item["path"] for item in root["folders"]
+    ] == [path(storage, "Отпуск")]
+    nested = (
+        await client.get("/folders", params={"path": path(storage, "Отпуск/2026")})
+    ).json()
+    assert nested == {"path": path(storage, "Отпуск/2026"), "folders": [], "files": []}
+
+
+async def test_create_folder_twice_merges(client, storage):
+    first = (await client.post("/folders", json={"path": path(storage, "x")})).json()
+    second = (await client.post("/folders", json={"path": path(storage, "x")})).json()
+    assert first["id"] == second["id"]
+
+
+async def test_create_root_folder_rejected(client, storage):
+    assert (
+        await client.post("/folders", json={"path": path(storage)})
+    ).status_code == 422
+
+
+async def test_list_missing_folder(client, storage):
+    response = await client.get("/folders", params={"path": path(storage, "nope")})
+    assert (
+        response.status_code == 404
+        and response.json()["error"]["code"] == "folder_not_found"
+    )
+
+
+async def test_listing_shows_only_direct_children(client, storage):
+    await upload(client, path(storage, "a/1.jpg"), make_image())
+    await upload(client, path(storage, "a/b/2.jpg"), make_image())
+    await upload(client, path(storage, "ab/3.jpg"), make_image())
+    listing = (await client.get("/folders", params={"path": path(storage, "a")})).json()
+    assert [item["name"] for item in listing["files"]] == ["1.jpg"]
+    assert [item["name"] for item in listing["folders"]] == ["b"]
+
+
+async def test_like_wildcards_in_names_are_literal(client, storage):
+    await client.post("/folders", json={"path": path(storage, "a_b")})
+    await client.post("/folders", json={"path": path(storage, "a%")})
+    await client.post("/folders", json={"path": path(storage, "axb/c")})
+    await upload(client, path(storage, "axb/c/1.jpg"), make_image())
+    assert (await client.get("/folders", params={"path": path(storage, "a_b")})).json()[
+        "folders"
+    ] == []
+    assert (
+        await client.delete("/folders", params={"path": path(storage, "a_b")})
+    ).json()["deleted_files"] == 0
+    assert (
+        await client.get("/folders", params={"path": path(storage, "axb/c")})
+    ).status_code == 200
+
+
+async def test_delete_folder_recursive(client, telegram, storage):
+    await upload(client, path(storage, "a/1.jpg"), make_image())
+    await upload(client, path(storage, "a/b/2.jpg"), make_image())
+    keep = (await upload(client, path(storage, "other/3.jpg"), make_image()))["file"]
+    response = await client.delete("/folders", params={"path": path(storage, "a")})
+    assert response.json() == {"path": path(storage, "a"), "deleted_files": 2}
+    assert [message["name"] for message in telegram.messages()] == ["3.jpg"]
+    assert (
+        await client.get("/folders", params={"path": path(storage, "a/b")})
+    ).status_code == 404
+    assert (await client.get(f"/files/{keep['uuid']}")).status_code == 200
+
+
+async def test_delete_root_rejected(client, storage):
+    assert (
+        await client.delete("/folders", params={"path": path(storage)})
+    ).status_code == 422
+
+
+async def test_delete_missing_folder(client, storage):
+    assert (
+        await client.delete("/folders", params={"path": path(storage, "nope")})
+    ).status_code == 404

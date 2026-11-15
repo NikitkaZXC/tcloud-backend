@@ -1,0 +1,65 @@
+[project]
+name = "tcloud"
+version = "0.3.0"
+description = "tcloud: media storage in private Telegram channels"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "alembic>=1.20.1",
+    "asyncpg>=0.32.0",
+    "cryptg>=0.6.1",
+    "fastapi>=0.163.0",
+    "filetype>=1.2.0",
+    "greenlet>=3.5.6",
+    "httpx>=0.28.1",
+    "loguru>=0.8.0",
+    "pillow>=13.0.0",
+    "pillow-heif>=1.8.1",
+    "pydantic>=2.13.4",
+    "pydantic-settings>=2.16.3",
+    "sqlalchemy>=2.1.8",
+    "telethon>=1.45.0",
+    "uvicorn[standard]>=0.54.0",
+]
+
+[tool.black]
+target-version = ["py314"]
+extend-exclude = "src/infrastructure/database/migrations/"
+
+[tool.isort]
+profile = "black"
+extend_skip_glob = ["src/infrastructure/database/migrations/*"]
+
+[dependency-groups]
+test = [
+    "pip-audit>=2.10.1",
+    "pytest>=9.2.0",
+    "pytest-asyncio>=1.5.0",
+    "pytest-cov>=7.1.0",
+    "testcontainers>=4.15.0",
+]
+dev = [
+    { include-group = "test" },
+    "black>=26.5.1",
+    "isort>=9.0.1",
+    "locust>=2.47.0",
+]
+
+[tool.uv]
+default-groups = ["dev"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+addopts = "-ra --strict-markers -p no:anyio"
+markers = [
+    "unit: fast isolated tests without external services",
+    "integration: tests against real PostgreSQL in Docker",
+    "api: HTTP tests of the FastAPI app against real PostgreSQL",
+    "ffmpeg: needs ffmpeg/ffprobe on PATH (always present in the Docker test image)",
+]
+
+[tool.coverage.run]
+source = ["src"]
+omit = ["src/infrastructure/database/migrations/*"]
