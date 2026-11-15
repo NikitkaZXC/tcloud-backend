@@ -53,9 +53,9 @@
 - **описание** = about канала, можно задать и менять;
 - **фото** = аватар канала, можно поставить или убрать; отдаётся потоком из TG и у нас не сохраняется.
 
-Список хранилищ: id из БД + метаданные одним пакетным запросом `channels.getChannels`
-(до 100 за раз). Если канал больше недоступен (удалён или нас выгнали), хранилище
-в ответе помечено `available: false`.
+Список хранилищ: id из БД + метаданные из Telegram (`channels.getFullChannel` на каждый канал —
+описание есть только в полной информации о канале; FloodWait до 60 с Telethon пережидает сам).
+Если канал больше недоступен (удалён или нас выгнали), хранилище в ответе помечено `available: false`.
 
 Инициализация из `.env`: `TCLOUD_CHATS=-1001234567890,-1009876543210` — **только id существующих каналов**.
 - При старте каждый id подключается как хранилище, если его ещё нет в БД (повторный запуск ничего не дублирует).
@@ -75,8 +75,10 @@
 - **Удаление** только через API: удаляется сообщение в TG и запись в БД.
   Ручные удаления в Telegram БД не отслеживает.
 - **Способ отправки** `send_as`:
+  - `file` (по умолчанию) — документ, оригинал без изменений.
   - `media` — фото сжато Telegram'ом; видео в оригинале, с атрибутами и плеером; аудио с плеером; GIF как анимация.
-  - `file` — документ, оригинал без изменений.
+    Фото в webp/heic/gif перед отправкой переводятся в JPEG (Telegram принимает как фото только JPEG/PNG).
+    Для сжатого фото `size`, `width`, `height` в БД — того, что хранит Telegram; `sha256` — всегда от оригинала.
 - **Видео не перекодируем** (Telegram не пережимает видео, загруженное через API).
   Бэкенд через ffprobe считает ширину, высоту, длительность, поворот (rotation) и передаёт в
   `DocumentAttributeVideo(w, h, duration, supports_streaming=True)` — иначе соотношение сторон «поплывёт».
@@ -129,7 +131,8 @@
   слушает только `127.0.0.1`.
 - **Тип файла:** whitelist по magic bytes + валидация декодером. Pillow с лимитом пикселей
   против decompression bomb. ffprobe в subprocess без `shell`, с таймаутом.
-- **Антивирус:** ClamAV (отдельный контейнер `clamav/clamav`), скан через `clamd INSTREAM`.
+- **Антивирус:** ClamAV (отдельный контейнер `clamav/clamav:*-debian` — он есть и под arm64), скан через `clamd INSTREAM`.
+  Лимиты потока подняты до 4000 МБ в `docker/clamd.conf` (по умолчанию clamd режет на 100 МБ).
   Заражён → `422`, файл удаляется. ClamAV недоступен → загрузка отклоняется (fail-closed).
 - **Ссылки (SSRF):** только `http`/`https`. DNS резолвится и запрещаются loopback, private,
   link-local, multicast, адреса метаданных облака, IPv6-аналоги. Соединяемся с проверенным IP.
@@ -157,7 +160,9 @@
 | `storages` | `id uuid PK`, `tg_chat_id bigint`, `created_at`, `updated_at` | `UNIQUE(tg_chat_id)` |
 | `folders` | `id uuid PK`, `storage_id FK`, `path text`, `created_at`, `updated_at` | `UNIQUE(storage_id, path)`; `path text_pattern_ops` для поиска по префиксу |
 | `files` | `id uuid PK`, `storage_id FK`, `folder_path text`, `name text`, `size bigint`, `mime`, `kind` (photo/video/audio/animation), `sent_as`, `width`, `height`, `duration`, `sha256`, `tg_message_id bigint`, `created_at`, `updated_at` | `UNIQUE(storage_id, folder_path, name)`; `(storage_id, folder_path)` для листинга; `UNIQUE(storage_id, tg_message_id)`; `sha256` |
-| `tasks` | `id uuid PK`, `file_id` (nullable), `status`, `stage`, `bytes_done`, `bytes_total`, `speed`, `error`, `callback_url`, `params jsonb`, `created_at`, `updated_at` | `status` (поиск незавершённых при рестарте) |
+| `tasks` | `id uuid PK`, `file_id` (nullable), `status`, `stage`, `bytes_done`, `bytes_total`, `error jsonb`, `warnings jsonb`, `callback_url`, `params jsonb`, `created_at`, `updated_at` | `status` (поиск незавершённых при рестарте) |
+
+Живой прогресс (байты, скорость, ETA) держится в памяти процесса; в БД пишется только смена стадий и итог.
 
 - **Все наши id — UUID** (`uuid4`, генерируется на сервере). Числа (`tg_chat_id`, `tg_message_id`) — только id самого Telegram.
 - Каждый новый запрос с фильтром/сортировкой обязан иметь индекс.
