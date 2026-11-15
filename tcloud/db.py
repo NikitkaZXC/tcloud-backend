@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import BigInteger, DateTime, Float, ForeignKey, Index, Integer, Text, UniqueConstraint, func
+from sqlalchemy import BigInteger, DateTime, Float, ForeignKey, Index, Integer, Text, UniqueConstraint, func, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -69,9 +69,14 @@ class File(Base):
     )
 
 
+ACTIVE = ("pending", "running")
+
+
 class Task(Base):
     __tablename__ = "tasks"
     id: Mapped[uuid.UUID] = _id()
+    batch_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    path: Mapped[str] = mapped_column(Text)  # куда грузим; для keep_both — уже свободное имя
     file_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("files.id", ondelete="SET NULL"))
     status: Mapped[str] = mapped_column(Text)  # pending | running | done | failed
     stage: Mapped[str] = mapped_column(Text)  # receiving | scanning | uploading_tg | done
@@ -83,7 +88,13 @@ class Task(Base):
     params: Mapped[dict] = mapped_column(JSONB, default=dict)
     created_at: Mapped[datetime] = _ts()
     updated_at: Mapped[datetime] = _ts()
-    __table_args__ = (Index("ix_tasks_status", "status"),)
+    __table_args__ = (
+        # Один путь — одна активная загрузка: гонку двух загрузок в одно место решает БД
+        Index("ux_tasks_active_path", "path", unique=True, postgresql_where=text("status IN ('pending', 'running')")),
+        Index("ix_tasks_status_created", "status", "created_at"),
+        Index("ix_tasks_created", "created_at"),
+        Index("ix_tasks_batch", "batch_id", "created_at"),
+    )
 
 
 def connect(url: str) -> tuple[AsyncEngine, async_sessionmaker]:

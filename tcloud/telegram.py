@@ -6,19 +6,26 @@ file_id не храним: он меняется, а file_reference протух
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import os
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from telethon import TelegramClient, errors, functions, types, utils
+from telethon import TelegramClient, errors, functions, helpers, types, utils
 
 from . import limits
 from .errors import TCloudError
 from .media import Media
 
 log = logging.getLogger(__name__)
-CHUNK = 512 * 1024  # кратно 4 КБ, как требует upload.getFile
+CHUNK = 512 * 1024  # кратно 4 КБ, как требует upload.getFile; все куски, кроме последнего, одного размера
+BIG_FILE = 10 * 1024 * 1024  # больше — saveBigFilePart, куски можно слать в любом порядке
+
+# Сбои, после которых имеет смысл повторить запрос
+TRANSIENT = (ConnectionError, OSError, TimeoutError, errors.ServerError, errors.TimedOutError,
+             errors.RpcCallFailError, errors.FilePartMissingError)
 
 
 @dataclass
@@ -38,7 +45,8 @@ class Sent:
 
 
 class Telegram:
-    def __init__(self, session: Path, api_id: int, api_hash: str):
+    def __init__(self, session: Path, api_id: int, api_hash: str, upload_workers: int = 4):
+        self.upload_workers = upload_workers
         session.parent.mkdir(parents=True, exist_ok=True)
         self.client = TelegramClient(
             str(session), api_id, api_hash,
@@ -140,13 +148,50 @@ class Telegram:
                 attrs.append(types.DocumentAttributeAudio(duration=int(media.duration or 0), title=media.title, performer=media.performer))
             elif media.kind == "animation":
                 attrs.append(types.DocumentAttributeAnimated())
+        handle = await self.upload(path, progress)
         msg = await self.client.send_file(
-            await self._entity(chat_id), str(path), caption=caption, force_document=as_file, attributes=attrs,
-            thumb=str(thumb) if thumb else None, progress_callback=progress,
-            supports_streaming=not as_file, silent=True,
+            await self._entity(chat_id), handle, caption=caption, force_document=as_file, attributes=attrs,
+            thumb=str(thumb) if thumb else None, supports_streaming=not as_file, silent=True,
         )
         f = msg.file
         return Sent(msg.id, f.size, f.mime_type, f.width, f.height)
+
+    async def upload(self, path: Path, progress: Callable[[int, int], None]) -> types.TypeInputFile:
+        """Загрузка кусков параллельно: Telethon шлёт их по одному и упирается в задержку сети, а не в канал."""
+        size = path.stat().st_size
+        parts = max(1, -(-size // CHUNK))
+        big = size > BIG_FILE
+        file_id = helpers.generate_random_long()
+        queue = iter(range(parts))  # общий итератор: каждый кусок берёт ровно один воркер
+        done = 0
+        fd = os.open(path, os.O_RDONLY)
+
+        async def worker() -> None:
+            nonlocal done
+            for i in queue:
+                data = os.pread(fd, CHUNK, i * CHUNK)
+                if big:
+                    ok = await self.client(functions.upload.SaveBigFilePartRequest(file_id, i, parts, data))
+                else:
+                    ok = await self.client(functions.upload.SaveFilePartRequest(file_id, i, data))
+                if not ok:
+                    raise TCloudError(502, "telegram_error", f"Telegram did not accept part {i} of {path.name}")
+                done += len(data)
+                progress(done, size)
+
+        try:
+            # Файлу ≤ 10 МБ (≤ 20 кусков) параллельность почти ничего не даёт — один воркер, как у Telethon
+            async with asyncio.TaskGroup() as tg:
+                for _ in range(min(self.upload_workers if big else 1, parts)):
+                    tg.create_task(worker())
+        except* Exception as eg:
+            raise eg.exceptions[0] from None
+        finally:
+            os.close(fd)
+        # Имя с настоящим расширением: по нему Telethon решает, фото это или документ
+        if big:
+            return types.InputFileBig(file_id, parts, path.name)
+        return types.InputFile(file_id, parts, path.name, md5_checksum="")
 
     async def message_media(self, chat_id: int, message_id: int):
         msg = await self.client.get_messages(await self._entity(chat_id), ids=message_id)

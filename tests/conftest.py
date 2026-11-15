@@ -34,7 +34,12 @@ class FakeTelegram:
         self.chans: dict[int, dict] = {}
         self.next_cid = 1001234567000
         self.next_mid = 1
-        self.flood: int | None = None
+        self.flood: int | None = None  # FloodWait на каждую отправку
+        self.flood_once: int | None = None  # FloodWait только на первую
+        self.fail_times = 0  # столько раз подряд — сетевой сбой
+        self.delay = 0.0  # с на отправку: чтобы задачи пересекались по времени
+        self.sending = 0
+        self.max_sending = 0
 
     async def start(self): ...
     async def stop(self): ...
@@ -83,9 +88,22 @@ class FakeTelegram:
     async def photo(self, cid):
         return self.chans[cid]["photo"]
 
-    async def send(self, cid, path, *, name, caption, media, as_file, thumb, progress):
+    async def send(self, chat_id, path, *, name, caption, media, as_file, thumb, progress):
+        cid = chat_id
         if self.flood:
             raise errors.FloodWaitError(request=None, capture=self.flood)
+        if self.flood_once:
+            seconds, self.flood_once = self.flood_once, None
+            raise errors.FloodWaitError(request=None, capture=seconds)
+        if self.fail_times:
+            self.fail_times -= 1
+            raise ConnectionError("network is down")
+        self.sending += 1
+        self.max_sending = max(self.max_sending, self.sending)
+        try:
+            await asyncio.sleep(self.delay)
+        finally:
+            self.sending -= 1
         data = Path(path).read_bytes()
         for done in (0, len(data) // 2, len(data)):
             progress(done, len(data))
@@ -164,7 +182,7 @@ def make_client(tmp_path, tg, scanner):
     def make(**kw) -> TestClient:
         settings = Settings(
             _env_file=None, api_key=KEY, tg_api_id=1, tg_api_hash="x", database_url=DB_URL,
-            tmp_dir=tmp_path / "tmp", **kw,
+            tmp_dir=tmp_path / "tmp", **{"retry_delay": 0.01, "min_free_disk_mb": 0, **kw},
         )
         c = TestClient(create_app(settings, tg=tg, scanner=scanner), headers={"X-API-Key": KEY})
         c.__enter__()

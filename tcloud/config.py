@@ -21,6 +21,19 @@ class Settings(BaseSettings):
     chats: str = ""
     # Одновременных выгрузок в Telegram — больше рискованно для аккаунта
     tg_concurrency: int = 2
+    # Параллельных кусков одного файла при выгрузке (ускоряет большие файлы)
+    tg_upload_workers: int = 4
+    # FloodWait дольше этого (с) — задача падает; короче — вся выгрузка ставится на паузу и продолжается
+    tg_flood_max_wait: int = 3600
+
+    # Сотни загрузок разом: сколько задач одновременно на каждой стадии
+    download_concurrency: int = 4
+    scan_concurrency: int = 4
+    max_active_tasks: int = 500
+    pending_ttl: int = 3600  # с: задача без тела файла дольше этого — failed
+    min_free_disk_mb: int = 1024  # не принимать файлы, если на диске останется меньше
+    retries: int = 3  # повторы при сетевых сбоях Telegram и недоступном ClamAV
+    retry_delay: float = 2.0  # с, растёт: 2, 4, 8
 
     clamd_host: str = "clamav"
     clamd_port: int = 3310

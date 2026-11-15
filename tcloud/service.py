@@ -8,21 +8,28 @@ import logging
 import time
 import uuid
 from collections.abc import AsyncIterator, Callable
+from contextlib import asynccontextmanager
+from datetime import timedelta
 from pathlib import Path
 
 import httpx
 from fastapi.encoders import jsonable_encoder
 from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from telethon import errors as tg_errors
 
 from . import limits, media, paths, security
 from .config import Settings
-from .db import File, Folder, Storage, Task
+from .db import ACTIVE, File, Folder, Storage, Task
 from .errors import TCloudError, describe
+from .gates import MiB, DiskBudget, Gate
+from .telegram import TRANSIENT
 
 log = logging.getLogger(__name__)
 HOOK_INTERVAL = 2.0  # с между вебхуками с прогрессом
+PREMIUM_TTL = 60.0  # с: Premium не меняется каждую секунду, а get_me — запрос в TG
 
 
 def caption_token(file_id: uuid.UUID) -> str:
@@ -58,7 +65,12 @@ def _not_found(what: str) -> TCloudError:
 class Service:
     def __init__(self, settings: Settings, db: async_sessionmaker, tg, scanner):
         self.s, self.db, self.tg, self.scanner = settings, db, tg, scanner
-        self.tg_sem = asyncio.Semaphore(settings.tg_concurrency)
+        self.downloads = Gate("download", settings.download_concurrency)
+        self.scans = Gate("scanning", settings.scan_concurrency)
+        self.uploads = Gate("uploading_tg", settings.tg_concurrency)
+        self.disk = DiskBudget(settings.tmp_dir, settings.min_free_disk_mb * MiB)
+        self.tg_resume_at = 0.0  # monotonic: до этого момента выгрузка в TG на паузе (FloodWait)
+        self._premium: tuple[float, bool] | None = None
         self.live: dict[uuid.UUID, dict] = {}  # прогресс идущих задач, в БД — только смена стадий
         self._bg: set[asyncio.Task] = set()
 
@@ -113,11 +125,17 @@ class Service:
         out = {"db": db_ok, "telegram": self.tg.connected(), "antivirus": await self.scanner.ping()}
         return {"ok": all(out.values()), **out}
 
+    async def premium(self) -> bool:
+        if not self._premium or time.monotonic() - self._premium[0] > PREMIUM_TTL:
+            self._premium = (time.monotonic(), await self.tg.is_premium())
+        return self._premium[1]
+
     async def limit(self) -> int:
-        return limits.file_limit(await self.tg.is_premium())
+        return limits.file_limit(await self.premium())
 
     async def account(self) -> dict:
-        premium = await self.tg.is_premium()
+        self._premium = None  # ручка /account всегда спрашивает Telegram заново
+        premium = await self.premium()
         return {"premium": premium, "file_limit": limits.file_limit(premium)}
 
     # ---------- хранилища ----------
@@ -350,7 +368,25 @@ class Service:
             raise TCloudError(409, "conflict", f"{paths.join(sid, folder, name)} already exists")
         return f
 
-    async def new_task(self, path: str, send_as: str, on_conflict: str, callback_url: str | None, size: int | None, **params) -> Task:
+    async def _taken(self, s: AsyncSession, sid: uuid.UUID, folder: str, name: str) -> bool:
+        """Имя занято файлом или идущей загрузкой."""
+        if await s.scalar(select(File.id).where(File.storage_id == sid, File.folder_path == folder, File.name == name)):
+            return True
+        return bool(await s.scalar(select(Task.id).where(Task.path == paths.join(sid, folder, name), Task.status.in_(ACTIVE))))
+
+    async def _free_name(self, s: AsyncSession, sid: uuid.UUID, folder: str, name: str) -> str:
+        stem, dot, ext = name.rpartition(".")
+        for i in range(1, 10_000):
+            candidate = f"{stem} ({i}){dot}{ext}"
+            if not await self._taken(s, sid, folder, candidate):
+                paths.check_segment(candidate)
+                return candidate
+        raise TCloudError(409, "conflict", "no free name left")
+
+    async def new_task(
+        self, path: str, send_as: str, on_conflict: str, callback_url: str | None, size: int | None,
+        batch_id: uuid.UUID | None = None, **params,
+    ) -> Task:
         sid, folder, name = paths.split_file(path)
         media.check_name(name)
         if callback_url:
@@ -358,33 +394,74 @@ class Service:
         limit = await self.limit()
         if size is not None and size > limit:
             raise TCloudError(413, "too_large", f"file is {size} bytes, account limit is {limit}", limit=limit)
+        if size is not None:
+            self.disk.check(size)
         async with self.db.begin() as s:
+            # Задачи, которым так и не прислали файл, не должны вечно держать путь и место в лимите
+            await s.execute(
+                update(Task).where(Task.status == "pending", Task.created_at < func.now() - timedelta(seconds=self.s.pending_ttl))
+                .values(status="failed", error={"code": "expired", "message": "file was not sent in time"}, updated_at=func.now())
+            )
+            active = await s.scalar(select(func.count()).select_from(Task).where(Task.status.in_(ACTIVE)))
+            if active >= self.s.max_active_tasks:
+                raise TCloudError(429, "too_many_tasks", f"{active} uploads are already in progress, try later", retry_after=30)
             existing = await self._existing(s, sid, folder, name, on_conflict)
+            if on_conflict == "keep_both" and await self._taken(s, sid, folder, name):
+                name, existing = await self._free_name(s, sid, folder, name), None
             t = Task(
-                status="pending", stage="receiving", bytes_total=size, callback_url=callback_url,
+                status="pending", stage="receiving", bytes_total=size, callback_url=callback_url, batch_id=batch_id,
+                path=paths.join(sid, folder, name),
                 params={"path": paths.join(sid, folder, name), "send_as": send_as, "on_conflict": on_conflict, **params},
             )
             if existing and on_conflict == "skip":
                 t.status, t.stage, t.file_id, t.warnings = "done", "done", existing.id, ["skipped: file already exists"]
             s.add(t)
+            try:
+                await s.flush()
+            except IntegrityError:
+                raise TCloudError(409, "upload_in_progress", f"{t.path} is already being uploaded") from None
         return t
 
-    async def create_upload(self, path: str, size: int, send_as: str, on_conflict: str, callback_url: str | None) -> dict:
-        t = await self.new_task(path, send_as, on_conflict, callback_url, size, source="device")
+    async def create_upload(self, path: str, size: int, send_as: str, on_conflict: str, callback_url: str | None, batch_id=None) -> dict:
+        t = await self.new_task(path, send_as, on_conflict, callback_url, size, batch_id, source="device")
         return await self.get_task(t.id)
 
-    async def create_url_upload(self, url: str, path: str, send_as: str, on_conflict: str, callback_url: str | None) -> dict:
+    async def create_url_upload(self, url: str, path: str, send_as: str, on_conflict: str, callback_url: str | None, batch_id=None) -> dict:
         security.check_scheme(url)
-        t = await self.new_task(path, send_as, on_conflict, callback_url, None, source="url", url=url)
+        t = await self.new_task(path, send_as, on_conflict, callback_url, None, batch_id, source="url", url=url)
         if t.status == "pending":
             await self._claim(t)
-            tmp = self._tmp(path)
+            tmp = self._tmp(t.path)
 
             async def receive() -> None:
-                await security.download(url, tmp, await self.limit(), lambda done, total: self._progress(t.id, done, total))
+                async with self._gate(t, self.downloads):
+                    res = self.disk.reserve(0)
+                    try:
+                        def progress(done: int, total: int | None) -> None:
+                            res.update(done, total)
+                            self._progress(t.id, done, total)
+
+                        await security.download(url, tmp, await self.limit(), progress)
+                    finally:
+                        res.release()
 
             self._spawn(self._pipeline(t, tmp, receive))
         return await self.get_task(t.id)
+
+    async def create_batch(self, items: list[dict]) -> dict:
+        """До 100 загрузок одним запросом; ошибка одной не мешает остальным."""
+        batch_id = uuid.uuid4()
+        results = []
+        for item in items:
+            try:
+                if item.get("url"):
+                    task = await self.create_url_upload(item["url"], item["path"], item["send_as"], item["on_conflict"], item.get("callback_url"), batch_id)
+                else:
+                    task = await self.create_upload(item["path"], item["size"], item["send_as"], item["on_conflict"], item.get("callback_url"), batch_id)
+                results.append({"path": item["path"], "task": task, "error": None})
+            except TCloudError as e:
+                results.append({"path": item["path"], "task": None, "error": describe(e)[1]})
+        return {"batch_id": batch_id, "items": results}
 
     async def _claim(self, t: Task) -> None:
         """pending → running атомарно: второй PUT на ту же задачу получит 409."""
@@ -395,7 +472,10 @@ class Service:
             )
         if not ok:
             raise TCloudError(409, "task_not_pending", "this task is not waiting for a file")
-        self.live[t.id] = {"stage": "receiving", "bytes_done": 0, "bytes_total": t.bytes_total, "started": time.monotonic(), "hook_at": 0.0, "callback_url": t.callback_url}
+        self.live[t.id] = {
+            "stage": "receiving", "bytes_done": 0, "bytes_total": t.bytes_total, "started": time.monotonic(),
+            "hook_at": 0.0, "callback_url": t.callback_url, "gate": None, "waiting": None,
+        }
         self._hook(t.id)
 
     async def receive_upload(self, tid: uuid.UUID, body: AsyncIterator[bytes]) -> dict:
@@ -405,16 +485,27 @@ class Service:
             raise _not_found("task")
         if t.params.get("source") != "device":
             raise TCloudError(409, "task_not_pending", "this task is not waiting for a file")
-        await self._claim(t)
-        tmp = self._tmp(t.params["path"])
+        res = self.disk.reserve(t.bytes_total)
         try:
-            got = await self._receive(body, tmp, min(t.bytes_total, await self.limit()), lambda n: self._progress(tid, n))
+            await self._claim(t)
+        except BaseException:
+            res.release()
+            raise
+        tmp = self._tmp(t.path)
+        try:
+            def progress(n: int) -> None:
+                res.update(n)
+                self._progress(tid, n)
+
+            got = await self._receive(body, tmp, min(t.bytes_total, await self.limit()), progress)
             if got != t.bytes_total:
                 raise TCloudError(400, "size_mismatch", f"declared {t.bytes_total} bytes, received {got}")
         except BaseException as e:
             tmp.unlink(missing_ok=True)
             await self._fail(t, e)
             raise
+        finally:
+            res.release()  # файл целиком на диске — дальше его видит сам disk_usage
         self._spawn(self._pipeline(t, tmp))
         return await self.get_task(tid)
 
@@ -445,35 +536,87 @@ class Service:
             for p in (tmp, *extra):
                 p.unlink(missing_ok=True)
 
+    @asynccontextmanager
+    async def _gate(self, t: Task, gate: Gate):
+        live = self.live[t.id]
+        live["gate"] = gate
+        self._hook(t.id)
+        try:
+            async with gate.slot(t.id):
+                live["gate"] = None
+                live["started"] = time.monotonic()
+                yield
+        finally:
+            live["gate"] = None
+
+    async def _retry(self, t: Task, call: Callable, transient: Callable[[BaseException], bool]):
+        """Повтор с растущей паузой при временных сбоях (сеть, ClamAV перезапускается)."""
+        for attempt in range(self.s.retries + 1):
+            try:
+                return await call()
+            except BaseException as e:
+                if attempt == self.s.retries or not transient(e):
+                    raise
+                delay = self.s.retry_delay * 2 ** attempt
+                log.warning("task %s: %r, retry %d in %.1f s", t.id, e, attempt + 1, delay)
+                await self._wait(t, "retry", delay)
+
+    async def _wait(self, t: Task, reason: str, seconds: float) -> None:
+        live = self.live.get(t.id)
+        if live:
+            live["waiting"] = {"reason": reason, "until": time.time() + seconds}
+            self._hook(t.id)
+        try:
+            await asyncio.sleep(seconds)
+        finally:
+            if live:
+                live["waiting"] = None
+
+    async def _send_tg(self, t: Task, **kw):
+        """Выгрузка в TG: FloodWait ставит на паузу всю выгрузку, а не роняет задачи по одной."""
+        while True:
+            pause = self.tg_resume_at - time.monotonic()
+            if pause > 0:
+                await self._wait(t, "flood_wait", pause)
+                continue
+            try:
+                return await self._retry(t, lambda: self.tg.send(**kw), lambda e: isinstance(e, TRANSIENT))
+            except tg_errors.FloodWaitError as e:
+                if e.seconds > self.s.tg_flood_max_wait:
+                    raise
+                self.tg_resume_at = max(self.tg_resume_at, time.monotonic() + e.seconds)
+                log.warning("telegram flood wait %s s: all uploads paused", e.seconds)
+
     async def _process(self, t: Task, tmp: Path, extra: list[Path]) -> None:
         p = t.params
-        sid, folder, name = paths.split_file(p["path"])
+        sid, folder, name = paths.split_file(t.path)
 
         await self._stage(t, "scanning", None)
-        m = await asyncio.to_thread(media.probe, tmp, name)
-        sha = await asyncio.to_thread(_sha256, tmp)
-        await self.scanner.scan(tmp)
+        async with self._gate(t, self.scans):
+            m = await asyncio.to_thread(media.probe, tmp, name)
+            sha = await asyncio.to_thread(_sha256, tmp)
+            await self._retry(t, lambda: self.scanner.scan(tmp), lambda e: getattr(e, "code", None) == "scanner_unavailable")
 
-        as_file = p["send_as"] == "file"
-        warnings: list[str] = []
-        send_path, thumb = tmp, None
-        if not as_file and m.kind == "photo":
-            if not media.photo_fits(m, tmp.stat().st_size):
-                as_file = True
-                warnings.append("photo does not fit Telegram photo limits (10 MB, sides), sent as file")
-            elif m.mime not in ("image/jpeg", "image/png"):
-                send_path = self._tmp("photo.jpg")
-                extra.append(send_path)
-                await asyncio.to_thread(media.to_jpeg, tmp, send_path)
-        if not as_file and m.kind == "video" and m.mime != "video/mp4":
-            warnings.append(f"{m.mime} may be shown as a file instead of a player in Telegram")
-        if m.kind == "video":
-            thumb = self._tmp("thumb.jpg")
-            extra.append(thumb)
-            if not await asyncio.to_thread(media.thumbnail, tmp, thumb, m.duration):
-                thumb = None
+            as_file = p["send_as"] == "file"
+            warnings: list[str] = []
+            send_path, thumb = tmp, None
+            if not as_file and m.kind == "photo":
+                if not media.photo_fits(m, tmp.stat().st_size):
+                    as_file = True
+                    warnings.append("photo does not fit Telegram photo limits (10 MB, sides), sent as file")
+                elif m.mime not in ("image/jpeg", "image/png"):
+                    send_path = self._tmp("photo.jpg")
+                    extra.append(send_path)
+                    await asyncio.to_thread(media.to_jpeg, tmp, send_path)
+            if not as_file and m.kind == "video" and m.mime != "video/mp4":
+                warnings.append(f"{m.mime} may be shown as a file instead of a player in Telegram")
+            if m.kind == "video":
+                thumb = self._tmp("thumb.jpg")
+                extra.append(thumb)
+                if not await asyncio.to_thread(media.thumbnail, tmp, thumb, m.duration):
+                    thumb = None
 
-        # Конфликт проверяем ещё раз: пока файл грузился, путь мог занять кто-то другой
+        # Конфликт проверяем ещё раз: файл мог появиться, пока этот грузился
         async with self.db() as s:
             existing = await self._existing(s, sid, folder, name, p["on_conflict"])
             st = await s.get(Storage, sid)
@@ -481,19 +624,20 @@ class Service:
                 await self._finish(t, existing.id, ["skipped: file already exists"])
                 return
             if existing and p["on_conflict"] == "keep_both":
-                name, existing = await self._free_name(s, sid, folder, name), None
+                raise TCloudError(409, "conflict", f"{t.path} was taken during upload")
         fid = existing.id if existing else uuid.uuid4()  # replace сохраняет UUID
 
         await self._stage(t, "uploading_tg", send_path.stat().st_size)
-        async with self.tg_sem:
-            sent = await self.tg.send(
-                st.tg_chat_id, send_path, name=name, caption=caption_token(fid), media=m, as_file=as_file,
-                thumb=thumb, progress=lambda done, total: self._progress(t.id, done, total),
+        async with self._gate(t, self.uploads):
+            sent = await self._send_tg(
+                t, chat_id=st.tg_chat_id, path=send_path, name=name, caption=caption_token(fid), media=m,
+                as_file=as_file, thumb=thumb, progress=lambda done, total: self._progress(t.id, done, total),
             )
+        compressed = m.kind == "photo" and not as_file
         values = dict(
-            folder_path=folder, name=name, size=sent.size, mime=sent.mime or m.mime, kind=m.kind,
-            sent_as="file" if as_file else "media", width=sent.width or m.width, height=sent.height or m.height,
-            duration=m.duration, sha256=sha, tg_message_id=sent.message_id,
+            folder_path=folder, name=name, size=sent.size, mime=(sent.mime or "image/jpeg") if compressed else m.mime,
+            kind=m.kind, sent_as="file" if as_file else "media", width=sent.width or m.width,
+            height=sent.height or m.height, duration=m.duration, sha256=sha, tg_message_id=sent.message_id,
         )
         try:
             async with self.db.begin() as s:
@@ -508,15 +652,6 @@ class Service:
         if existing:
             await self.tg.delete(st.tg_chat_id, [existing.tg_message_id])
         await self._finish(t, fid, warnings)
-
-    async def _free_name(self, s: AsyncSession, sid: uuid.UUID, folder: str, name: str) -> str:
-        stem, dot, ext = name.rpartition(".")
-        for i in range(1, 10_000):
-            candidate = f"{stem} ({i}){dot}{ext}"
-            if not await s.scalar(select(File.id).where(File.storage_id == sid, File.folder_path == folder, File.name == candidate)):
-                paths.check_segment(candidate)
-                return candidate
-        raise TCloudError(409, "conflict", "no free name left")
 
     # ---------- задачи и прогресс ----------
 
@@ -537,8 +672,7 @@ class Service:
         live["bytes_done"] = done
         if total:
             live["bytes_total"] = total
-        now = time.monotonic()
-        if now - live["hook_at"] >= HOOK_INTERVAL:
+        if time.monotonic() - live["hook_at"] >= HOOK_INTERVAL:
             self._hook(tid)
 
     async def _finish(self, t: Task, fid: uuid.UUID, warnings: list[str]) -> None:
@@ -558,26 +692,23 @@ class Service:
             log.exception("cannot save failed task %s", t.id)
         self._hook(t.id, t.callback_url)
 
-    async def get_task(self, tid: uuid.UUID) -> dict:
-        async with self.db() as s:
-            t = await s.get(Task, tid)
-            if not t:
-                raise _not_found("task")
-            file = None
-            if t.file_id:
-                f = await s.get(File, t.file_id)
-                st = f and await s.get(Storage, f.storage_id)
-                file = f and self._file_json(f, st.tg_chat_id)
+    def _task_json(self, t: Task, file: dict | None) -> dict:
         out = {
-            "id": t.id, "status": t.status, "stage": t.stage, "path": t.params.get("path"),
+            "id": t.id, "batch_id": t.batch_id, "status": t.status, "stage": t.stage, "path": t.path,
             "bytes_done": t.bytes_done, "bytes_total": t.bytes_total, "progress": None, "speed": None, "eta": None,
+            "queue_position": None, "waiting": None,
             "error": t.error, "warnings": t.warnings, "file": file, "created_at": t.created_at, "updated_at": t.updated_at,
         }
-        live = self.live.get(tid)
+        live = self.live.get(t.id)
         if live and t.status == "running":
             out.update(stage=live["stage"], bytes_done=live["bytes_done"], bytes_total=live["bytes_total"])
+            if live["gate"]:
+                out["queue_position"] = live["gate"].position(t.id)
+                out["waiting"] = {"reason": f"queue:{live['gate'].name}"}
+            elif live["waiting"]:
+                out["waiting"] = {"reason": live["waiting"]["reason"], "seconds": max(0, round(live["waiting"]["until"] - time.time()))}
             elapsed = time.monotonic() - live["started"]
-            if elapsed > 0 and live["bytes_done"]:
+            if elapsed > 0 and live["bytes_done"] and not out["waiting"]:
                 out["speed"] = round(live["bytes_done"] / elapsed)
                 if out["bytes_total"]:
                     out["eta"] = round((out["bytes_total"] - live["bytes_done"]) / out["speed"], 1)
@@ -585,6 +716,43 @@ class Service:
             out["progress"] = 100.0
         elif out["bytes_total"]:
             out["progress"] = round(100 * out["bytes_done"] / out["bytes_total"], 1)
+        return out
+
+    async def _tasks_json(self, s: AsyncSession, tasks: list[Task]) -> list[dict]:
+        ids = [t.file_id for t in tasks if t.file_id]
+        files = {}
+        if ids:  # одним запросом, а не по запросу на задачу
+            for f, cid in (await s.execute(select(File, Storage.tg_chat_id).join(Storage).where(File.id.in_(ids)))).all():
+                files[f.id] = self._file_json(f, cid)
+        return [self._task_json(t, files.get(t.file_id)) for t in tasks]
+
+    async def get_task(self, tid: uuid.UUID) -> dict:
+        async with self.db() as s:
+            t = await s.get(Task, tid)
+            if not t:
+                raise _not_found("task")
+            return (await self._tasks_json(s, [t]))[0]
+
+    async def list_tasks(self, batch_id: uuid.UUID | None, status: str | None, limit: int, offset: int) -> dict:
+        where = []
+        if batch_id:
+            where.append(Task.batch_id == batch_id)
+        if status:
+            where.append(Task.status == status)
+        async with self.db() as s:
+            rows = (await s.scalars(select(Task).where(*where).order_by(Task.created_at.desc(), Task.id).limit(limit).offset(offset))).all()
+            items = await self._tasks_json(s, list(rows))
+            counts = dict((await s.execute(select(Task.status, func.count()).where(*where).group_by(Task.status))).all())
+        out = {"items": items, "summary": {"total": sum(counts.values()), "by_status": counts}}
+        if batch_id:  # общий прогресс пачки — по всем её задачам, не только по странице
+            async with self.db() as s:
+                all_tasks = (await s.scalars(select(Task).where(Task.batch_id == batch_id))).all()
+            views = [self._task_json(t, None) for t in all_tasks]
+            done = sum(v["bytes_done"] or 0 for v in views)
+            total = sum(v["bytes_total"] or 0 for v in views)
+            finished = sum(v["status"] in ("done", "failed") for v in views)
+            out["summary"] |= {"bytes_done": done, "bytes_total": total, "finished": finished,
+                               "progress": round(100 * finished / len(views), 1) if views else None}
         return out
 
     def _hook(self, tid: uuid.UUID, url: str | None = None) -> None:

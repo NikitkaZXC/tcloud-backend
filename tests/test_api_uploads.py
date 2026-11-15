@@ -126,6 +126,7 @@ def test_size_over_limit(client, tg, storage):
     r = client.post("/uploads", json={"path": p(storage, "a.mp4"), "size": limits.FILE_MAX + 1})
     assert r.status_code == 413 and r.json()["error"]["limit"] == limits.FILE_MAX
     tg.premium = True
+    client.get("/account")  # Premium кешируется на минуту, /account обновляет
     r = client.post("/uploads", json={"path": p(storage, "a.mp4"), "size": limits.FILE_MAX + 1})
     assert r.status_code == 201
     r = client.post("/uploads", json={"path": p(storage, "b.mp4"), "size": limits.FILE_MAX_PREMIUM + 1})
@@ -170,9 +171,10 @@ def test_bad_callback_url(client, storage):
     assert r.status_code == 422 and r.json()["error"]["code"] == "unsafe_url"
 
 
-def test_flood_wait(client, tg, storage):
+def test_long_flood_wait_fails(make_client, tg, storage):
+    c = make_client(tg_flood_max_wait=100)
     tg.flood = 300
-    t = upload(client, p(storage, "a.jpg"), image())
+    t = upload(c, p(storage, "a.jpg"), image())
     assert t["error"] == {"code": "flood_wait", "message": "Telegram asks to wait 300 s", "retry_after": 300}
 
 
@@ -207,12 +209,18 @@ def test_conflict_skip(client, tg, storage):
     assert len(tg.messages()) == 1
 
 
-def test_conflict_appears_during_upload(client, storage):
-    data = image()
-    task = client.post("/uploads", json={"path": p(storage, "a.jpg"), "size": len(data)}).json()
-    upload(client, p(storage, "a.jpg"), data)  # кто-то занял путь, пока первый ещё не прислал файл
-    client.put(f"/uploads/{task['id']}", content=data)
-    assert wait_task(client, task["id"])["error"]["code"] == "conflict"
+def test_second_upload_to_same_path_rejected(client, storage):
+    first = client.post("/uploads", json={"path": p(storage, "a.jpg"), "size": 10}).json()
+    r = client.post("/uploads", json={"path": p(storage, "a.jpg"), "size": 10, "on_conflict": "replace"})
+    assert r.status_code == 409 and r.json()["error"]["code"] == "upload_in_progress"
+    assert first["status"] == "pending"
+
+
+def test_keep_both_reserves_name_against_active_uploads(client, storage):
+    a = client.post("/uploads", json={"path": p(storage, "a.jpg"), "size": 10}).json()
+    b = client.post("/uploads", json={"path": p(storage, "a.jpg"), "size": 10, "on_conflict": "keep_both"}).json()
+    c = client.post("/uploads", json={"path": p(storage, "a.jpg"), "size": 10, "on_conflict": "keep_both"}).json()
+    assert [x["path"].rsplit("/", 1)[1] for x in (a, b, c)] == ["a.jpg", "a (1).jpg", "a (2).jpg"]
 
 
 # ---------- задачи и прогресс ----------

@@ -7,12 +7,12 @@ from contextlib import asynccontextmanager
 from typing import Literal
 from urllib.parse import quote
 
-from fastapi import Depends, FastAPI, Header, Request, Response, Security
+from fastapi import Depends, FastAPI, Header, Query, Request, Response, Security
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.security import APIKeyHeader
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from starlette.exceptions import HTTPException
 from telethon import errors as tg_errors
 
@@ -25,6 +25,7 @@ from .telegram import Telegram
 
 SendAs = Literal["media", "file"]
 OnConflict = Literal["error", "replace", "keep_both", "skip"]
+BATCH_MAX = 100  # загрузок в одном POST /uploads/batch
 
 
 class StorageIn(BaseModel):
@@ -57,6 +58,26 @@ class UrlUploadIn(BaseModel):
     callback_url: str | None = None
 
 
+class BatchItem(BaseModel):
+    path: str
+    size: int | None = Field(None, gt=0, description="для загрузки с устройства")
+    url: str | None = Field(None, description="для загрузки по ссылке")
+    send_as: SendAs = "file"
+    on_conflict: OnConflict = "error"
+    callback_url: str | None = None
+
+    @model_validator(mode="after")
+    def _one_source(self) -> "BatchItem":
+        if (self.size is None) == (self.url is None):
+            raise ValueError("set exactly one of size (upload from device) or url")
+        return self
+
+
+class BatchIn(BaseModel):
+    items: list[BatchItem] = Field(min_length=1, max_length=BATCH_MAX)
+
+
+
 def parse_range(header: str, size: int) -> tuple[int, int]:
     m = re.fullmatch(r"bytes=(\d*)-(\d*)", header.strip())
     if not m or m.groups() == ("", ""):
@@ -86,7 +107,7 @@ def create_app(settings: Settings | None = None, tg=None, scanner=None) -> FastA
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         engine, sessions = db.connect(settings.database_url)
-        client = tg or Telegram(settings.tg_session, settings.tg_api_id, settings.tg_api_hash)
+        client = tg or Telegram(settings.tg_session, settings.tg_api_id, settings.tg_api_hash, settings.tg_upload_workers)
         await client.start()
         svc = Service(settings, sessions, client, scanner or ClamAV(settings.clamd_host, settings.clamd_port))
         await svc.start()
@@ -183,6 +204,20 @@ def create_app(settings: Settings | None = None, tg=None, scanner=None) -> FastA
     @app.post("/uploads/from-url", status_code=202, tags=["uploads"])
     async def create_url_upload(body: UrlUploadIn, svc: Service = Svc):
         return await svc.create_url_upload(body.url, body.path, body.send_as, body.on_conflict, body.callback_url)
+
+    @app.post("/uploads/batch", status_code=201, tags=["uploads"])
+    async def create_batch(body: BatchIn, svc: Service = Svc):
+        return await svc.create_batch([i.model_dump() for i in body.items])
+
+    @app.get("/tasks", tags=["uploads"])
+    async def list_tasks(
+        batch_id: uuid.UUID | None = None,
+        status: Literal["pending", "running", "done", "failed"] | None = None,
+        limit: int = Query(100, ge=1, le=500),
+        offset: int = Query(0, ge=0),
+        svc: Service = Svc,
+    ):
+        return await svc.list_tasks(batch_id, status, limit, offset)
 
     @app.get("/tasks/{tid}", tags=["uploads"])
     async def get_task(tid: uuid.UUID, svc: Service = Svc):
