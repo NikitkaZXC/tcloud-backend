@@ -27,6 +27,7 @@ class FakeTelegram:
         self.delay = 0.0
         self.sending = 0
         self.max_sending = 0
+        self.on_deleted = None
 
     async def start(self) -> None:
         pass
@@ -147,6 +148,14 @@ class FakeTelegram:
     async def delete(self, chat_id: int, message_ids: list[int]) -> None:
         for message_id in message_ids:
             self.chats[chat_id]["messages"].pop(message_id, None)
+
+    async def watch_deletions(self, callback) -> None:
+        self.on_deleted = callback
+
+    async def delete_by_hand(self, chat_id: int, message_ids: list[int]) -> None:
+        for message_id in message_ids:
+            self.chats[chat_id]["messages"].pop(message_id, None)
+        await self.on_deleted(chat_id, message_ids)
 
     def messages(self) -> list[dict]:
         return [

@@ -1,12 +1,12 @@
 import asyncio
 import os
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from functools import wraps
 from pathlib import Path
 
 from loguru import logger
 from telethon import TelegramClient as TelethonClient
-from telethon import errors, functions, helpers, types, utils
+from telethon import errors, events, functions, helpers, types, utils
 
 from src.infrastructure.enums import MediaKind
 from src.infrastructure.integrations.telegram.exception import (
@@ -50,7 +50,12 @@ def translate_errors(method):
 
 class TelegramClient:
     def __init__(
-        self, session: Path, api_id: int, api_hash: str, upload_workers: int = 4
+        self,
+        session: Path,
+        api_id: int,
+        api_hash: str,
+        upload_workers: int = 4,
+        receive_updates: bool = False,
     ) -> None:
         self.upload_workers = upload_workers
         session.parent.mkdir(parents=True, exist_ok=True)
@@ -60,7 +65,7 @@ class TelegramClient:
             api_hash,
             flood_sleep_threshold=FLOOD_SLEEP_THRESHOLD,
             device_model="tcloud",
-            receive_updates=False,
+            receive_updates=receive_updates,
         )
 
     async def start(self) -> None:
@@ -83,6 +88,16 @@ class TelegramClient:
 
     def connected(self) -> bool:
         return self._client.is_connected()
+
+    async def watch_deletions(
+        self, callback: Callable[[int, list[int]], Awaitable[None]]
+    ) -> None:
+        async def handler(event: events.MessageDeleted.Event) -> None:
+            if event.chat_id is not None:
+                await callback(event.chat_id, list(event.deleted_ids))
+
+        self._client.add_event_handler(handler, events.MessageDeleted())
+        await self._client.catch_up()
 
     @translate_errors
     async def is_premium(self) -> bool:

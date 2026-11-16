@@ -8,7 +8,8 @@ from src.application.schemas import FileServiceRead
 from src.application.services.storage import StorageService
 from src.infrastructure.background import AppRuntime
 from src.infrastructure.database.models import FileDB
-from src.infrastructure.database.repositories import FileRepository
+from src.infrastructure.database.repositories import FileRepository, StorageRepository
+from src.infrastructure.integrations import TelegramMessageGoneError
 from src.utilities.parsers import split_file
 
 
@@ -23,6 +24,7 @@ class FileService:
         self._runtime = runtime
         self._storage_service = storage_service
         self._repo = FileRepository(session)
+        self._storages = StorageRepository(session)
 
     async def get_db(self, file_id: UUID) -> tuple[FileDB, int]:
         found = await self._repo.get_with_chat(file_id)
@@ -50,6 +52,26 @@ class FileService:
 
     async def open_download(self, file_id: UUID) -> tuple[FileDB, object]:
         file, chat_id = await self.get_db(file_id)
-        return file, await self._runtime.telegram.message_media(
-            chat_id, file.tg_message_id
-        )
+        try:
+            media = await self._runtime.telegram.message_media(
+                chat_id, file.tg_message_id
+            )
+        except TelegramMessageGoneError:
+            await self._repo.delete_by_ids([file_id])
+            await self._session.commit()
+            logger.info("File {} is gone from Telegram, record removed", file_id)
+            raise
+        return file, media
+
+    async def forget_messages(self, chat_id: int, message_ids: list[int]) -> None:
+        storage = await self._storages.get_by_chat_id(chat_id)
+        if not storage:
+            return
+        removed = await self._repo.delete_by_messages(storage.id, message_ids)
+        await self._session.commit()
+        if removed:
+            logger.info(
+                "{} files deleted in Telegram, records removed from storage {}",
+                len(removed),
+                storage.id,
+            )

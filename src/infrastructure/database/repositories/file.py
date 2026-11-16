@@ -74,6 +74,21 @@ class FileRepository:
             update(FileDB).where(FileDB.id == file_id).values(**values)
         )
 
+    async def delete_by_messages(
+        self, storage_id: UUID, message_ids: list[int]
+    ) -> list[UUID]:
+        if not message_ids:
+            return []
+        result = await self._session.execute(
+            delete(FileDB)
+            .where(
+                FileDB.storage_id == storage_id,
+                FileDB.tg_message_id.in_(message_ids),
+            )
+            .returning(FileDB.id)
+        )
+        return list(result.scalars().all())
+
     async def delete_by_ids(self, file_ids: list[UUID]) -> None:
         if file_ids:
             await self._session.execute(delete(FileDB).where(FileDB.id.in_(file_ids)))

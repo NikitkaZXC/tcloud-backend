@@ -13,6 +13,11 @@ class StorageRepository:
     async def get_by_id(self, storage_id: UUID) -> StorageDB | None:
         return await self._session.get(StorageDB, storage_id, populate_existing=True)
 
+    async def get_by_chat_id(self, chat_id: int) -> StorageDB | None:
+        return await self._session.scalar(
+            select(StorageDB).where(StorageDB.tg_chat_id == chat_id)
+        )
+
     async def exists_chat(self, chat_id: int) -> bool:
         return bool(
             await self._session.scalar(

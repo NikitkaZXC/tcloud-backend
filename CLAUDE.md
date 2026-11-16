@@ -40,6 +40,7 @@ Layers: `api → application → infrastructure`; `utilities` are shared. `src/a
 - ClamAV image must be `*-debian` (alpine tags are amd64 only); stream limits are raised and alerts made strict in `docker/clamd.conf` (`test_clamd_config_is_strict` guards it). `Heuristics.Encrypted|Limits.Exceeded|OLE2.ContainsMacros` mean `unscannable`, every other hit is `infected`.
 - Tests: `tests/conftest.py` sets `TEST_ENV` (with `ENV_FILE=""`) before importing `src`; API tests patch `main.create_telegram`/`main.create_scanner` with `tests/fakes.py` and run real Celery workers in threads on `memory://` (session-scoped), swapping `src.application.tasks.upload.runtime` per test.
 - Never run several embedded Celery workers on RabbitMQ in one process (shared kombu hub corrupts AMQP frames): API tests use `memory://`; ordering and crash tests spawn real `celery worker` processes (`tests/integration/test_workers_e2e.py`).
+- Only the API Telegram client has `receive_updates=True` (manual deletions in Telegram drop DB rows via `events.MessageDeleted`); register the handler before `catch_up()`. Workers create clients with `receive_updates=False`.
 - RabbitMQ `consumer_timeout` must stay raised (compose sets 24 h), otherwise long Telegram uploads lose their channel at 30 min.
 
 ## Rules

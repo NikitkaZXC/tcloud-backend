@@ -11,7 +11,9 @@ from src.infrastructure.enums import UploadQueue
 from src.infrastructure.integrations import create_scanner, create_telegram
 
 runtime = WorkerRuntime(
-    telegram=lambda: create_telegram(settings.telegram.WORKER_SESSION),
+    telegram=lambda: create_telegram(
+        settings.telegram.WORKER_SESSION, receive_updates=False
+    ),
     scanner=create_scanner,
 )
 heartbeat = Heartbeat()
