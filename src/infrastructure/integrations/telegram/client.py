@@ -197,6 +197,14 @@ class TelegramClient:
         return utils.get_peer_id(result.chats[0])
 
     @translate_errors
+    async def delete_channel(self, chat_id: int) -> None:
+        try:
+            channel = await self._entity(chat_id)
+            await self._client(functions.channels.DeleteChannelRequest(channel))
+        except ValueError, errors.ChannelInvalidError, errors.ChannelPrivateError:
+            logger.warning("Telegram channel {} is already gone", chat_id)
+
+    @translate_errors
     async def check_channel(self, chat_id: int) -> None:
         try:
             channel = await self._entity(chat_id)

@@ -5,7 +5,11 @@ from uuid import UUID
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.application.exception import StorageNotFoundError, StoragePhotoNotFoundError
+from src.application.exception import (
+    StorageBusyError,
+    StorageNotFoundError,
+    StoragePhotoNotFoundError,
+)
 from src.application.schemas import (
     StorageServiceCreate,
     StorageServiceRead,
@@ -42,6 +46,23 @@ class StorageService:
         await self._session.commit()
         logger.info("Storage {} created as channel {}", storage.id, chat_id)
         return await self.get(storage.id)
+
+    async def delete(self, storage_id: UUID, keep_channel: bool) -> None:
+        storage = await self.get_db(storage_id)
+        if await self._runtime.store.storage_busy(storage_id):
+            raise StorageBusyError(
+                "storage has uploads in progress, wait for them or cancel them"
+            )
+        if not keep_channel:
+            await self._runtime.telegram.delete_channel(storage.tg_chat_id)
+        await self._repo.delete(storage)
+        await self._session.commit()
+        logger.info(
+            "Storage {} deleted, channel {} {}",
+            storage_id,
+            storage.tg_chat_id,
+            "kept" if keep_channel else "deleted",
+        )
 
     async def get_all(self) -> list[StorageServiceRead]:
         storages = await self._repo.get_all()

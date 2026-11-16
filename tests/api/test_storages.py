@@ -5,7 +5,7 @@ import main
 from src.config import settings
 from src.infrastructure import limits
 from tests.api.conftest import path, upload
-from tests.factories import EXE, make_image
+from tests.factories import EXE, PDF, make_image
 
 
 async def test_wrong_api_key(client):
@@ -211,3 +211,45 @@ async def test_chats_from_env_idempotent(make_client, telegram, monkeypatch):
 
 async def test_no_chats_in_env(client):
     assert (await client.get("/storages")).json() == []
+
+
+async def test_delete_storage_with_channel(client, telegram, storage):
+    chat_id = storage["telegram"]["chat_id"]
+    file = (await upload(client, path(storage, "a/b.pdf"), PDF))["file"]
+    response = await client.delete(f"/storages/{storage['id']}")
+    assert response.status_code == 204
+    assert chat_id not in telegram.chats
+    assert (await client.get(f"/storages/{storage['id']}")).status_code == 404
+    assert (await client.get(f"/files/{file['uuid']}")).status_code == 404
+    listing = await client.get("/folders", params={"path": path(storage, "a")})
+    assert listing.status_code == 404
+    again = await client.delete(f"/storages/{storage['id']}")
+    assert again.json()["error"]["code"] == "storage_not_found"
+
+
+async def test_delete_storage_keeps_channel(client, telegram, storage):
+    chat_id = storage["telegram"]["chat_id"]
+    await upload(client, path(storage, "b.pdf"), PDF)
+    response = await client.delete(
+        f"/storages/{storage['id']}", params={"keep_channel": "true"}
+    )
+    assert response.status_code == 204
+    assert chat_id in telegram.chats and telegram.chats[chat_id]["messages"]
+    assert (await client.get("/storages")).json() == []
+
+
+async def test_delete_storage_with_uploads_in_progress(client, telegram, storage):
+    store = main.app.state.runtime.store
+    target, task_id = path(storage, "busy.pdf"), uuid.uuid4()
+    await store.lock_path(target, task_id)
+    response = await client.delete(f"/storages/{storage['id']}")
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "storage_busy"
+    assert storage["telegram"]["chat_id"] in telegram.chats
+    await store.unlock_path(target, task_id)
+    assert (await client.delete(f"/storages/{storage['id']}")).status_code == 204
+
+
+async def test_delete_storage_whose_channel_is_gone(client, telegram, storage):
+    telegram.chats.pop(storage["telegram"]["chat_id"])
+    assert (await client.delete(f"/storages/{storage['id']}")).status_code == 204

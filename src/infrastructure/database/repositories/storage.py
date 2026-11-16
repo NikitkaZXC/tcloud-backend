@@ -37,6 +37,10 @@ class StorageRepository:
         await self._session.flush()
         return storage
 
+    async def delete(self, storage: StorageDB) -> None:
+        await self._session.delete(storage)
+        await self._session.flush()
+
     async def touch(self, storage_id: UUID) -> None:
         await self._session.execute(
             update(StorageDB)

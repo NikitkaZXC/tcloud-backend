@@ -7,6 +7,12 @@ class StorageNotFoundError(TCloudError):
     code = "storage_not_found"
 
 
+class StorageBusyError(TCloudError):
+    """Raised when a storage has uploads in progress."""
+
+    code = "storage_busy"
+
+
 class StoragePhotoNotFoundError(TCloudError):
     """Raised when a storage channel has no photo."""
 

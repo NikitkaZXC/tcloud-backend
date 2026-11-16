@@ -116,6 +116,10 @@ class FakeTelegram:
         self.chats[chat_id]["about"] = about
         return chat_id
 
+    async def delete_channel(self, chat_id: int) -> None:
+        self._check()
+        self.chats.pop(chat_id, None)
+
     async def check_channel(self, chat_id: int) -> None:
         chat = self.chats.get(chat_id)
         if chat is None:

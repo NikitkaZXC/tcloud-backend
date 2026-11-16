@@ -63,6 +63,20 @@ async def update_storage(
     return await storage_service.update(storage_id, update)
 
 
+@router.delete(
+    path="/{storage_id}",
+    name="storages:delete",
+    summary="Delete a storage with its files: the channel too, unless keep_channel",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_storage(
+    storage_id: UUID,
+    keep_channel: bool = False,
+    storage_service: StorageService = Depends(get_service_storage),
+) -> None:
+    await storage_service.delete(storage_id, keep_channel)
+
+
 @router.put(
     path="/{storage_id}/photo",
     name="storages:set-photo",

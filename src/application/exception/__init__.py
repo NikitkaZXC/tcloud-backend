@@ -8,7 +8,11 @@ from .auth import (
 )
 from .file import PathConflictError, StoredFileNotFoundError
 from .folder import FolderNotFoundError, StorageRootError
-from .storage import StorageNotFoundError, StoragePhotoNotFoundError
+from .storage import (
+    StorageBusyError,
+    StorageNotFoundError,
+    StoragePhotoNotFoundError,
+)
 from .upload import (
     FileTooLargeError,
     LengthRequiredError,
@@ -33,6 +37,7 @@ __all__ = [
     "FolderNotFoundError",
     "PathConflictError",
     "SizeMismatchError",
+    "StorageBusyError",
     "StorageNotFoundError",
     "StoragePhotoNotFoundError",
     "StorageRootError",

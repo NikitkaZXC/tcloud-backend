@@ -173,6 +173,12 @@ class TaskStore:
     async def path_locked(self, path: str) -> bool:
         return bool(await self._redis.exists(self._key("path", path)))
 
+    async def storage_busy(self, storage_id: UUID) -> bool:
+        pattern = self._key("path", f"tcloud/{storage_id}/*")
+        async for _ in self._redis.scan_iter(match=pattern, count=1000):
+            return True
+        return False
+
     async def unlock_path(self, path: str, task_id: UUID) -> None:
         await self._redis.eval(UNLOCK, 1, self._key("path", path), str(task_id))
 

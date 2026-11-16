@@ -19,6 +19,7 @@ STATUS_BY_CODE = {
     "flood_wait": status.HTTP_429_TOO_MANY_REQUESTS,
     "channel_unusable": status.HTTP_422_UNPROCESSABLE_CONTENT,
     "storage_not_found": status.HTTP_404_NOT_FOUND,
+    "storage_busy": status.HTTP_409_CONFLICT,
     "photo_not_found": status.HTTP_404_NOT_FOUND,
     "folder_not_found": status.HTTP_404_NOT_FOUND,
     "file_not_found": status.HTTP_404_NOT_FOUND,
