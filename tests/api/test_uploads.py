@@ -329,7 +329,7 @@ async def test_conflict_error(client, storage):
     response = await post_file(client, path(storage, "a.jpg"))
     error = response.json()["error"]
     assert response.status_code == 409 and error["code"] == "conflict"
-    assert error["suggested_name"] == "a (2).jpg"
+    assert error["suggested_name"] == "a-2.jpg"
 
 
 async def test_conflict_replace_keeps_uuid(client, telegram, storage):
@@ -360,7 +360,7 @@ async def test_conflict_keep_both(client, storage):
             client, path(storage, "a.jpg"), make_image(), on_conflict="keep_both"
         )
     )["file"]
-    assert (second["name"], third["name"]) == ("a (2).jpg", "a (3).jpg")
+    assert (second["name"], third["name"]) == ("a-2.jpg", "a-3.jpg")
 
 
 async def test_conflict_skip(client, telegram, storage):
@@ -400,7 +400,7 @@ async def test_keep_both_without_extension(client, storage):
             client, path(storage, "README"), b"plain text", on_conflict="keep_both"
         )
     )["file"]
-    assert second["name"] == "README (2)"
+    assert second["name"] == "README-2"
 
 
 async def test_keep_both_reserves_name_against_active_uploads(
@@ -413,7 +413,7 @@ async def test_keep_both_reserves_name_against_active_uploads(
             client, path(storage, "a.jpg"), make_image(), **options
         )
         names.append(response.json()["path"].rsplit("/", 1)[1])
-    assert names == ["a.jpg", "a (2).jpg", "a (3).jpg"]
+    assert names == ["a.jpg", "a-2.jpg", "a-3.jpg"]
 
 
 async def test_task_fields(client, storage):

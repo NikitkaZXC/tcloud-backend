@@ -77,7 +77,7 @@ class UploadService:
         if not stem:
             stem, dot, suffix = name, "", ""
         for index in range(2, 10_000):
-            candidate = f"{stem} ({index}){dot}{suffix}"
+            candidate = f"{stem}-{index}{dot}{suffix}"
             if not await self._taken(storage_id, folder, candidate):
                 check_segment(candidate)
                 return candidate
