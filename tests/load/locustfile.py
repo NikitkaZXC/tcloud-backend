@@ -40,7 +40,7 @@ class Uploader(HttpUser):
             status = self.client.get(
                 f"/api/tasks/{task_id}", name="/api/tasks/[id]"
             ).json()["status"]
-            if status in ("done", "failed"):
+            if status in ("done", "failed", "cancelled"):
                 events.request.fire(
                     request_type="TASK",
                     name="upload end-to-end",

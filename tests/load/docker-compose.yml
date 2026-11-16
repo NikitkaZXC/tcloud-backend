@@ -26,3 +26,15 @@ services:
       test: ["CMD", "redis-cli", "ping"]
       interval: 2s
       retries: 30
+
+  rabbitmq:
+    image: rabbitmq:4-alpine
+    environment:
+      RABBITMQ_DEFAULT_USER: load
+      RABBITMQ_DEFAULT_PASS: load
+    ports:
+      - "127.0.0.1:55672:5672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      retries: 30
