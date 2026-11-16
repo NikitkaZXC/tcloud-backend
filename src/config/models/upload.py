@@ -9,8 +9,8 @@ class UploadSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="UPLOAD_")
 
     TMP_DIR: Path = Path("data/tmp")
-    MAX_ACTIVE_TASKS: int = 500
-    MAX_FILES_ON_DISK: int = 10
+    MAX_ACTIVE_TASKS: int = 0
+    MAX_FILES_ON_DISK: int = 0
     TASK_TTL: int = 7 * 24 * 3600
     LOCK_TTL: int = 24 * 3600
     HEARTBEAT_INTERVAL: float = 10.0

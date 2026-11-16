@@ -196,3 +196,16 @@ async def test_url_upload_waits_for_a_disk_slot(
     probe = uuid.uuid4()
     assert await store.take_disk_slot(probe)
     await store.release(probe, "x")
+
+
+async def test_zero_limits_mean_unlimited(client, storage, monkeypatch):
+    monkeypatch.setattr(settings.upload, "MAX_FILES_ON_DISK", 0)
+    monkeypatch.setattr(settings.upload, "MAX_ACTIVE_TASKS", 0)
+    store = main.app.state.runtime.store
+    holders = [uuid.uuid4() for _ in range(3)]
+    for holder in holders:
+        assert await store.take_disk_slot(holder)
+    response = await post_file(client, path(storage, "a.jpg"))
+    assert response.status_code == 202
+    for holder in holders:
+        await store.release(holder, "x")

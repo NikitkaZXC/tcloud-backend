@@ -82,8 +82,9 @@ class UploadService:
         raise PathConflictError("no free name left")
 
     async def _check_active(self) -> None:
-        active = await self._store.count_active()
-        if active >= settings.upload.MAX_ACTIVE_TASKS:
+        limit = settings.upload.MAX_ACTIVE_TASKS
+        active = await self._store.count_active() if limit else 0
+        if limit and active >= limit:
             raise TooManyTasksError(
                 f"{active} uploads are already in progress, try later", retry_after=30
             )

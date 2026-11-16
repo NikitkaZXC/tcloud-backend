@@ -75,7 +75,8 @@ return 'running'
 DISK_SLOT = """
 if redis.call('ZSCORE', KEYS[1], ARGV[1]) then return 1 end
 redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', ARGV[3])
-if redis.call('ZCARD', KEYS[1]) >= tonumber(ARGV[2]) then return 0 end
+local limit = tonumber(ARGV[2])
+if limit > 0 and redis.call('ZCARD', KEYS[1]) >= limit then return 0 end
 redis.call('ZADD', KEYS[1], ARGV[4], ARGV[1])
 return 1
 """
