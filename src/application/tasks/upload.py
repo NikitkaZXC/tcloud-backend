@@ -54,6 +54,11 @@ def send_upload(self: Task, task_id: str, generation: int = 0) -> None:
     _execute(self, UploadQueue.TELEGRAM, task_id, generation)
 
 
+@app.task(name=UploadQueue.ARCHIVE.value, bind=True)
+def build_archive(self: Task, task_id: str, generation: int = 0) -> None:
+    _execute(self, UploadQueue.ARCHIVE, task_id, generation)
+
+
 @worker_ready.connect
 def on_worker_ready(sender: Any = None, **_: Any) -> None:
     heartbeat.start(

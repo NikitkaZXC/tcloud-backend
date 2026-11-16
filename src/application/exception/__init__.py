@@ -14,6 +14,8 @@ from .storage import (
     StoragePhotoNotFoundError,
 )
 from .upload import (
+    ArchiveExpiredError,
+    ArchiveNotReadyError,
     FileTooLargeError,
     LengthRequiredError,
     SizeMismatchError,
@@ -57,6 +59,8 @@ __all__ = [
     "StoragePhotoNotFoundError",
     "StorageRootError",
     "StoredFileNotFoundError",
+    "ArchiveExpiredError",
+    "ArchiveNotReadyError",
     "TaskCancelledError",
     "TaskFinishedError",
     "TaskNotFoundError",

@@ -59,3 +59,15 @@ class TaskNotRetryableError(TCloudError):
     """Raised when a task cannot be retried."""
 
     code = "task_not_retryable"
+
+
+class ArchiveNotReadyError(TCloudError):
+    """Raised when the archive of a task is downloaded before the task is done."""
+
+    code = "archive_not_ready"
+
+
+class ArchiveExpiredError(TCloudError):
+    """Raised when a finished archive was already removed from the server."""
+
+    code = "archive_expired"

@@ -2,7 +2,12 @@ from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.application.factory.runtime import get_runtime
-from src.application.services import FileService, FolderService, StorageService
+from src.application.services import (
+    FileService,
+    FolderService,
+    StorageService,
+    TaskService,
+)
 from src.infrastructure.background import AppRuntime
 from src.infrastructure.database.session import get_session
 
@@ -20,7 +25,10 @@ def get_service_folder(
     storage_service: StorageService = Depends(get_service_storage),
 ) -> FolderService:
     return FolderService(
-        session=session, runtime=runtime, storage_service=storage_service
+        session=session,
+        runtime=runtime,
+        storage_service=storage_service,
+        task_service=TaskService(session=session, store=runtime.store),
     )
 
 

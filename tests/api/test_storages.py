@@ -31,6 +31,7 @@ async def test_health(client, scanner, redis):
             "uploads.download": True,
             "uploads.prepare": True,
             "uploads.telegram": True,
+            "archives.build": True,
         },
     }
     scanner.available = False

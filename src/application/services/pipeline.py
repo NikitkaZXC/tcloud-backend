@@ -3,6 +3,7 @@ import hashlib
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import asdict
+from datetime import UTC, datetime
 from pathlib import Path
 from uuid import UUID, uuid7
 
@@ -10,6 +11,7 @@ from loguru import logger
 
 from src.application.exception import PathConflictError, TaskCancelledError
 from src.application.schemas import caption_token
+from src.application.services.archive import build_archive
 from src.application.services.temp import remove_task_files, temp_path
 from src.application.services.webhook import send_hook
 from src.config import settings
@@ -82,6 +84,7 @@ class UploadPipeline:
             UploadQueue.DOWNLOAD: self._download,
             UploadQueue.PREPARE: self._prepare,
             UploadQueue.TELEGRAM: self._send,
+            UploadQueue.ARCHIVE: self._archive,
         }[queue]
         beat = self._runtime.spawn(self._beat(task_id))
         try:
@@ -344,6 +347,64 @@ class UploadPipeline:
         ):
             await telegram.delete(chat_id, [existing.tg_message_id])
         await self.finish(task, file_id, prepared["warnings"])
+
+    async def _archive(self, task: dict) -> None:
+        params = task["params"]
+        await self.stage(task, TaskStage.ARCHIVING, task["bytes_total"])
+        async with self._runtime.session_factory() as session:
+            found = await FileRepository(session).get_many_with_chat(
+                [UUID(file_id) for file_id in params["file_ids"]]
+            )
+            storage = await StorageRepository(session).get_by_id(
+                UUID(params["storage_id"])
+            )
+        files = sorted(
+            (file for file, _ in found.values()),
+            key=lambda file: (file.folder_path, file.name),
+        )
+        missing = len(params["file_ids"]) - len(files)
+        sizes = [file.size for file in files]
+        reservation = self._runtime.disk.reserve(sum(sizes) + max(sizes, default=0))
+        try:
+            pause = self._runtime.telegram_resume_at - time.monotonic()
+            if pause > 0:
+                await self._wait(task, "flood_wait", pause)
+            warnings = await build_archive(
+                await self._runtime.telegram(),
+                storage.tg_chat_id,
+                files,
+                params["folder"],
+                params["format"],
+                Path(params["file"]),
+                lambda done: self.progress(task["id"], done),
+                lambda: self._checkpoint(task),
+            )
+        finally:
+            reservation.release()
+        if missing:
+            warnings.append(f"{missing} files were deleted before archiving")
+        await self._checkpoint(task)
+        archive = Path(params["file"])
+        until = time.time() + settings.upload.ARCHIVE_TTL
+        await self._store.keep_archive(str(archive), until)
+        await self._store.update(
+            task["id"],
+            params={**params, "file": None},
+            archive={
+                **task["archive"],
+                "path": str(archive),
+                "size": archive.stat().st_size,
+                "expires_at": datetime.fromtimestamp(until, UTC),
+            },
+        )
+        await self._close(
+            task,
+            status=TaskStatus.DONE,
+            stage=TaskStage.DONE,
+            warnings=warnings,
+            bytes_done=task["bytes_total"],
+        )
+        logger.info("Task {} archive ready: {}", task["id"], task["path"])
 
     async def stage(
         self,

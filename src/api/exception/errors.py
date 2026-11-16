@@ -33,6 +33,8 @@ STATUS_BY_CODE = {
     "task_finished": status.HTTP_409_CONFLICT,
     "task_not_queued": status.HTTP_409_CONFLICT,
     "task_not_retryable": status.HTTP_409_CONFLICT,
+    "archive_not_ready": status.HTTP_409_CONFLICT,
+    "archive_expired": status.HTTP_410_GONE,
     "too_many_tasks": status.HTTP_429_TOO_MANY_REQUESTS,
     "size_mismatch": status.HTTP_400_BAD_REQUEST,
     "telegram_unauthorized": status.HTTP_503_SERVICE_UNAVAILABLE,

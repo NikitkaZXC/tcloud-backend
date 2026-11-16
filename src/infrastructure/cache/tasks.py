@@ -243,6 +243,17 @@ class TaskStore:
             if rank is not None
         }
 
+    async def keep_archive(self, path: str, until: float) -> None:
+        await self._redis.zadd(self._key("archives"), {path: until})
+
+    async def archives(self) -> dict[str, float]:
+        return dict(
+            await self._redis.zrange(self._key("archives"), 0, -1, withscores=True)
+        )
+
+    async def forget_archive(self, path: str) -> None:
+        await self._redis.zrem(self._key("archives"), path)
+
     async def activate(self, task_id: UUID) -> None:
         await self._redis.zadd(self._key("active"), {str(task_id): time.time()})
 

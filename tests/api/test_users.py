@@ -8,7 +8,7 @@ from pydantic import SecretStr
 import main
 from src.application.bootstrap.startup import prepare
 from src.config import settings
-from tests.api.conftest import path, start_upload, upload, wait_task
+from tests.api.conftest import build_archive, path, start_upload, upload, wait_task
 from tests.factories import PDF, make_image
 
 
@@ -232,10 +232,11 @@ async def test_grants_limit_files_and_folders(client, storage, make_user):
     assert response.status_code == 403
     assert (await reader.get(f"/files/{secret['uuid']}")).status_code == 403
     assert (await reader.get(f"/files/{secret['uuid']}/download")).status_code == 403
-    archive = await reader.get("/folders/archive", params={"path": path(storage)})
+    task, archive = await build_archive(reader, path(storage))
     assert archive.status_code == 200
     with zipfile.ZipFile(io.BytesIO(archive.content)) as content:
         assert sorted(content.namelist()) == ["shared/a.pdf", "shared/deep/b.pdf"]
+    assert (await client.get(f"/tasks/{task['id']}/archive")).status_code == 404
     assert (await reader.delete(f"/files/{secret['uuid']}")).status_code == 403
     response = await reader.post(
         "/uploads", params={"path": path(storage, "shared/new.pdf")}, content=PDF

@@ -21,7 +21,7 @@ worker-prepare:
 	$(CELERY) --concurrency 4 --queues uploads.prepare --hostname prepare@%h
 
 worker-telegram:
-	$(CELERY) --concurrency 2 --queues uploads.telegram --hostname telegram@%h
+	$(CELERY) --concurrency 2 --queues uploads.telegram,archives.build --hostname telegram@%h
 
 flower:
 	uv run celery --app src.infrastructure.background.celery.app flower --port=5555
@@ -96,7 +96,7 @@ LOAD_CELERY = uv run --env-file $(LOAD_ENV) celery --app tests.load.worker worke
 load-workers:
 	$(LOAD_CELERY) --concurrency 4 --queues uploads.download --hostname download@load & \
 	$(LOAD_CELERY) --concurrency 4 --queues uploads.prepare --hostname prepare@load & \
-	$(LOAD_CELERY) --concurrency 2 --queues uploads.telegram --hostname telegram@load & \
+	$(LOAD_CELERY) --concurrency 2 --queues uploads.telegram,archives.build --hostname telegram@load & \
 	wait
 
 load:

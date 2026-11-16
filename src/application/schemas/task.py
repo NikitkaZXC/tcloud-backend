@@ -11,6 +11,14 @@ class TaskWaitingServiceRead(BaseModel):
     seconds: int | None = None
 
 
+class TaskArchiveServiceRead(BaseModel):
+    name: str
+    format: str
+    files: int
+    size: int | None = None
+    expires_at: datetime | None = None
+
+
 class TaskServiceRead(BaseModel):
     id: UUID
     batch_id: UUID | None
@@ -30,6 +38,7 @@ class TaskServiceRead(BaseModel):
     error: dict | None
     warnings: list[str]
     file: FileServiceRead | None
+    archive: TaskArchiveServiceRead | None = None
     created_at: datetime
     updated_at: datetime
 

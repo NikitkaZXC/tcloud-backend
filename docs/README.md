@@ -16,7 +16,7 @@
 | [database.md](database.md) | таблицы, индексы и зачем они, миграции |
 | [security.md](security.md) | доступ, проверка файлов, ClamAV, SSRF, контейнер, секреты |
 | [integrations.md](integrations.md) | Telegram (Telethon) и его лимиты, ClamAV, исходящий HTTP |
-| [background-tasks.md](background-tasks.md) | Celery и RabbitMQ: очереди, приоритеты, воркеры, состояние в Redis, лимиты, FloodWait, повторы, вебхуки |
+| [background-tasks.md](background-tasks.md) | Celery и RabbitMQ: очереди загрузок и архивов, приоритеты, воркеры, состояние в Redis, лимиты, FloodWait, повторы, вебхуки |
 
 ### Работа с проектом
 

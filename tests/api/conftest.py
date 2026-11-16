@@ -31,22 +31,23 @@ def celery_workers(redis_server: None) -> Iterator[None]:
     app.conf.broker_url = "memory://"
     app.conf.broker_transport_options = {"polling_interval": 0.01}
     with ExitStack() as stack:
-        for queue, concurrency in (
-            (UploadQueue.DOWNLOAD, 4),
-            (UploadQueue.PREPARE, 4),
-            (UploadQueue.TELEGRAM, TELEGRAM_CONCURRENCY),
+        for queues, concurrency in (
+            ([UploadQueue.DOWNLOAD], 4),
+            ([UploadQueue.PREPARE], 4),
+            ([UploadQueue.TELEGRAM, UploadQueue.ARCHIVE], TELEGRAM_CONCURRENCY),
         ):
+            names = [queue.value for queue in queues]
             stack.enter_context(
                 start_worker(
                     app,
                     concurrency=concurrency,
                     pool="threads",
                     perform_ping_check=False,
-                    queues=[queue.value],
-                    hostname=f"{queue.value}@test",
+                    queues=names,
+                    hostname=f"{names[0]}@test",
                 )
             )
-            upload_tasks.heartbeat.start([queue.value], f"{queue.value}@test")
+            upload_tasks.heartbeat.start(names, f"{names[0]}@test")
         yield
         upload_tasks.heartbeat.stop()
 
@@ -231,6 +232,15 @@ async def wait_task(client: AsyncClient, task_id: str, timeout: float = 30) -> d
             return task
         await asyncio.sleep(0.02)
     raise AssertionError(f"task {task_id} did not finish: {task}")
+
+
+async def build_archive(
+    client: AsyncClient, target: str, **params
+) -> tuple[dict, object]:
+    response = await client.post("/folders/archive", params={"path": target, **params})
+    assert response.status_code == 202, response.text
+    task = await wait_task(client, response.json()["id"])
+    return task, await client.get(f"/tasks/{task['id']}/archive")
 
 
 async def start_upload(client: AsyncClient, target: str, data: bytes, **options):

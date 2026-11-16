@@ -2,12 +2,15 @@ import io
 import tarfile
 import uuid
 import zipfile
+from pathlib import Path
 
 import py7zr
 import pytest
 
+from src.application.services import TaskSweeper
 from src.config import settings
-from tests.api.conftest import path, upload
+from src.infrastructure.cache import TaskStore
+from tests.api.conftest import build_archive, path, upload, wait_task
 from tests.factories import PDF, make_image
 
 
@@ -187,28 +190,45 @@ async def test_download_refuses_a_replaced_file(client, photo, telegram):
     assert response.json()["error"]["code"] == "file_changed"
 
 
-async def test_folder_archive_has_the_whole_tree(client, storage):
+async def stored_archive(redis, task: dict) -> Path:
+    return Path((await TaskStore(redis).get(task["id"]))["archive"]["path"])
+
+
+async def test_folder_archive_has_the_whole_tree(client, storage, redis):
     image = make_image()
     await upload(client, path(storage, "trip/1.jpg"), image)
     await upload(client, path(storage, "trip/day 2/2.pdf"), PDF)
     await upload(client, path(storage, "other/3.jpg"), image)
-    response = await client.get(
-        "/folders/archive", params={"path": path(storage, "trip")}
-    )
+    task, response = await build_archive(client, path(storage, "trip"))
+    assert task["status"] == "done" and task["stage"] == "done"
+    assert task["archive"]["name"] == "trip.zip" and task["archive"]["files"] == 2
+    assert task["archive"]["size"] == len(response.content)
+    assert task["archive"]["expires_at"] and task["progress"] == 100.0
     assert response.status_code == 200
     assert response.headers["content-type"] == "application/zip"
-    assert "trip.zip" in response.headers["content-disposition"]
+    assert response.headers["x-content-type-options"] == "nosniff"
+    assert response.headers["content-disposition"].endswith("trip.zip")
     with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
         assert sorted(archive.namelist()) == ["1.jpg", "day 2/2.pdf"]
         assert archive.read("day 2/2.pdf") == PDF
-    assert list(settings.upload.TMP_DIR.iterdir()) == []
+    archive_path = await stored_archive(redis, task)
+    assert list(settings.upload.TMP_DIR.iterdir()) == [archive_path]
+    assert archive_path.stat().st_mode & 0o777 == 0o600
+
+
+async def test_archive_download_supports_range(client, storage):
+    await upload(client, path(storage, "a/2.pdf"), PDF)
+    task, full = await build_archive(client, path(storage, "a"))
+    response = await client.get(
+        f"/tasks/{task['id']}/archive", headers={"Range": "bytes=10-19"}
+    )
+    assert response.status_code == 206
+    assert response.content == full.content[10:20]
 
 
 async def test_storage_archive_as_tar_xz(client, storage):
     await upload(client, path(storage, "a/1.jpg"), make_image())
-    response = await client.get(
-        "/folders/archive", params={"path": path(storage), "format": "tar.xz"}
-    )
+    _, response = await build_archive(client, path(storage), format="tar.xz")
     assert response.status_code == 200
     assert response.headers["content-disposition"].endswith(f"{storage['id']}.tar.xz")
     with tarfile.open(fileobj=io.BytesIO(response.content)) as archive:
@@ -217,27 +237,68 @@ async def test_storage_archive_as_tar_xz(client, storage):
 
 async def test_folder_archive_as_7z(client, storage, tmp_path):
     await upload(client, path(storage, "trip/day 2/2.pdf"), PDF)
-    response = await client.get(
-        "/folders/archive", params={"path": path(storage, "trip"), "format": "7z"}
-    )
+    _, response = await build_archive(client, path(storage, "trip"), format="7z")
     assert response.status_code == 200
     assert response.headers["content-type"] == "application/x-7z-compressed"
     assert response.headers["content-disposition"].endswith("trip.7z")
     with py7zr.SevenZipFile(io.BytesIO(response.content)) as archive:
         archive.extractall(tmp_path)
     assert (tmp_path / "day 2" / "2.pdf").read_bytes() == PDF
-    assert list(settings.upload.TMP_DIR.iterdir()) == []
 
 
 async def test_folder_archive_errors(client, storage):
-    response = await client.get(
+    response = await client.post(
         "/folders/archive", params={"path": path(storage, "nope")}
     )
     assert response.status_code == 404
-    response = await client.get(
+    response = await client.post(
         "/folders/archive", params={"path": path(storage), "format": "rar"}
     )
     assert response.status_code == 422
+    photo = await upload(client, path(storage, "a.jpg"), make_image())
+    response = await client.get(f"/tasks/{photo['id']}/archive")
+    assert response.status_code == 404
+    task, _ = await build_archive(client, path(storage))
+    response = await client.post(f"/tasks/{task['id']}/retry")
+    assert response.json()["error"]["code"] == "task_not_retryable"
+
+
+async def test_expired_archive_is_removed(client, storage, redis):
+    await upload(client, path(storage, "a/2.pdf"), PDF)
+    task, _ = await build_archive(client, path(storage, "a"))
+    archive = await stored_archive(redis, task)
+    store = TaskStore(redis)
+    await store.keep_archive(str(archive), 0)
+    assert await TaskSweeper(store).clean_tmp() == 1
+    assert not archive.exists() and await store.archives() == {}
+    response = await client.get(f"/tasks/{task['id']}/archive")
+    assert response.status_code == 410
+    assert response.json()["error"]["code"] == "archive_expired"
+
+
+async def test_kept_archive_survives_orphan_cleanup(
+    client, storage, redis, monkeypatch
+):
+    await upload(client, path(storage, "a/2.pdf"), PDF)
+    task, _ = await build_archive(client, path(storage, "a"))
+    monkeypatch.setattr(settings.upload, "ORPHAN_AGE", -1)
+    assert await TaskSweeper(TaskStore(redis)).clean_tmp() == 0
+    assert (await client.get(f"/tasks/{task['id']}/archive")).status_code == 200
+
+
+async def test_cancelled_archive_leaves_no_files(client, storage, telegram):
+    await upload(client, path(storage, "a/2.pdf"), PDF)
+    telegram.delay = 0.5
+    response = await client.post(
+        "/folders/archive", params={"path": path(storage, "a")}
+    )
+    task_id = response.json()["id"]
+    assert (await client.post(f"/tasks/{task_id}/cancel")).status_code == 202
+    task = await wait_task(client, task_id)
+    assert task["status"] == "cancelled"
+    response = await client.get(f"/tasks/{task_id}/archive")
+    assert response.json()["error"]["code"] == "archive_not_ready"
+    assert list(settings.upload.TMP_DIR.iterdir()) == []
 
 
 async def test_folder_archive_skips_files_gone_from_telegram(client, telegram, storage):
@@ -245,6 +306,7 @@ async def test_folder_archive_skips_files_gone_from_telegram(client, telegram, s
     gone = (await upload(client, path(storage, "a/2.pdf"), PDF))["file"]
     for chat in telegram.chats.values():
         chat["messages"].pop(gone["telegram"]["message_id"], None)
-    response = await client.get("/folders/archive", params={"path": path(storage, "a")})
+    task, response = await build_archive(client, path(storage, "a"))
+    assert task["warnings"] == ["2.pdf: gone from Telegram, not archived"]
     with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
         assert archive.namelist() == ["1.jpg"]

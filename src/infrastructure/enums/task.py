@@ -17,12 +17,14 @@ class TaskStage(StrEnum):
     DOWNLOADING = "downloading"
     SCANNING = "scanning"
     UPLOADING_TG = "uploading_tg"
+    ARCHIVING = "archiving"
     DONE = "done"
 
 
 class TaskSource(StrEnum):
     DEVICE = "device"
     URL = "url"
+    ARCHIVE = "archive"
 
 
 class TaskPriority(StrEnum):
@@ -39,3 +41,4 @@ class UploadQueue(StrEnum):
     DOWNLOAD = "uploads.download"
     PREPARE = "uploads.prepare"
     TELEGRAM = "uploads.telegram"
+    ARCHIVE = "archives.build"

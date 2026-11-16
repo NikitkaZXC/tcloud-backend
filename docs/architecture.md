@@ -17,7 +17,7 @@ src/
   application/
     services/              бизнес-логика: Account, Auth (вход в Telegram, чистка старых сессий), Health, Storage, Folder, File, Task, Upload, UploadPipeline (стадии воркеров),
                            TaskSweeper (потерянные задачи, крутится в API)
-    tasks/                 Celery-задачи uploads.download, uploads.prepare, uploads.telegram, WorkerRuntime и Heartbeat воркера
+    tasks/                 Celery-задачи uploads.download, uploads.prepare, uploads.telegram, archives.build, WorkerRuntime и Heartbeat воркера
     schemas/               DTO сервисов (*ServiceRead, *ServiceCreate, *ServiceUpdate)
     factory/               FastAPI-зависимости get_service_*: сервисы роуты получают только через них
     exception/             доменные ошибки

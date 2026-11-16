@@ -1,10 +1,16 @@
 import time
 from collections import Counter
+from datetime import datetime
+from pathlib import Path
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.application.exception import TaskNotFoundError
+from src.application.exception import (
+    ArchiveExpiredError,
+    ArchiveNotReadyError,
+    TaskNotFoundError,
+)
 from src.application.schemas import (
     Actor,
     FileServiceRead,
@@ -88,6 +94,26 @@ class TaskService:
         if not task or not self.visible(task, actor):
             raise TaskNotFoundError("task not found")
         return task
+
+    async def open_archive(self, task_id: UUID, actor: Actor) -> dict:
+        task = await self._store.get(task_id)
+        if (
+            not task
+            or not task.get("archive")
+            or task.get("user_id") != str(actor.user_id)
+        ):
+            raise TaskNotFoundError("task not found")
+        if task["status"] != TaskStatus.DONE:
+            raise ArchiveNotReadyError(f"archive task is {task['status']}")
+        archive = task["archive"]
+        expired = (
+            datetime.fromisoformat(archive["expires_at"]).timestamp() < time.time()
+        )
+        if expired or not Path(archive["path"]).is_file():
+            raise ArchiveExpiredError(
+                "archive was removed from the server, build it again"
+            )
+        return archive
 
     async def get(self, task_id: UUID, actor: Actor | None) -> TaskServiceRead:
         return (await self.render_many([await self.get_raw(task_id, actor)]))[0]

@@ -198,6 +198,7 @@ class FakeTelegram:
         return SentFile(message_id, len(data), mime, media.width, media.height)
 
     async def message_media(self, chat_id: int, message_id: int) -> tuple[dict, int]:
+        await asyncio.sleep(self.delay)
         message = self.chats[chat_id]["messages"].get(message_id)
         if not message:
             raise TelegramMessageGoneError("gone")

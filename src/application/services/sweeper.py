@@ -1,6 +1,7 @@
 import asyncio
 import time
 from datetime import datetime
+from pathlib import Path
 
 from loguru import logger
 
@@ -66,8 +67,16 @@ class TaskSweeper:
     async def clean_tmp(self) -> int:
         tasks = await self._store.get_many(await self._store.active_ids())
         used = {path for task in tasks for path in task_files(task)}
-        old = time.time() - settings.upload.ORPHAN_AGE
+        now = time.time()
+        old = now - settings.upload.ORPHAN_AGE
         removed = 0
+        for archive, until in (await self._store.archives()).items():
+            if until > now:
+                used.add(Path(archive))
+                continue
+            Path(archive).unlink(missing_ok=True)
+            await self._store.forget_archive(archive)
+            removed += 1
         for item in settings.upload.TMP_DIR.iterdir():
             try:
                 if item not in used and item.stat().st_mtime < old:

@@ -8,10 +8,9 @@ from types import SimpleNamespace
 import py7zr
 import pytest
 
-from src.application.services.archive import entry_name, stream_archive
+from src.application.services.archive import build_archive, entry_name
 from src.config import settings
 from src.infrastructure.archive import ArchiveWriter
-from src.infrastructure.background.disk import DiskBudget
 from src.infrastructure.enums import ArchiveFormat
 
 MTIME = 1_800_000_000
@@ -76,9 +75,8 @@ class Download:
         yield media[offset : offset + length]
 
 
-async def test_aborted_archive_leaves_no_temporary_files(tmp_path, monkeypatch):
-    monkeypatch.setattr(settings.upload, "TMP_DIR", tmp_path)
-    files = [
+def archived_files() -> list[SimpleNamespace]:
+    return [
         SimpleNamespace(
             id=index,
             folder_path="a",
@@ -89,35 +87,53 @@ async def test_aborted_archive_leaves_no_temporary_files(tmp_path, monkeypatch):
         )
         for index in range(2)
     ]
-    disk = DiskBudget(tmp_path, 0)
-    body = stream_archive(Download(), 1, files, "", ArchiveFormat.ZIP, disk, 9_000_000)
-    assert await anext(body)
-    await body.aclose()
-    await asyncio.sleep(0.2)
-    assert list(tmp_path.iterdir()) == [] and disk.items == set()
 
 
-async def test_seven_z_is_sent_only_when_complete(tmp_path, monkeypatch):
+async def nothing() -> None:
+    return None
+
+
+async def test_build_archive_reports_progress(tmp_path, monkeypatch):
     monkeypatch.setattr(settings.upload, "TMP_DIR", tmp_path)
-    files = [
-        SimpleNamespace(
-            id=index,
-            folder_path="a",
-            name=f"{index}.bin",
-            size=3_000_000,
-            tg_message_id=index,
-            updated_at=datetime.now(UTC),
-        )
-        for index in range(2)
-    ]
-    disk = DiskBudget(tmp_path, 0)
-    body = stream_archive(
-        Download(), 1, files, "", ArchiveFormat.SEVEN_Z, disk, 9_000_000
+    target = tmp_path / "out.7z"
+    seen: list[int] = []
+    warnings = await build_archive(
+        Download(),
+        1,
+        archived_files(),
+        "",
+        ArchiveFormat.SEVEN_Z,
+        target,
+        seen.append,
+        nothing,
     )
-    content = b"".join([chunk async for chunk in body])
-    target = tmp_path / "out"
-    with py7zr.SevenZipFile(io.BytesIO(content)) as archive:
-        archive.extractall(target)
-    assert (target / "a" / "1.bin").read_bytes() == b"x" * 3_000_000
-    assert len(content) < 100_000
-    assert sorted(path.name for path in tmp_path.iterdir()) == ["out"]
+    assert warnings == [] and seen[-1] == 6_000_000 and seen == sorted(seen)
+    with py7zr.SevenZipFile(target) as archive:
+        archive.extractall(tmp_path / "out")
+    assert (tmp_path / "out" / "a" / "1.bin").read_bytes() == b"x" * 3_000_000
+    assert target.stat().st_size < 100_000
+    assert sorted(path.name for path in tmp_path.iterdir()) == ["out", "out.7z"]
+
+
+async def test_cancelled_build_leaves_no_parts(tmp_path, monkeypatch):
+    monkeypatch.setattr(settings.upload, "TMP_DIR", tmp_path)
+    calls = 0
+
+    async def checkpoint() -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise asyncio.CancelledError
+
+    with pytest.raises(asyncio.CancelledError):
+        await build_archive(
+            Download(),
+            1,
+            archived_files(),
+            "",
+            ArchiveFormat.ZIP,
+            tmp_path / "out.zip",
+            lambda done: None,
+            checkpoint,
+        )
+    assert [path.name for path in tmp_path.iterdir()] == ["out.zip"]

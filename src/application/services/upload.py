@@ -50,6 +50,27 @@ from src.utilities.errors import TCloudError
 from src.utilities.parsers import check_segment, join_path, split_file
 
 
+async def start_task(
+    runtime: AppRuntime, task: dict, queue: UploadQueue, generation: int
+) -> None:
+    await runtime.store.activate(task["id"])
+    try:
+        async with runtime.handoff_lock:
+            await runtime.store.join_queue(task["id"], queue, task["priority_level"])
+            await enqueue(
+                queue,
+                task["priority_level"],
+                task_id=str(task["id"]),
+                generation=generation,
+            )
+    except TCloudError as error:
+        await runtime.store.update(
+            task["id"], status=TaskStatus.FAILED, error=error.to_dict()
+        )
+        await runtime.store.release(task["id"], task["path"])
+        raise
+
+
 class UploadService:
     def __init__(
         self,
@@ -176,24 +197,6 @@ class UploadService:
             raise UploadInProgressError(f"{path} is already being uploaded")
         return task, True
 
-    async def _enqueue(self, task: dict, queue: UploadQueue, generation: int) -> None:
-        await self._store.activate(task["id"])
-        try:
-            async with self._runtime.handoff_lock:
-                await self._store.join_queue(task["id"], queue, task["priority_level"])
-                await enqueue(
-                    queue,
-                    task["priority_level"],
-                    task_id=str(task["id"]),
-                    generation=generation,
-                )
-        except TCloudError as error:
-            await self._store.update(
-                task["id"], status=TaskStatus.FAILED, error=error.to_dict()
-            )
-            await self._store.release(task["id"], task["path"])
-            raise
-
     async def upload(
         self, actor: Actor, data: UploadServiceCreate, body: AsyncIterator[bytes]
     ) -> TaskServiceRead:
@@ -218,7 +221,7 @@ class UploadService:
                     f"declared {data.size} bytes, received {received}"
                 )
             await self._store.create(task)
-            await self._enqueue(task, UploadQueue.PREPARE, 0)
+            await start_task(self._runtime, task, UploadQueue.PREPARE, 0)
         except BaseException:
             path.unlink(missing_ok=True)
             await self._store.release(task["id"], task["path"])
@@ -233,7 +236,7 @@ class UploadService:
         task, queued = await self._new_task(actor, data, batch_id)
         if queued:
             await self._store.create(task)
-            await self._enqueue(task, UploadQueue.DOWNLOAD, 0)
+            await start_task(self._runtime, task, UploadQueue.DOWNLOAD, 0)
         return await self._tasks.get(task["id"], actor)
 
     async def cancel(self, actor: Actor, task_id: UUID) -> TaskServiceRead:
@@ -276,13 +279,14 @@ class UploadService:
 
     async def retry(self, actor: Actor, task_id: UUID) -> TaskServiceRead:
         task = await self._tasks.get_raw(task_id, actor)
+        if task["params"]["source"] != TaskSource.URL:
+            raise TaskNotRetryableError(
+                "only uploads from links can be retried: upload the file again "
+                "or build the archive again"
+            )
         self._check_access(actor, task["path"], task["params"]["on_conflict"])
         if task["status"] not in (TaskStatus.FAILED, TaskStatus.CANCELLED):
             raise TaskNotRetryableError("only failed or cancelled tasks can be retried")
-        if task["params"]["source"] != TaskSource.URL:
-            raise TaskNotRetryableError(
-                "files from a device are not kept: upload the file again"
-            )
         await self._check_active()
         if not await self._store.lock_path(task["path"], task_id):
             raise UploadInProgressError(f"{task['path']} is already being uploaded")
@@ -304,7 +308,7 @@ class UploadService:
             sent=None,
             committed=False,
         )
-        await self._enqueue(task, UploadQueue.DOWNLOAD, generation)
+        await start_task(self._runtime, task, UploadQueue.DOWNLOAD, generation)
         return await self._tasks.get(task_id, actor)
 
     async def create_batch(

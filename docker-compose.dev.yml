@@ -97,7 +97,7 @@ services:
     environment:
       <<: *app-env
       RUN_MIGRATIONS: "0"
-    command: ["celery", "--app=src.infrastructure.background.celery.app", "worker", "--pool=threads", "--concurrency=2", "--queues=uploads.telegram", "--hostname=telegram@%h", "--loglevel=INFO"]
+    command: ["celery", "--app=src.infrastructure.background.celery.app", "worker", "--pool=threads", "--concurrency=2", "--queues=uploads.telegram,archives.build", "--hostname=telegram@%h", "--loglevel=INFO"]
 
 volumes:
   pgdata:

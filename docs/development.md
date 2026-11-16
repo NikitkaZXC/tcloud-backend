@@ -10,7 +10,7 @@ make dev-up         # Postgres, RabbitMQ (панель :15672), Redis на local
 make app            # uvicorn с --reload на 127.0.0.1:8000 (в .env: POSTGRES_HOST, CLAMAV_HOST, RABBITMQ_HOST, REDIS_HOST=127.0.0.1)
 make worker-download  # Celery-воркер очереди uploads.download
 make worker-prepare   # Celery-воркер очереди uploads.prepare
-make worker-telegram  # Celery-воркер очереди uploads.telegram
+make worker-telegram  # Celery-воркер очередей uploads.telegram и archives.build
 make flower           # панель очередей на :5555
 make format         # black + isort
 make check          # pip-audit + проверка миграций

@@ -72,7 +72,7 @@ services:
     command:
       - sh
       - -c
-      - exec celery --app=src.infrastructure.background.celery.app worker --pool=threads --concurrency="$${TELEGRAM_CONCURRENCY:-2}" --queues=uploads.telegram --hostname=telegram@%h --loglevel=INFO
+      - exec celery --app=src.infrastructure.background.celery.app worker --pool=threads --concurrency="$${TELEGRAM_CONCURRENCY:-2}" --queues=uploads.telegram,archives.build --hostname=telegram@%h --loglevel=INFO
     depends_on:
       <<: *worker-depends
       app: {condition: service_started}

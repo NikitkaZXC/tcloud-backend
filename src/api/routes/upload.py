@@ -1,7 +1,9 @@
 from typing import Annotated
+from urllib.parse import quote
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, Query, Request, status
+from fastapi.responses import FileResponse
 
 from src.api.dependencies import get_actor
 from src.api.schemas import (
@@ -16,6 +18,7 @@ from src.api.schemas import (
 from src.application.factory import get_service_task, get_service_upload
 from src.application.schemas import Actor, UploadServiceCreate
 from src.application.services import TaskService, UploadService
+from src.infrastructure.archive import MEDIA_TYPES
 from src.utilities.formatters import FileSize
 
 router = APIRouter(tags=["Uploads"])
@@ -140,3 +143,26 @@ async def retry_task(
     upload_service: UploadService = Depends(get_service_upload),
 ) -> TaskResponse:
     return await upload_service.retry(actor, task_id)
+
+
+@router.get(
+    path="/tasks/{task_id}/archive",
+    name="tasks:archive",
+    summary="Download the archive built by the task (Range supported)",
+    status_code=status.HTTP_200_OK,
+    response_class=FileResponse,
+)
+async def download_archive(
+    task_id: UUID,
+    actor: Actor = Depends(get_actor),
+    task_service: TaskService = Depends(get_service_task),
+) -> FileResponse:
+    archive = await task_service.open_archive(task_id, actor)
+    return FileResponse(
+        archive["path"],
+        media_type=MEDIA_TYPES[archive["format"]],
+        headers={
+            "Content-Disposition": f"attachment; filename*=UTF-8''{quote(archive['name'])}",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )

@@ -1,7 +1,4 @@
-from urllib.parse import quote
-
 from fastapi import APIRouter, Depends, Query, status
-from fastapi.responses import StreamingResponse
 
 from src.api.dependencies import get_actor
 from src.api.schemas import (
@@ -9,12 +6,12 @@ from src.api.schemas import (
     FolderDeleteResponse,
     FolderListingResponse,
     FolderResponse,
+    TaskResponse,
 )
 from src.application.factory import get_service_folder
 from src.application.schemas import Actor
 from src.application.services import FolderService
-from src.infrastructure.archive import MEDIA_TYPES
-from src.infrastructure.enums import ArchiveFormat
+from src.infrastructure.enums import ArchiveFormat, TaskPriority
 
 router = APIRouter(prefix="/folders", tags=["Folders"])
 
@@ -47,28 +44,20 @@ async def get_folder(
     return await folder_service.get_listing(actor, path)
 
 
-@router.get(
+@router.post(
     path="/archive",
     name="folders:archive",
-    summary="Download the folder with everything readable inside as one archive",
-    status_code=status.HTTP_200_OK,
-    response_class=StreamingResponse,
+    summary="Build an archive of the folder with everything readable inside in the background",
+    status_code=status.HTTP_202_ACCEPTED,
 )
-async def download_folder(
+async def create_archive(
     path: str,
     archive_format: ArchiveFormat = Query(ArchiveFormat.ZIP, alias="format"),
+    priority: TaskPriority = TaskPriority.NORMAL,
     actor: Actor = Depends(get_actor),
     folder_service: FolderService = Depends(get_service_folder),
-) -> StreamingResponse:
-    name, body = await folder_service.open_archive(actor, path, archive_format)
-    return StreamingResponse(
-        body,
-        media_type=MEDIA_TYPES[archive_format],
-        headers={
-            "Content-Disposition": f"attachment; filename*=UTF-8''{quote(name)}",
-            "X-Content-Type-Options": "nosniff",
-        },
-    )
+) -> TaskResponse:
+    return await folder_service.create_archive(actor, path, archive_format, priority)
 
 
 @router.delete(
