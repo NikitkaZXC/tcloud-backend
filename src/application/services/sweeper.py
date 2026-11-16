@@ -4,7 +4,7 @@ from datetime import datetime
 
 from loguru import logger
 
-from src.application.services.temp import remove_task_files
+from src.application.services.temp import remove_task_files, task_files
 from src.config import settings
 from src.infrastructure.background import queue_sizes
 from src.infrastructure.cache import TaskStore
@@ -63,10 +63,27 @@ class TaskSweeper:
         self._suspects = suspects
         return lost
 
+    async def clean_tmp(self) -> int:
+        tasks = await self._store.get_many(await self._store.active_ids())
+        used = {path for task in tasks for path in task_files(task)}
+        old = time.time() - settings.upload.ORPHAN_AGE
+        removed = 0
+        for item in settings.upload.TMP_DIR.iterdir():
+            try:
+                if item not in used and item.stat().st_mtime < old:
+                    item.unlink()
+                    removed += 1
+            except FileNotFoundError:
+                continue
+        if removed:
+            logger.info("{} orphaned temporary files removed", removed)
+        return removed
+
     async def run(self) -> None:
         while True:
             await asyncio.sleep(settings.upload.SWEEP_INTERVAL)
             try:
                 await self.sweep()
+                await self.clean_tmp()
             except Exception:
                 logger.exception("Task sweep failed")

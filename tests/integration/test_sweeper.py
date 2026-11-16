@@ -1,3 +1,4 @@
+import os
 from datetime import datetime, timedelta
 from uuid import uuid7
 
@@ -101,3 +102,17 @@ async def test_broker_down_skips_sweep(store, redis, tmp_path, monkeypatch):
     await sweeper.sweep()
     await sweeper.sweep()
     assert (await store.get(task_id))["status"] == "queued"
+
+
+async def test_orphaned_temp_files_are_removed(store, redis, tmp_path, monkeypatch):
+    monkeypatch.setattr(sweeper_module.settings.upload, "TMP_DIR", tmp_path)
+    monkeypatch.setattr(sweeper_module.settings.upload, "ORPHAN_AGE", 3600)
+    _, _, owned = await active(store, redis, tmp_path, age=0)
+    orphan, fresh = tmp_path / "orphan.jpg", tmp_path / "fresh.jpg"
+    orphan.write_bytes(b"x")
+    fresh.write_bytes(b"x")
+    hour_ago = datetime.now().timestamp() - 7200
+    for item in (owned, orphan):
+        os.utime(item, (hour_ago, hour_ago))
+    assert await TaskSweeper(store).clean_tmp() == 1
+    assert owned.exists() and fresh.exists() and not orphan.exists()

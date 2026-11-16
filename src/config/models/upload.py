@@ -16,6 +16,7 @@ class UploadSettings(BaseSettings):
     HEARTBEAT_INTERVAL: float = 10.0
     STALE_AFTER: float = 120.0
     SWEEP_INTERVAL: float = 60.0
+    ORPHAN_AGE: float = 3600.0
     MIN_FREE_DISK_MB: int = 1024
     RETRIES: int = 3
     RETRY_DELAY: float = 2.0
