@@ -5,7 +5,8 @@
 Пользовательский аккаунт, а не бот: бот не может создавать каналы и не имеет Premium.
 Две сессии одного аккаунта в volume `session`: `TELEGRAM_SESSION` (API: каналы, скачивание, удаление) и
 `TELEGRAM_WORKER_SESSION` (worker-telegram: выгрузка). Один SQLite-файл сессии нельзя открывать из двух процессов —
-будут блокировки и риск `AUTH_KEY_DUPLICATED`, поэтому `make login` входит дважды (в Telegram это два устройства).
+будут блокировки и риск `AUTH_KEY_DUPLICATED`, поэтому в каждую входят отдельно через `/api/auth` (в Telegram это
+два устройства, `tcloud-api` и `tcloud-worker`; flows/auth.md).
 Обновления получает только API-сессия — ради событий об удалённых сообщениях (flows/folders-and-files.md).
 
 | Лимит | Значение | Как учитываем |
@@ -26,7 +27,12 @@
   и упирается в задержку сети. Плюс `cryptg` для быстрого AES.
 - Скачивание: смещение запроса к Telegram должно быть кратно 512 КБ, лишние байты в начале отрезаем — так работает `Range`.
 - Если `access_hash` канала ещё нет в сессии, список диалогов загружается один раз.
-- Исключения Telethon переводятся в `TelegramFloodWaitError`, `TelegramUnavailableError`, `TelegramError`.
+- Исключения Telethon переводятся в `TelegramFloodWaitError`, `TelegramUnavailableError`, `TelegramUnauthorizedError`
+  (401: сессия не вошла или отозвана), ошибки входа (`invalid_code`, `invalid_password`, `invalid_phone`,
+  `password_needed`, `session_too_fresh`) и `TelegramError` для остального.
+- Вход (`TelegramLogin`): QR (`auth.exportLoginToken`, ждёт `UpdateLoginToken`, поэтому клиент входа получает обновления)
+  или код (`auth.sendCode` / `auth.signIn`), 2FA через SRP. Старые сессии: `account.getAuthorizations` /
+  `account.resetAuthorization`, который Telegram разрешает только сессиям старше 24 ч.
 
 ## ClamAV
 

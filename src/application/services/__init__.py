@@ -1,4 +1,5 @@
 from .account import AccountService
+from .auth import AuthService
 from .file import FileService
 from .folder import FolderService
 from .health import HealthService
@@ -10,6 +11,7 @@ from .upload import UploadService
 
 __all__ = [
     "AccountService",
+    "AuthService",
     "FileService",
     "FolderService",
     "HealthService",

@@ -9,13 +9,17 @@ from loguru import logger
 from src.api.endpoints import routers
 from src.api.exception import register_exception_handlers
 from src.application.bootstrap.startup import prepare
-from src.application.services import TaskSweeper
+from src.application.services import AuthService, TaskSweeper
 from src.config import settings
 from src.infrastructure.background import AppRuntime
 from src.infrastructure.cache import TaskStore, create_redis
 from src.infrastructure.database.engine import create_engine
 from src.infrastructure.database.session import session_factory
-from src.infrastructure.integrations import create_scanner, create_telegram
+from src.infrastructure.integrations import (
+    create_login,
+    create_scanner,
+    create_telegram,
+)
 from src.infrastructure.logger import setup_logging
 
 setup_logging()
@@ -30,15 +34,25 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     await telegram.start()
     redis = create_redis()
     runtime = AppRuntime(
-        telegram=telegram, scanner=create_scanner(), store=TaskStore(redis)
+        telegram=telegram,
+        scanner=create_scanner(),
+        store=TaskStore(redis),
+        make_telegram=create_telegram,
+        make_login=create_login,
     )
     app.state.runtime = runtime
     await prepare(runtime)
-    sweeper = asyncio.create_task(TaskSweeper(runtime.store).run())
+    auth = AuthService(runtime)
+    sweepers = [
+        asyncio.create_task(TaskSweeper(runtime.store).run()),
+        asyncio.create_task(auth.run_sweeper()),
+    ]
     try:
         yield
     finally:
-        sweeper.cancel()
+        for sweeper in sweepers:
+            sweeper.cancel()
+        await auth.close()
         await runtime.stop()
         await telegram.stop()
         await redis.aclose()

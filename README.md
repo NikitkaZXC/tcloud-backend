@@ -8,6 +8,7 @@
 - Очереди Celery на RabbitMQ с приоритетом `low/normal/high`: скачивание, проверка и отправка в Telegram — отдельные
   воркеры, статусы в Redis. Отмена, смена приоритета, повтор, без дублей при падении воркера, Flower и health по воркерам.
 - Проверка типа по содержимому, запрет исполняемых файлов (и внутри zip), строгий ClamAV, защита от SSRF.
+- Вход в Telegram через API: QR или код, двухэтапная проверка, старые сессии tcloud отзываются сами.
 - Удалили файл руками в Telegram — запись в БД пропадает сама (события Telethon, плюс проверка при скачивании).
 - FastAPI, PostgreSQL, RabbitMQ, Redis, Celery, Python 3.14 (uv), всё в Docker.
 
@@ -15,9 +16,11 @@
 
 ```bash
 make env          # .env + сгенерированные ключи; заполнить TELEGRAM_API_ID / TELEGRAM_API_HASH
-make login        # вход в Telegram, один раз (две сессии: API и воркер)
 make up           # API на 127.0.0.1:8000, Swagger — /docs
 ```
+
+Вход в Telegram — в Swagger, раздел **Auth**, по QR или по коду (с 2FA), отдельно для сессий `api` и `worker`:
+`POST /api/auth/api/qr`, затем `POST /api/auth/worker/qr` ([docs/flows/auth.md](docs/flows/auth.md)).
 
 ```bash
 curl -H "X-API-Key: $APP_API_KEY" -H 'Content-Type: application/json' \

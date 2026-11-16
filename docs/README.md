@@ -24,13 +24,14 @@
 | Документ | О чём |
 |---|---|
 | [development.md](development.md) | установка, запуск локально, команды `make`, миграции, форматирование, зависимости |
-| [deployment.md](deployment.md) | Docker-образ, compose для прода (API, воркеры, RabbitMQ, Redis), вход в Telegram |
+| [deployment.md](deployment.md) | Docker-образ, compose для прода (API, воркеры, RabbitMQ, Redis), первый вход |
 | [testing.md](testing.md) | unit, integration, API и нагрузочные тесты |
 
 ### Процессы
 
 | Документ | О чём |
 |---|---|
+| [flows/auth.md](flows/auth.md) | вход в Telegram через API: QR, код, 2FA, выход, старые сессии, безопасность |
 | [flows/storages.md](flows/storages.md) | хранилища: создание, подключение из `.env`, название, описание, фото |
 | [flows/folders-and-files.md](flows/folders-and-files.md) | пути, папки, метаданные, скачивание с Range, удаление |
 | [flows/uploads.md](flows/uploads.md) | загрузка с устройства, по ссылке, пачками; `send_as`, `on_conflict`, `priority`, прогресс |

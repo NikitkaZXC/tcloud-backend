@@ -1,22 +1,35 @@
 import asyncio
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from src.infrastructure.enums import MediaKind
 from src.infrastructure.integrations import (
+    Authorization,
     ChannelCheckError,
     ChannelInfo,
     InfectedFileError,
     ScannerUnavailableError,
     SentFile,
+    TelegramCodeInvalidError,
     TelegramFloodWaitError,
+    TelegramLoginExpiredError,
     TelegramMessageGoneError,
+    TelegramPasswordInvalidError,
+    TelegramPasswordNeededError,
+    TelegramSessionTooFreshError,
+    TelegramUnauthorizedError,
     TelegramUnavailableError,
     UnscannableFileError,
 )
+from src.infrastructure.integrations.telegram.login import session_file
 
 
 class FakeTelegram:
-    def __init__(self) -> None:
+    def __init__(self, session: Path | None = None) -> None:
+        self.session = session_file(session) if session else None
+        self.authorized = True
+        self.authorizations_list: list[Authorization] = []
+        self.too_fresh = False
         self.premium = False
         self.chats: dict[int, dict] = {}
         self.next_chat = 1001234567000
@@ -29,8 +42,10 @@ class FakeTelegram:
         self.max_sending = 0
         self.on_deleted = None
 
-    async def start(self) -> None:
-        pass
+    async def start(self) -> bool:
+        if self.session:
+            self.authorized = self.session.exists()
+        return self.authorized
 
     async def stop(self) -> None:
         pass
@@ -38,7 +53,46 @@ class FakeTelegram:
     def connected(self) -> bool:
         return True
 
+    def _check(self) -> None:
+        if not self.authorized:
+            raise TelegramUnauthorizedError("Telegram session is not authorized")
+
+    async def log_out(self) -> None:
+        await self.forget()
+
+    async def forget(self) -> None:
+        self.authorized = False
+        if self.session:
+            self.session.unlink(missing_ok=True)
+
+    async def authorizations(self) -> list[Authorization]:
+        self._check()
+        return list(self.authorizations_list)
+
+    async def revoke(self, authorization_hash: int) -> None:
+        if self.too_fresh:
+            raise TelegramSessionTooFreshError("session is too fresh")
+        self.authorizations_list = [
+            item for item in self.authorizations_list if item.hash != authorization_hash
+        ]
+
+    def add_authorization(
+        self, device_model: str, age_hours: float, current: bool = False
+    ) -> Authorization:
+        item = Authorization(
+            hash=len(self.authorizations_list) + 2**40,
+            device_model=device_model,
+            created_at=datetime.now(UTC) - timedelta(hours=age_hours),
+            active_at=datetime.now(UTC),
+            ip="127.0.0.1",
+            country="NL",
+            current=current,
+        )
+        self.authorizations_list.append(item)
+        return item
+
     async def is_premium(self) -> bool:
+        self._check()
         return self.premium
 
     def add_channel(
@@ -57,6 +111,7 @@ class FakeTelegram:
         return chat_id
 
     async def create_channel(self, title: str, about: str) -> int:
+        self._check()
         chat_id = self.add_channel(title)
         self.chats[chat_id]["about"] = about
         return chat_id
@@ -163,6 +218,50 @@ class FakeTelegram:
             for chat in self.chats.values()
             for message in chat["messages"].values()
         ]
+
+
+class FakeLogin:
+    def __init__(self, session: Path) -> None:
+        self.path = session_file(session)
+        self.code = "12345"
+        self.secret = "correct horse"
+        self.two_step = False
+        self.scanned = asyncio.Event()
+        self.expire = False
+        self.phone: str | None = None
+        self.closed = False
+
+    async def qr(self) -> tuple[str, datetime]:
+        return "tg://login?token=dGNsb3Vk", datetime.now(UTC) + timedelta(seconds=30)
+
+    async def wait_qr(self) -> None:
+        await self.scanned.wait()
+        if self.expire:
+            raise TelegramLoginExpiredError("the QR code expired, request a new one")
+        if self.two_step:
+            raise TelegramPasswordNeededError("password needed")
+
+    async def send_code(self, phone: str) -> None:
+        if phone == "+70000000000":
+            raise TelegramFloodWaitError(79200)
+        self.phone = phone
+
+    async def sign_in(self, code: str) -> None:
+        if code != self.code:
+            raise TelegramCodeInvalidError("the login code is wrong or expired")
+        if self.two_step:
+            raise TelegramPasswordNeededError("password needed")
+
+    async def password(self, password: str) -> None:
+        if password != self.secret:
+            raise TelegramPasswordInvalidError("wrong password")
+
+    async def finish(self) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.path.write_bytes(b"session")
+
+    async def close(self) -> None:
+        self.closed = True
 
 
 class FakeScanner:

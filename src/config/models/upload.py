@@ -8,7 +8,7 @@ from src.config.base import BaseSettings
 class UploadSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="UPLOAD_")
 
-    TMP_DIR: Path = Path("/data/tmp")
+    TMP_DIR: Path = Path("data/tmp")
     MAX_ACTIVE_TASKS: int = 500
     TASK_TTL: int = 7 * 24 * 3600
     LOCK_TTL: int = 24 * 3600

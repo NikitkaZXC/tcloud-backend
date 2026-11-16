@@ -11,12 +11,22 @@ from telethon import errors, events, functions, helpers, types, utils
 from src.infrastructure.enums import MediaKind
 from src.infrastructure.integrations.telegram.exception import (
     ChannelCheckError,
+    TelegramCodeInvalidError,
     TelegramError,
     TelegramFloodWaitError,
     TelegramMessageGoneError,
+    TelegramPasswordInvalidError,
+    TelegramPasswordNeededError,
+    TelegramPhoneInvalidError,
+    TelegramSessionTooFreshError,
+    TelegramUnauthorizedError,
     TelegramUnavailableError,
 )
-from src.infrastructure.integrations.telegram.schemas import ChannelInfo, SentFile
+from src.infrastructure.integrations.telegram.schemas import (
+    Authorization,
+    ChannelInfo,
+    SentFile,
+)
 from src.infrastructure.limits import BATCH, BIG_FILE, CHUNK, FLOOD_SLEEP_THRESHOLD
 from src.infrastructure.media import Media
 
@@ -42,6 +52,30 @@ def translate_errors(method):
             raise TelegramUnavailableError(
                 str(error) or type(error).__name__
             ) from error
+        except errors.SessionPasswordNeededError as error:
+            raise TelegramPasswordNeededError(
+                "the account has two-step verification, send the password"
+            ) from error
+        except (errors.PhoneCodeInvalidError, errors.PhoneCodeExpiredError) as error:
+            raise TelegramCodeInvalidError(
+                "the login code is wrong or expired"
+            ) from error
+        except errors.PasswordHashInvalidError as error:
+            raise TelegramPasswordInvalidError(
+                "the two-step verification password is wrong"
+            ) from error
+        except errors.PhoneNumberInvalidError as error:
+            raise TelegramPhoneInvalidError(
+                "Telegram does not accept this phone number"
+            ) from error
+        except errors.FreshResetAuthorisationForbiddenError as error:
+            raise TelegramSessionTooFreshError(
+                "Telegram lets a session end other sessions only 24 h after login"
+            ) from error
+        except errors.UnauthorizedError as error:
+            raise TelegramUnauthorizedError(
+                f"Telegram session is not authorized: {error}"
+            ) from error
         except errors.RPCError as error:
             raise TelegramError(str(error)) from error
 
@@ -56,38 +90,81 @@ class TelegramClient:
         api_hash: str,
         upload_workers: int = 4,
         receive_updates: bool = False,
+        device_model: str = "tcloud",
     ) -> None:
         self.upload_workers = upload_workers
+        self.authorized = False
         session.parent.mkdir(parents=True, exist_ok=True)
         self._client = TelethonClient(
             str(session),
             api_id,
             api_hash,
             flood_sleep_threshold=FLOOD_SLEEP_THRESHOLD,
-            device_model="tcloud",
+            device_model=device_model,
             receive_updates=receive_updates,
         )
 
-    async def start(self) -> None:
+    @translate_errors
+    async def start(self) -> bool:
         await self._client.connect()
-        if not await self._client.is_user_authorized():
-            raise RuntimeError("Telegram session is not authorized: run `make login`")
+        self.authorized = await self._client.is_user_authorized()
+        if not self.authorized:
+            logger.warning("Telegram session {} is not authorized", self._name)
+            return False
         me = await self._client.get_me()
         if me.bot:
             raise RuntimeError(
                 "tcloud needs a user account: bots cannot create channels"
             )
         logger.info(
-            "Telegram: logged in as {} (premium={})",
+            "Telegram {}: logged in as {} (premium={})",
+            self._name,
             me.username or me.id,
             bool(me.premium),
         )
+        return True
+
+    @property
+    def _name(self) -> str:
+        return self._client.session.filename
 
     async def stop(self) -> None:
         await self._client.disconnect()
 
     def connected(self) -> bool:
         return self._client.is_connected()
+
+    async def log_out(self) -> None:
+        if not (self.authorized and await self._client.log_out()):
+            await self.forget()
+        self.authorized = False
+
+    async def forget(self) -> None:
+        await self._client.disconnect()
+        Path(self._name).unlink(missing_ok=True)
+        self.authorized = False
+
+    @translate_errors
+    async def authorizations(self) -> list[Authorization]:
+        result = await self._client(functions.account.GetAuthorizationsRequest())
+        return [
+            Authorization(
+                item.hash,
+                item.device_model,
+                item.date_created,
+                item.date_active,
+                item.ip,
+                item.country,
+                bool(item.current),
+            )
+            for item in result.authorizations
+        ]
+
+    @translate_errors
+    async def revoke(self, authorization_hash: int) -> None:
+        await self._client(
+            functions.account.ResetAuthorizationRequest(hash=authorization_hash)
+        )
 
     async def watch_deletions(
         self, callback: Callable[[int, list[int]], Awaitable[None]]

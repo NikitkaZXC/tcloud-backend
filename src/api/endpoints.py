@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends
 
 from src.api.dependencies import verify_api_key
 from src.api.routes import (
+    auth_router,
     file_router,
     folder_router,
     storage_router,
@@ -12,6 +13,7 @@ from src.api.routes import (
 routers: APIRouter = APIRouter(prefix="/api", dependencies=[Depends(verify_api_key)])
 
 routers.include_router(router=system_router)
+routers.include_router(router=auth_router)
 routers.include_router(router=storage_router)
 routers.include_router(router=folder_router)
 routers.include_router(router=upload_router)

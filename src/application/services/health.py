@@ -3,7 +3,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.application.schemas import HealthServiceRead
 from src.infrastructure.background import AppRuntime, broker_alive
-from src.infrastructure.enums import UploadQueue
+from src.infrastructure.enums import TelegramSession, UploadQueue
+from src.infrastructure.integrations import session_exists
 
 
 class HealthService:
@@ -17,7 +18,10 @@ class HealthService:
             db = True
         except Exception:
             db = False
-        telegram = self._runtime.telegram.connected()
+        telegram = (
+            self._runtime.telegram.connected() and self._runtime.telegram.authorized
+        )
+        telegram_worker = session_exists(TelegramSession.WORKER)
         antivirus = await self._runtime.scanner.ping()
         redis = await self._runtime.store.ping()
         queue = await broker_alive()
@@ -26,12 +30,14 @@ class HealthService:
         return HealthServiceRead(
             ok=db
             and telegram
+            and telegram_worker
             and antivirus
             and redis
             and queue
             and all(workers.values()),
             db=db,
             telegram=telegram,
+            telegram_worker=telegram_worker,
             antivirus=antivirus,
             redis=redis,
             queue=queue,

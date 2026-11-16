@@ -32,6 +32,18 @@ STATUS_BY_CODE = {
     "task_not_retryable": status.HTTP_409_CONFLICT,
     "too_many_tasks": status.HTTP_429_TOO_MANY_REQUESTS,
     "size_mismatch": status.HTTP_400_BAD_REQUEST,
+    "telegram_unauthorized": status.HTTP_503_SERVICE_UNAVAILABLE,
+    "already_authorized": status.HTTP_409_CONFLICT,
+    "login_not_found": status.HTTP_404_NOT_FOUND,
+    "wrong_login_step": status.HTTP_409_CONFLICT,
+    "password_needed": status.HTTP_409_CONFLICT,
+    "invalid_code": status.HTTP_400_BAD_REQUEST,
+    "invalid_password": status.HTTP_400_BAD_REQUEST,
+    "invalid_phone": status.HTTP_400_BAD_REQUEST,
+    "login_expired": status.HTTP_410_GONE,
+    "session_too_fresh": status.HTTP_409_CONFLICT,
+    "session_not_found": status.HTTP_404_NOT_FOUND,
+    "current_session": status.HTTP_409_CONFLICT,
 }
 
 

@@ -5,17 +5,26 @@ from celery import Task
 from celery.signals import worker_ready, worker_shutdown
 
 from src.application.services.pipeline import UploadPipeline
-from src.config import settings
 from src.infrastructure.background import Heartbeat, WorkerRuntime, app
-from src.infrastructure.enums import UploadQueue
-from src.infrastructure.integrations import create_scanner, create_telegram
-
-runtime = WorkerRuntime(
-    telegram=lambda: create_telegram(
-        settings.telegram.WORKER_SESSION, receive_updates=False
-    ),
-    scanner=create_scanner,
+from src.infrastructure.enums import TelegramSession, UploadQueue
+from src.infrastructure.integrations import (
+    TelegramClient,
+    TelegramUnauthorizedError,
+    create_scanner,
+    create_telegram,
+    session_exists,
 )
+
+
+def _telegram() -> TelegramClient:
+    if not session_exists(TelegramSession.WORKER):
+        raise TelegramUnauthorizedError(
+            "worker Telegram session is not authorized: log in with /api/auth/worker"
+        )
+    return create_telegram(TelegramSession.WORKER, receive_updates=False)
+
+
+runtime = WorkerRuntime(telegram=_telegram, scanner=create_scanner)
 heartbeat = Heartbeat()
 
 

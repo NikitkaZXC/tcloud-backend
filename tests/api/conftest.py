@@ -4,6 +4,7 @@ import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 from contextlib import ExitStack
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 
 import pytest
 from celery.contrib.testing.worker import start_worker
@@ -14,9 +15,11 @@ import main
 from src.application.tasks import upload as upload_tasks
 from src.config import settings
 from src.infrastructure.background import WorkerRuntime, app
-from src.infrastructure.enums import UploadQueue
+from src.infrastructure.enums import TelegramSession, UploadQueue
+from src.infrastructure.integrations.telegram.factory import session_path
+from src.infrastructure.integrations.telegram.login import session_file
 from src.infrastructure.integrations.web import client as web
-from tests.fakes import FakeScanner, FakeTelegram
+from tests.fakes import FakeLogin, FakeScanner, FakeTelegram
 
 KEY = "test"
 TELEGRAM_CONCURRENCY = 2
@@ -58,6 +61,25 @@ def scanner() -> FakeScanner:
 
 
 @pytest.fixture
+def worker_session() -> Iterator[Path]:
+    path = session_file(session_path(TelegramSession.WORKER))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"session")
+    yield path
+    path.unlink(missing_ok=True)
+
+
+@pytest.fixture
+def worker_telegram(worker_session: Path) -> FakeTelegram:
+    return FakeTelegram(session_path(TelegramSession.WORKER))
+
+
+@pytest.fixture
+def logins() -> dict[TelegramSession, FakeLogin]:
+    return {}
+
+
+@pytest.fixture
 def worker(
     celery_workers: None, telegram: FakeTelegram, scanner: FakeScanner, monkeypatch
 ) -> Iterator[WorkerRuntime]:
@@ -73,12 +95,22 @@ async def make_client(
     redis,
     worker: WorkerRuntime,
     telegram: FakeTelegram,
+    worker_telegram: FakeTelegram,
+    logins: dict[TelegramSession, FakeLogin],
     scanner: FakeScanner,
     tmp_path,
     monkeypatch,
 ) -> AsyncIterator[Callable[[], Awaitable[AsyncClient]]]:
+    def create_telegram(session=TelegramSession.API, receive_updates=True):
+        return telegram if session == TelegramSession.API else worker_telegram
+
+    def create_login(session: TelegramSession) -> FakeLogin:
+        logins[session] = FakeLogin(session_path(session))
+        return logins[session]
+
     monkeypatch.setattr(settings.upload, "TMP_DIR", tmp_path / "tmp")
-    monkeypatch.setattr(main, "create_telegram", lambda: telegram)
+    monkeypatch.setattr(main, "create_telegram", create_telegram)
+    monkeypatch.setattr(main, "create_login", create_login)
     monkeypatch.setattr(main, "create_scanner", lambda: scanner)
     opened = []
 

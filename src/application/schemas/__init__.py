@@ -1,3 +1,10 @@
+from .auth import (
+    AuthorizationServiceRead,
+    AuthServiceRead,
+    LoginServiceRead,
+    QrServiceRead,
+    SessionStateServiceRead,
+)
 from .file import FileServiceRead, TelegramFileServiceRead, caption_token, telegram_link
 from .folder import FolderDeleteServiceRead, FolderListingServiceRead, FolderServiceRead
 from .storage import (
@@ -18,6 +25,11 @@ from .task import (
 )
 
 __all__ = [
+    "AuthServiceRead",
+    "AuthorizationServiceRead",
+    "LoginServiceRead",
+    "QrServiceRead",
+    "SessionStateServiceRead",
     "AccountServiceRead",
     "BatchItemServiceRead",
     "BatchServiceRead",

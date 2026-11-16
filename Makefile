@@ -1,4 +1,4 @@
-.PHONY: install install-test env app worker-download worker-prepare worker-telegram flower login check format test test-integration test-api test-all test-cov test-docker dev-up dev-up-all dev-down up down logs load-up load-app load-workers load load-ui load-down
+.PHONY: install install-test env app worker-download worker-prepare worker-telegram flower check format test test-integration test-api test-all test-cov test-docker dev-up dev-up-all dev-down up down logs load-up load-app load-workers load load-ui load-down
 
 install:
 	uv sync
@@ -25,9 +25,6 @@ worker-telegram:
 
 flower:
 	uv run celery --app src.infrastructure.background.celery.app flower --port=5555
-
-login:
-	$(PROD_COMPOSE) run --rm --no-deps -e RUN_MIGRATIONS=0 app python -m src.application.bootstrap.login
 
 format:
 	uv run black . && uv run isort .

@@ -14,13 +14,13 @@ src/
     exception/             код ошибки → HTTP-статус, обработчики, единый формат {"error": {...}}
     dependencies/          verify_api_key
   application/
-    services/              бизнес-логика: Account, Health, Storage, Folder, File, Task, Upload, UploadPipeline (стадии воркеров),
+    services/              бизнес-логика: Account, Auth (вход в Telegram, чистка старых сессий), Health, Storage, Folder, File, Task, Upload, UploadPipeline (стадии воркеров),
                            TaskSweeper (потерянные задачи, крутится в API)
     tasks/                 Celery-задачи uploads.download, uploads.prepare, uploads.telegram, WorkerRuntime и Heartbeat воркера
     schemas/               DTO сервисов (*ServiceRead, *ServiceCreate, *ServiceUpdate)
     factory/               FastAPI-зависимости get_service_*: сервисы роуты получают только через них
     exception/             доменные ошибки
-    bootstrap/             login (вход в Telegram, сессии API и воркера), startup (старые файлы tmp, каналы из .env)
+    bootstrap/             startup (старые файлы tmp; если API-сессия вошла — каналы из .env и события удалений)
   infrastructure/
     database/              модели *DB, миксины (UUIDv7 id, created_at, updated_at), репозитории, миграции
     integrations/          telegram (Telethon), antivirus (clamd), web (безопасные исходящие запросы)

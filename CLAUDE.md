@@ -9,7 +9,7 @@ tcloud: a FastAPI service that stores media (photo, video, audio, GIF) and other
 ## Commands
 
 ```bash
-make install / make env / make login / make up / make logs
+make install / make env / make up / make logs   # then log in to Telegram on /docs → Auth (docs/flows/auth.md)
 make app                          # local uvicorn --reload (needs make dev-up: Postgres, RabbitMQ, Redis)
 make worker-download | worker-prepare | worker-telegram | flower   # local Celery workers and Flower
 make test | test-integration | test-api | test-all | test-cov
@@ -25,8 +25,8 @@ uv run alembic revision --autogenerate -m "msg"
 Layers: `api → application → infrastructure`; `utilities` are shared. `src/application` never imports `src/api`; `src/infrastructure` imports neither.
 
 - `src/api/`: routers (`routes/`), HTTP schemas, `exception/` (error code → HTTP status table, handlers, body `{"error": {"code", "message", ...}}`), `dependencies/verify_api_key`. All routes are under `/api`, aggregated in `endpoints.py` with the API key check.
-- `src/application/services/`: one class per domain (`AccountService`, `HealthService`, `StorageService`, `FolderService`, `FileService`, `TaskService`, `UploadService`) plus `UploadPipeline` (stages run by Celery workers). Services take an `AsyncSession` and `AppRuntime`, build repositories in `__init__`, **own the commit**. Routes get services only via `src/application/factory/get_service_*`.
-- `src/application/schemas/`: service DTOs; `src/application/exception/`: domain errors; `bootstrap/`: `login`, `startup`.
+- `src/application/services/`: one class per domain (`AccountService`, `AuthService`, `HealthService`, `StorageService`, `FolderService`, `FileService`, `TaskService`, `UploadService`) plus `UploadPipeline` (stages run by Celery workers). Services take an `AsyncSession` and `AppRuntime`, build repositories in `__init__`, **own the commit**. Routes get services only via `src/application/factory/get_service_*`.
+- `src/application/schemas/`: service DTOs; `src/application/exception/`: domain errors; `bootstrap/`: `startup`.
 - `src/infrastructure/`: `database/` (models end with `DB`, mixins give UUIDv7 `id`/`created_at`/`updated_at`, repositories only `flush()`, migrations), `integrations/` (`telegram`, `antivirus`, `web`), `media/` (type sniffing, Pillow/ffprobe, thumbnails), `background/` (Celery app with priority queues `uploads.download`/`uploads.prepare`/`uploads.telegram`, `enqueue`, `queue_sizes`, `DiskBudget`, `AppRuntime`, `WorkerRuntime`, `Heartbeat`), `cache/` (`TaskStore` in Redis with Lua `CLAIM`/`REQUEUE`/`CANCEL`), `enums/`, `logger/`, `limits.py` (all Telegram limits).
 - `src/utilities/`: `errors.TCloudError` (base error with `code`), `parsers/` (paths, Range), `formatters/` (constrained request types).
 - Errors: every error subclasses `TCloudError` with a stable `code`; only the API layer maps codes to HTTP statuses. Telethon exceptions never leave `integrations/telegram` (`translate_errors`).
@@ -38,9 +38,10 @@ Layers: `api → application → infrastructure`; `utilities` are shared. `src/a
 - Reads after ORM `UPDATE` with `onupdate=func.now()` need `populate_existing=True`, otherwise async lazy load raises `MissingGreenlet`.
 - `media/analyze.py` is not called `probe.py` on purpose: the package exports a `probe` function.
 - ClamAV image must be `*-debian` (alpine tags are amd64 only); stream limits are raised and alerts made strict in `docker/clamd.conf` (`test_clamd_config_is_strict` guards it). `Heuristics.Encrypted|Limits.Exceeded|OLE2.ContainsMacros` mean `unscannable`, every other hit is `infected`.
-- Tests: `tests/conftest.py` sets `TEST_ENV` (with `ENV_FILE=""`) before importing `src`; API tests patch `main.create_telegram`/`main.create_scanner` with `tests/fakes.py` and run real Celery workers in threads on `memory://` (session-scoped), swapping `src.application.tasks.upload.runtime` per test.
+- Tests: `tests/conftest.py` sets `TEST_ENV` (with `ENV_FILE=""`) before importing `src`; API tests patch `main.create_telegram`/`main.create_login`/`main.create_scanner` with `tests/fakes.py` (the `worker_session` fixture creates the worker session file uploads require) and run real Celery workers in threads on `memory://` (session-scoped), swapping `src.application.tasks.upload.runtime` per test.
 - Never run several embedded Celery workers on RabbitMQ in one process (shared kombu hub corrupts AMQP frames): API tests use `memory://`; ordering and crash tests spawn real `celery worker` processes (`tests/integration/test_workers_e2e.py`).
 - Only the API Telegram client has `receive_updates=True` (manual deletions in Telegram drop DB rows via `events.MessageDeleted`); register the handler before `catch_up()`. Workers create clients with `receive_updates=False`.
+- Telegram login is API-only (`/api/auth/{api|worker}/qr|code|sign-in|password|logout`); the app starts without sessions and Telegram calls answer `503 telegram_unauthorized`. Login state lives in API process memory (one uvicorn process). `TelegramLogin` writes `login-*.session` and atomically replaces the session file on success. Never add a session that accepts foreign QR tokens. Default paths are local `data/...`; compose sets `/data/...`.
 - RabbitMQ `consumer_timeout` must stay raised (compose sets 24 h), otherwise long Telegram uploads lose their channel at 30 min.
 
 ## Rules

@@ -8,6 +8,7 @@ from src.application.exception import (
     FileTooLargeError,
     LengthRequiredError,
     PathConflictError,
+    SessionNotAuthorizedError,
     SizeMismatchError,
     TaskFinishedError,
     TaskNotFoundError,
@@ -36,8 +37,10 @@ from src.infrastructure.enums import (
     TaskSource,
     TaskStage,
     TaskStatus,
+    TelegramSession,
     UploadQueue,
 )
+from src.infrastructure.integrations import session_exists
 from src.infrastructure.integrations.web import check_scheme
 from src.infrastructure.media import check_name
 from src.utilities.errors import TCloudError
@@ -91,6 +94,10 @@ class UploadService:
             check_scheme(data.callback_url)
         if data.url:
             check_scheme(data.url)
+        if not session_exists(TelegramSession.WORKER):
+            raise SessionNotAuthorizedError(
+                "the worker Telegram session is not logged in, use /api/auth/worker"
+            )
         limit = await self._account.file_limit()
         if data.size is not None and data.size > limit:
             raise FileTooLargeError(

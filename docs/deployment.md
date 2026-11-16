@@ -7,10 +7,14 @@
 
 ```bash
 make env            # заполнить TELEGRAM_API_ID / TELEGRAM_API_HASH в .env; пароли RabbitMQ, Redis и Flower сгенерируются
-make login          # один раз; вход дважды — сессии API и worker-telegram, обе в volume session
 make up             # сборка и запуск
 make logs
 ```
+
+Затем вход в Telegram через Swagger `http://127.0.0.1:8000/docs`, раздел **Auth** — отдельно для сессий `api` и `worker`
+(flows/auth.md). Файлы сессий лежат в volume `session` и переживают пересборку; входить заново нужно, только если
+volume удалён или сессию завершили в Telegram. Без входа приложение работает, но Telegram-запросы отвечают
+`503 telegram_unauthorized`.
 
 - Порт — `127.0.0.1:8000`. Для доступа снаружи — reverse proxy с TLS.
 - `worker-telegram` — ровно одна реплика (общая пауза FloodWait и одна сессия); параллельность —
@@ -18,7 +22,8 @@ make logs
   репликами (`docker compose up --scale worker-prepare=2`), потоков на реплику — `UPLOAD_DOWNLOAD_CONCURRENCY` и
   `UPLOAD_PREPARE_CONCURRENCY`.
 - Flower — `127.0.0.1:5555` с basic auth (`FLOWER_USER` / `FLOWER_PASSWORD`); наружу — только через reverse proxy с TLS.
-- `GET /api/health` показывает брокер и живые воркеры по очередям — подходит для внешнего мониторинга.
+- `GET /api/health` показывает брокер, живые воркеры по очередям и авторизацию сессий (`telegram`, `telegram_worker`) —
+  подходит для внешнего мониторинга.
 - Volume `tmp` общий для API и воркеров и должен вмещать файлы, которые ждут в очереди (до 4 ГБ каждый).
 - RabbitMQ: `consumer_timeout` поднят до 24 ч, иначе брокер закрывает канал на долгой выгрузке (по умолчанию 30 мин).
   Очереди durable, сообщения persistent; Redis с `appendonly yes` — очередь и статусы переживают рестарт.

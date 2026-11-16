@@ -31,6 +31,7 @@ from src.infrastructure.integrations import (
     ScannerUnavailableError,
     SentFile,
     TelegramFloodWaitError,
+    TelegramUnauthorizedError,
     TelegramUnavailableError,
     UnscannableFileError,
 )
@@ -85,6 +86,8 @@ class UploadPipeline:
         try:
             await step(task)
         except BaseException as error:
+            if isinstance(error, TelegramUnauthorizedError):
+                await self._runtime.forget_telegram()
             await self.fail(task, error)
             if isinstance(error, asyncio.CancelledError):
                 raise

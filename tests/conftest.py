@@ -1,6 +1,7 @@
 import os
 import tempfile
 
+SESSIONS = tempfile.mkdtemp(prefix="tcloud-tests-")
 TEST_ENV = {
     "ENV_FILE": "",
     "APP_API_KEY": "test",
@@ -11,9 +12,8 @@ TEST_ENV = {
     "TELEGRAM_API_ID": "1",
     "TELEGRAM_API_HASH": "test",
     "TELEGRAM_CHATS": "",
-    "TELEGRAM_SESSION": os.path.join(
-        tempfile.mkdtemp(prefix="tcloud-tests-"), "session"
-    ),
+    "TELEGRAM_SESSION": os.path.join(SESSIONS, "session"),
+    "TELEGRAM_WORKER_SESSION": os.path.join(SESSIONS, "worker"),
     "UPLOAD_TMP_DIR": tempfile.mkdtemp(prefix="tcloud-tmp-"),
     "UPLOAD_MIN_FREE_DISK_MB": "0",
     "UPLOAD_RETRY_DELAY": "0.01",

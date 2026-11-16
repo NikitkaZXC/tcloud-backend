@@ -8,6 +8,7 @@ from sqlalchemy.pool import NullPool
 from src.config import settings
 from src.infrastructure.background.disk import DiskBudget, MiB
 from src.infrastructure.cache import TaskStore, create_redis
+from src.infrastructure.integrations.telegram import TelegramUnauthorizedError
 
 
 class WorkerRuntime:
@@ -66,9 +67,19 @@ class WorkerRuntime:
             async with self._telegram_lock:
                 if self._telegram is None:
                     client = self._make_telegram()
-                    await client.start()
+                    if not await client.start():
+                        await client.forget()
+                        raise TelegramUnauthorizedError(
+                            "worker Telegram session is not authorized: "
+                            "log in with /api/auth/worker"
+                        )
                     self._telegram = client
         return self._telegram
+
+    async def forget_telegram(self) -> None:
+        client, self._telegram = self._telegram, None
+        if client:
+            await client.stop()
 
     def spawn(self, coroutine: Coroutine) -> asyncio.Task:
         task = asyncio.get_running_loop().create_task(coroutine)

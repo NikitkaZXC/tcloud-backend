@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from datetime import datetime
 
 
 @dataclass
@@ -15,3 +16,14 @@ class SentFile:
     mime: str | None
     width: int | None
     height: int | None
+
+
+@dataclass
+class Authorization:
+    hash: int
+    device_model: str
+    created_at: datetime | None
+    active_at: datetime | None
+    ip: str
+    country: str
+    current: bool

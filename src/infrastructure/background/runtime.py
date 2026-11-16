@@ -7,8 +7,14 @@ from src.infrastructure.cache import TaskStore
 
 
 class AppRuntime:
-    def __init__(self, telegram, scanner, store: TaskStore) -> None:
+    def __init__(
+        self, telegram, scanner, store: TaskStore, make_telegram, make_login
+    ) -> None:
         self.telegram = telegram
+        self.make_telegram = make_telegram
+        self.make_login = make_login
+        self.logins: dict = {}
+        self.auth_lock = asyncio.Lock()
         self.scanner = scanner
         self.store = store
         self.disk = DiskBudget(

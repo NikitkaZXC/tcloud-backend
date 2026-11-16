@@ -11,8 +11,10 @@ class TelegramSettings(BaseSettings):
 
     API_ID: int
     API_HASH: SecretStr
-    SESSION: Path = Path("/data/session/tcloud")
-    WORKER_SESSION: Path = Path("/data/session/tcloud-worker")
+    SESSION: Path = Path("data/session/tcloud")
+    WORKER_SESSION: Path = Path("data/session/tcloud-worker")
+    LOGIN_TTL: int = 300
+    SESSION_SWEEP_INTERVAL: int = 3600
     CHATS: str = ""
     CONCURRENCY: int = 2
     UPLOAD_WORKERS: int = 4

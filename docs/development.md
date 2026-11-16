@@ -12,13 +12,25 @@ make worker-download  # Celery-воркер очереди uploads.download
 make worker-prepare   # Celery-воркер очереди uploads.prepare
 make worker-telegram  # Celery-воркер очереди uploads.telegram
 make flower           # панель очередей на :5555
-make login          # вход в Telegram (телефон, код, 2FA) — дважды: сессии API и воркера
 make format         # black + isort
 make check          # pip-audit + проверка миграций
 uv run alembic revision --autogenerate -m "msg"
 ```
 
 Локально без ffmpeg тесты, которым он нужен, пропускаются — полный прогон `make test-docker`.
+
+## Что запускать
+
+| Задача | Команды | Где код |
+|---|---|---|
+| Пользоваться сервисом | `make up` (и `make logs`) | всё в Docker, `docker-compose.prod.yml` |
+| Править код с автоперезагрузкой | `make dev-up`, затем `make app` и воркеры `make worker-*` | локально, в Docker только Postgres, RabbitMQ, Redis |
+| Всё в Docker из исходников | `make dev-up-all` | `docker-compose.dev.yml`, профиль `app` |
+
+После любого варианта — вход в Telegram на `/docs`, раздел **Auth** (flows/auth.md). Локально сессии и временные
+файлы лежат в `./data/` (пути по умолчанию `data/session/...`, `data/tmp`; в Docker compose задаёт `/data/...`).
+Для `make app` хосты в `.env` должны быть `127.0.0.1` (`POSTGRES_HOST`, `CLAMAV_HOST`, `RABBITMQ_HOST`, `REDIS_HOST`),
+compose подставляет свои сам.
 
 ## Настройки
 
