@@ -70,6 +70,9 @@ async def stream_archive(
             try:
                 while True:
                     done = builder.done()
+                    if not done and archive_format == ArchiveFormat.SEVEN_Z:
+                        await asyncio.sleep(POLL)
+                        continue
                     chunk = await asyncio.to_thread(source.read, CHUNK)
                     if chunk:
                         yield chunk

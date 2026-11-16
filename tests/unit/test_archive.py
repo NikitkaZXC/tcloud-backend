@@ -5,6 +5,7 @@ import zipfile
 from datetime import UTC, datetime
 from types import SimpleNamespace
 
+import py7zr
 import pytest
 
 from src.application.services.archive import entry_name, stream_archive
@@ -38,6 +39,17 @@ def test_archive_round_trip(archive_format, tmp_path):
             info = archive.getinfo("b.bin")
             assert info.compress_type == zipfile.ZIP_DEFLATED
             assert info.external_attr >> 16 == 0o644
+    elif archive_format == ArchiveFormat.SEVEN_Z:
+        with py7zr.SevenZipFile(io.BytesIO(content)) as archive:
+            infos = {info.filename: info for info in archive.list()}
+            assert set(infos) == set(files)
+            assert all(
+                info.creationtime.timestamp() == MTIME for info in infos.values()
+            )
+        target = tmp_path / "out"
+        with py7zr.SevenZipFile(io.BytesIO(content)) as archive:
+            archive.extractall(target)
+        assert {name: (target / name).read_bytes() for name in files} == files
     else:
         with tarfile.open(fileobj=io.BytesIO(content)) as archive:
             members = archive.getmembers()
@@ -83,3 +95,29 @@ async def test_aborted_archive_leaves_no_temporary_files(tmp_path, monkeypatch):
     await body.aclose()
     await asyncio.sleep(0.2)
     assert list(tmp_path.iterdir()) == [] and disk.items == set()
+
+
+async def test_seven_z_is_sent_only_when_complete(tmp_path, monkeypatch):
+    monkeypatch.setattr(settings.upload, "TMP_DIR", tmp_path)
+    files = [
+        SimpleNamespace(
+            id=index,
+            folder_path="a",
+            name=f"{index}.bin",
+            size=3_000_000,
+            tg_message_id=index,
+            updated_at=datetime.now(UTC),
+        )
+        for index in range(2)
+    ]
+    disk = DiskBudget(tmp_path, 0)
+    body = stream_archive(
+        Download(), 1, files, "", ArchiveFormat.SEVEN_Z, disk, 9_000_000
+    )
+    content = b"".join([chunk async for chunk in body])
+    target = tmp_path / "out"
+    with py7zr.SevenZipFile(io.BytesIO(content)) as archive:
+        archive.extractall(target)
+    assert (target / "a" / "1.bin").read_bytes() == b"x" * 3_000_000
+    assert len(content) < 100_000
+    assert sorted(path.name for path in tmp_path.iterdir()) == ["out"]

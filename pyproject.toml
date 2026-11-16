@@ -18,6 +18,7 @@ dependencies = [
     "loguru>=0.8.0",
     "pillow>=13.0.0",
     "pillow-heif>=1.8.1",
+    "py7zr>=1.1.4",
     "pydantic>=2.13.4",
     "pydantic-settings>=2.16.3",
     "pyjwt[crypto]>=2.15.1",

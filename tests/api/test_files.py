@@ -3,6 +3,7 @@ import tarfile
 import uuid
 import zipfile
 
+import py7zr
 import pytest
 
 from src.config import settings
@@ -212,6 +213,20 @@ async def test_storage_archive_as_tar_xz(client, storage):
     assert response.headers["content-disposition"].endswith(f"{storage['id']}.tar.xz")
     with tarfile.open(fileobj=io.BytesIO(response.content)) as archive:
         assert archive.getnames() == ["a/1.jpg"]
+
+
+async def test_folder_archive_as_7z(client, storage, tmp_path):
+    await upload(client, path(storage, "trip/day 2/2.pdf"), PDF)
+    response = await client.get(
+        "/folders/archive", params={"path": path(storage, "trip"), "format": "7z"}
+    )
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "application/x-7z-compressed"
+    assert response.headers["content-disposition"].endswith("trip.7z")
+    with py7zr.SevenZipFile(io.BytesIO(response.content)) as archive:
+        archive.extractall(tmp_path)
+    assert (tmp_path / "day 2" / "2.pdf").read_bytes() == PDF
+    assert list(settings.upload.TMP_DIR.iterdir()) == []
 
 
 async def test_folder_archive_errors(client, storage):

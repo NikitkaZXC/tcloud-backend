@@ -1,4 +1,5 @@
 import lzma
+import os
 import shutil
 import tarfile
 import time
@@ -6,15 +7,19 @@ import zipfile
 from pathlib import Path
 from typing import BinaryIO
 
+import py7zr
+
 from src.infrastructure.enums import ArchiveFormat
 
 CHUNK = 1024 * 1024
 MEDIA_TYPES = {
     ArchiveFormat.ZIP: "application/zip",
+    ArchiveFormat.SEVEN_Z: "application/x-7z-compressed",
     ArchiveFormat.TAR_GZ: "application/gzip",
     ArchiveFormat.TAR_BZ2: "application/x-bzip2",
     ArchiveFormat.TAR_XZ: "application/x-xz",
 }
+SEVEN_Z_FILTERS = [{"id": py7zr.FILTER_LZMA2, "preset": 9 | lzma.PRESET_EXTREME}]
 TAR_MODES = {
     ArchiveFormat.TAR_GZ: ("w|gz", {"compresslevel": 9}),
     ArchiveFormat.TAR_BZ2: ("w|bz2", {"compresslevel": 9}),
@@ -32,8 +37,11 @@ class ArchiveWriter:
         self._target = target
         self._zip: zipfile.ZipFile | None = None
         self._tar: tarfile.TarFile | None = None
+        self._seven_z: py7zr.SevenZipFile | None = None
         if archive_format == ArchiveFormat.ZIP:
             self._zip = zipfile.ZipFile(AppendOnly(target), "w")
+        elif archive_format == ArchiveFormat.SEVEN_Z:
+            self._seven_z = py7zr.SevenZipFile(target, "w", filters=SEVEN_Z_FILTERS)
         else:
             mode, options = TAR_MODES[archive_format]
             self._tar = tarfile.open(
@@ -44,6 +52,11 @@ class ArchiveWriter:
             )
 
     def add(self, source: Path, name: str, mtime: float) -> None:
+        if self._seven_z:
+            os.utime(source, (mtime, mtime))
+            self._seven_z.write(source, name)
+            self._target.flush()
+            return
         size = source.stat().st_size
         with source.open("rb") as data:
             if self._zip:
@@ -61,5 +74,5 @@ class ArchiveWriter:
         self._target.flush()
 
     def close(self) -> None:
-        (self._zip or self._tar).close()
+        (self._zip or self._tar or self._seven_z).close()
         self._target.flush()
