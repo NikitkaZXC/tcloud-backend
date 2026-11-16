@@ -17,7 +17,7 @@ class InterceptHandler(logging.Handler):
 
 def setup_logging() -> None:
     logger.remove()
-    logger.add(sys.stderr, level=settings.logging.LEVEL)
+    logger.add(sys.stderr, level=settings.logging.LEVEL, diagnose=False)
     logging.basicConfig(handlers=[InterceptHandler()], level=0, force=True)
     for name in ("uvicorn", "uvicorn.error", "uvicorn.access", "telethon"):
         logging.getLogger(name).handlers = [InterceptHandler()]
