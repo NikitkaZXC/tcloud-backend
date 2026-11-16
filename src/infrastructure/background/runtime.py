@@ -16,6 +16,7 @@ class AppRuntime:
         )
         self.premium: tuple[float, bool] | None = None
         self._tasks: set[asyncio.Task] = set()
+        self.handoff_lock = asyncio.Lock()
 
     def spawn(self, coroutine: Coroutine) -> None:
         task = asyncio.create_task(coroutine)

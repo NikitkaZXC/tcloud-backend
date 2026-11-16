@@ -30,6 +30,7 @@ class WorkerRuntime:
             settings.upload.TMP_DIR, settings.upload.MIN_FREE_DISK_MB * MiB
         )
         self.telegram_resume_at = 0.0
+        self.handoff_lock: asyncio.Lock | None = None
 
     def run(self, coroutine: Coroutine):
         return asyncio.run_coroutine_threadsafe(
@@ -56,6 +57,7 @@ class WorkerRuntime:
             self._redis = create_redis()
             self.store = TaskStore(self._redis)
             self.scanner = self._make_scanner()
+            self.handoff_lock = asyncio.Lock()
         return await coroutine
 
     async def telegram(self):

@@ -155,3 +155,43 @@ async def test_release_and_active_ids(store):
     await store.release(task_id, "tcloud/x/a.jpg")
     assert await store.active_ids() == []
     assert not await store.path_locked("tcloud/x/a.jpg")
+
+
+async def waiting_in(store, queue: str, level: int) -> str:
+    task_id = await queued(store, queue)
+    await store.join_queue(task_id, queue, level)
+    return str(task_id)
+
+
+async def test_positions_follow_priority_then_order(store):
+    queue = "uploads.telegram"
+    low = [await waiting_in(store, queue, 1) for _ in range(2)]
+    normal = await waiting_in(store, queue, 5)
+    high = await waiting_in(store, queue, 9)
+    tasks = await store.get_many([*low, normal, high])
+    assert await store.positions(tasks) == {
+        high: 1,
+        normal: 2,
+        low[0]: 3,
+        low[1]: 4,
+    }
+
+
+async def test_claim_and_release_leave_the_queue(store):
+    queue = "uploads.prepare"
+    first = await waiting_in(store, queue, 5)
+    second = await waiting_in(store, queue, 5)
+    third = await waiting_in(store, queue, 5)
+    assert await store.claim(first, queue, 0, False)
+    await store.release(second, "tcloud/x/none.jpg")
+    tasks = await store.get_many([first, second, third])
+    assert await store.positions(tasks) == {third: 1}
+
+
+async def test_raised_priority_moves_to_front(store):
+    queue = "uploads.telegram"
+    ids = [await waiting_in(store, queue, 1) for _ in range(3)]
+    generation, _ = await store.requeue(ids[2], "high", 9)
+    await store.join_queue(ids[2], queue, 9)
+    positions = await store.positions(await store.get_many(ids))
+    assert positions == {ids[2]: 1, ids[0]: 2, ids[1]: 3} and generation == 1

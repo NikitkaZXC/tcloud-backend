@@ -24,7 +24,9 @@ class TaskService:
         self._files = FileRepository(session)
 
     @staticmethod
-    def render(task: dict, file: FileServiceRead | None) -> TaskServiceRead:
+    def render(
+        task: dict, file: FileServiceRead | None, position: int | None = None
+    ) -> TaskServiceRead:
         fields = {name: task.get(name) for name in TaskServiceRead.model_fields}
         fields.update(
             progress=None,
@@ -32,6 +34,7 @@ class TaskService:
             eta=None,
             waiting=None,
             file=file,
+            queue_position=position,
             cancel_requested=bool(task.get("cancel")),
         )
         view = TaskServiceRead(**fields)
@@ -60,11 +63,16 @@ class TaskService:
         files = await self._files.get_many_with_chat(
             [UUID(task["file_id"]) for task in tasks if task.get("file_id")]
         )
+        positions = await self._store.positions(tasks)
         views = []
         for task in tasks:
             found = files.get(UUID(task["file_id"])) if task.get("file_id") else None
             views.append(
-                self.render(task, FileServiceRead.from_db(*found) if found else None)
+                self.render(
+                    task,
+                    FileServiceRead.from_db(*found) if found else None,
+                    positions.get(str(task["id"])),
+                )
             )
         return views
 

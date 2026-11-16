@@ -155,12 +155,14 @@ class UploadService:
     async def _enqueue(self, task: dict, queue: UploadQueue, generation: int) -> None:
         await self._store.activate(task["id"])
         try:
-            await enqueue(
-                queue,
-                task["priority_level"],
-                task_id=str(task["id"]),
-                generation=generation,
-            )
+            async with self._runtime.handoff_lock:
+                await self._store.join_queue(task["id"], queue, task["priority_level"])
+                await enqueue(
+                    queue,
+                    task["priority_level"],
+                    task_id=str(task["id"]),
+                    generation=generation,
+                )
         except TCloudError as error:
             await self._store.update(
                 task["id"], status=TaskStatus.FAILED, error=error.to_dict()
@@ -238,9 +240,11 @@ class UploadService:
         if not requeued:
             raise TaskNotQueuedError("task is not waiting in a queue")
         generation, queue = requeued
-        await enqueue(
-            UploadQueue(queue), level, task_id=str(task_id), generation=generation
-        )
+        async with self._runtime.handoff_lock:
+            await self._store.join_queue(task_id, queue, level)
+            await enqueue(
+                UploadQueue(queue), level, task_id=str(task_id), generation=generation
+            )
         return await self._tasks.get(task_id)
 
     async def retry(self, task_id: UUID) -> TaskServiceRead:

@@ -95,8 +95,18 @@ status  queued → running → done | failed | cancelled
 stage   downloading (только по ссылке) → scanning → uploading_tg → done
 ```
 
-Пока задача ждёт воркера, `waiting = {"reason": "queue:uploads.download | uploads.prepare | uploads.telegram"}`. Место в
-очереди не показывается: RabbitMQ его не сообщает. Во время работы видны `bytes_done`, `progress`, `speed`, `eta`.
+Пока задача ждёт воркера, `waiting = {"reason": "queue:uploads.download | uploads.prepare | uploads.telegram"}`, а
+`queue_position` — её номер в этой очереди: 1 — следующая на взятие, выполняющиеся задачи не считаются.
+
+RabbitMQ позицию не сообщает, поэтому её считает наш индекс: sorted set `tcloud:waiting:{queue}` со счётом
+`(10 − уровень приоритета) × 10¹³ + время постановки в мкс` — тот же порядок, что у RabbitMQ (выше приоритет — раньше,
+внутри приоритета FIFO). Задача попадает в индекс перед публикацией (создание, переход на следующую стадию, повтор,
+смена приоритета — с новым счётом) и выходит из него атомарно в `CLAIM`, а также при отмене, ошибке и `lost`.
+Запись в индекс и публикация идут под одним `asyncio.Lock` процесса (`handoff_lock`), иначе два потока могли бы встать
+в индекс в одном порядке, а в RabbitMQ попасть в другом. Между репликами `worker-prepare` (или API) такая гонка
+возможна: задачи одного приоритета, переданные в одну и ту же миллисекунду, могут поменяться местами на 1.
+`tests/integration/test_workers_e2e.py::test_queue_positions_match_real_order` сверяет снимок позиций с фактическим
+порядком отправки настоящих воркеров на RabbitMQ. Во время работы видны `bytes_done`, `progress`, `speed`, `eta`.
 Прогресс пишется в Redis не чаще раза в `UPLOAD_WEBHOOK_INTERVAL`.
 
 ## Redis
@@ -109,6 +119,7 @@ stage   downloading (только по ссылке) → scanning → uploading_
 | `tcloud:batch:{id}` | список id задач пачки по порядку | `UPLOAD_TASK_TTL` |
 | `tcloud:path:{path}` | блокировка пути, значение — id задачи. Снимается только владельцем (Lua) | `UPLOAD_LOCK_TTL` (24 ч, страховка) |
 | `tcloud:active` | sorted set активных задач, score — время старта | — |
+| `tcloud:waiting:{queue}` | sorted set задач, ждущих в очереди, для `queue_position` | — |
 | `tcloud:worker:{queue}:{host}` | heartbeat воркера | 3 × `UPLOAD_HEARTBEAT_INTERVAL` |
 
 Через 7 дней задача пропадает из Redis, и `GET /api/tasks/{id}` отвечает `404`. Сам файл остаётся в `files`.

@@ -106,12 +106,14 @@ class UploadPipeline:
         await self._checkpoint(task)
         await self.stage(task, stage, total, waiting={"reason": f"queue:{queue}"})
         current = await self._store.get(task["id"])
-        await enqueue(
-            queue,
-            current["priority_level"],
-            task_id=str(task["id"]),
-            generation=current.get("generation") or 0,
-        )
+        async with self._runtime.handoff_lock:
+            await self._store.join_queue(task["id"], queue, current["priority_level"])
+            await enqueue(
+                queue,
+                current["priority_level"],
+                task_id=str(task["id"]),
+                generation=current.get("generation") or 0,
+            )
 
     async def _download(self, task: dict) -> None:
         params = task["params"]

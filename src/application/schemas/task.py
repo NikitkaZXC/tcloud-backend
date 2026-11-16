@@ -23,6 +23,7 @@ class TaskServiceRead(BaseModel):
     progress: float | None
     speed: int | None
     eta: float | None
+    queue_position: int | None
     waiting: TaskWaitingServiceRead | None
     cancel_requested: bool
     error: dict | None

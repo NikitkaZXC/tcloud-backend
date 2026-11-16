@@ -6,6 +6,9 @@ from uuid import UUID
 from redis.asyncio import Redis
 
 from src.config import settings
+from src.infrastructure.enums import UploadQueue
+
+QUEUES = [queue.value for queue in UploadQueue]
 
 UNLOCK = """
 if redis.call('GET', KEYS[1]) == ARGV[1] then
@@ -41,6 +44,7 @@ if finished[field('status')] then return 0 end
 if field('claimed') == ARGV[1] and ARGV[3] ~= '1' then return 0 end
 redis.call('HSET', KEYS[1], 'claimed', cjson.encode(ARGV[1]),
     'status', cjson.encode('running'), 'waiting', 'null')
+redis.call('ZREM', KEYS[2], ARGV[4])
 return 1
 """
 
@@ -135,11 +139,13 @@ class TaskStore:
         return bool(
             await self._redis.eval(
                 CLAIM,
-                1,
+                2,
                 self._key("task", task_id),
+                self._key("waiting", queue),
                 queue,
                 generation,
                 int(redelivered),
+                str(task_id),
             )
         )
 
@@ -176,6 +182,35 @@ class TaskStore:
     async def release(self, task_id: UUID, path: str) -> None:
         await self.deactivate(task_id)
         await self.unlock_path(path, task_id)
+        await self.leave_queues(task_id)
+
+    async def join_queue(self, task_id: UUID, queue: str, level: int) -> None:
+        score = (10 - level) * 10**13 + time.time_ns() // 1000
+        await self._redis.zadd(self._key("waiting", queue), {str(task_id): score})
+
+    async def leave_queues(self, task_id: UUID) -> None:
+        async with self._redis.pipeline(transaction=False) as pipe:
+            for queue in QUEUES:
+                pipe.zrem(self._key("waiting", queue), str(task_id))
+            await pipe.execute()
+
+    async def positions(self, tasks: list[dict]) -> dict[str, int]:
+        waiting = []
+        for task in tasks:
+            reason = (task.get("waiting") or {}).get("reason", "")
+            if reason.startswith("queue:"):
+                waiting.append((task["id"], reason.removeprefix("queue:")))
+        if not waiting:
+            return {}
+        async with self._redis.pipeline(transaction=False) as pipe:
+            for task_id, queue in waiting:
+                pipe.zrank(self._key("waiting", queue), task_id)
+            ranks = await pipe.execute()
+        return {
+            task_id: rank + 1
+            for (task_id, _), rank in zip(waiting, ranks)
+            if rank is not None
+        }
 
     async def activate(self, task_id: UUID) -> None:
         await self._redis.zadd(self._key("active"), {str(task_id): time.time()})

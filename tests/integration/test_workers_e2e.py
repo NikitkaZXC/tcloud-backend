@@ -209,6 +209,13 @@ async def test_high_priority_overtakes_queued_low(workers, store, storage_id):
     ids.append(
         await queue_task(store, workers, storage_id, "high.jpg", TaskPriority.HIGH)
     )
+    high = await wait_until(
+        store,
+        ids[-1],
+        lambda task: (task.get("waiting") or {}).get("reason")
+        == f"queue:{UploadQueue.TELEGRAM}",
+    )
+    assert (await store.positions([high]))[high["id"]] == 1
     for task_id in ids:
         assert (await wait_until(store, task_id, finished))["status"] == "done"
     order = [event["name"] for event in workers.events("send")]
@@ -280,3 +287,32 @@ async def test_worker_killed_after_send_before_commit(
     assert workers.events("delete") == []
     rows = await file_rows(engine)
     assert [row.tg_message_id for row in rows] == [sends[0]["message_id"]]
+
+
+async def test_queue_positions_match_real_order(workers, store, storage_id):
+    await workers.start(UploadQueue.PREPARE, "prepare", concurrency=4)
+    await workers.start(UploadQueue.TELEGRAM, "telegram", WORKER_TELEGRAM_DELAY="0.5")
+    levels = [TaskPriority.LOW, TaskPriority.HIGH, TaskPriority.NORMAL] * 2
+    ids = [
+        await queue_task(store, workers, storage_id, f"t{index}.jpg", level)
+        for index, level in enumerate(levels)
+    ]
+    in_telegram = f"queue:{UploadQueue.TELEGRAM}"
+    deadline = time.monotonic() + TIMEOUT
+    snapshot = {}
+    while time.monotonic() < deadline and len(snapshot) < len(ids) - 1:
+        tasks = await store.get_many(ids)
+        waiting = [
+            task
+            for task in tasks
+            if (task.get("waiting") or {}).get("reason") == in_telegram
+        ]
+        snapshot = await store.positions(waiting)
+        await asyncio.sleep(0.02)
+    assert sorted(snapshot.values()) == list(range(1, len(ids)))
+    names = {task_id: f"t{index}.jpg" for index, task_id in enumerate(ids)}
+    expected = [names[task_id] for task_id in sorted(snapshot, key=snapshot.get)]
+    for task_id in ids:
+        assert (await wait_until(store, task_id, finished))["status"] == "done"
+    order = [event["name"] for event in workers.events("send")]
+    assert [name for name in order if name in expected] == expected, (snapshot, order)

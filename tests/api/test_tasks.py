@@ -319,3 +319,29 @@ async def test_cancel_in_queue_sends_webhook(client, telegram, storage, remote):
     assert headers["X-Tcloud-Signature"] == expected
     for task_id in ids:
         await wait_task(client, task_id)
+
+
+async def test_waiting_tasks_show_queue_position(client, telegram, storage):
+    ids = await backlog(client, storage, telegram, TELEGRAM_CONCURRENCY + 3)
+    in_telegram = in_queue("uploads.telegram")
+    await wait_for(
+        client,
+        ids[-1],
+        lambda task: in_telegram(task) and task["queue_position"] is not None,
+    )
+    waiting = [
+        task
+        for task in [(await client.get(f"/tasks/{task_id}")).json() for task_id in ids]
+        if in_telegram(task)
+    ]
+    positions = [task["queue_position"] for task in waiting]
+    assert positions == list(range(1, len(waiting) + 1))
+    last = waiting[-1]
+    await wait_for(
+        client,
+        last["id"],
+        lambda task: (task["queue_position"] or 0) < last["queue_position"],
+    )
+    for task_id in ids:
+        done = await wait_task(client, task_id)
+        assert done["status"] == "done" and done["queue_position"] is None

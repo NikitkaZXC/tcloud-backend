@@ -53,5 +53,6 @@
 ## Прогресс
 
 `GET /api/tasks/{id}`: `status` (`queued/running/done/failed/cancelled`), `stage`, `priority`, `bytes_done`/`bytes_total`,
-`progress`, `speed`, `eta`, `waiting` (очередь, FloodWait, повтор), `cancel_requested`, `error`, `warnings`, `file`.
+`progress`, `speed`, `eta`, `queue_position` (номер в очереди, 1 — следующая), `waiting` (очередь, FloodWait, повтор),
+`cancel_requested`, `error`, `warnings`, `file`.
 Задача хранится 7 дней (`UPLOAD_TASK_TTL`). Вебхук описан в background-tasks.md.
