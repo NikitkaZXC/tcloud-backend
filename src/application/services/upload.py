@@ -9,6 +9,10 @@ from src.application.exception import (
     LengthRequiredError,
     PathConflictError,
     SizeMismatchError,
+    TaskFinishedError,
+    TaskNotFoundError,
+    TaskNotQueuedError,
+    TaskNotRetryableError,
     TooManyTasksError,
     UploadInProgressError,
 )
@@ -21,7 +25,7 @@ from src.application.schemas import (
 from src.application.services.account import AccountService
 from src.application.services.storage import StorageService
 from src.application.services.task import TaskService
-from src.application.services.temp import temp_path, write_body
+from src.application.services.temp import remove_task_files, temp_path, write_body
 from src.config import settings
 from src.infrastructure.background import AppRuntime, enqueue
 from src.infrastructure.database.repositories import FileRepository
@@ -69,6 +73,13 @@ class UploadService:
                 return candidate
         raise PathConflictError("no free name left")
 
+    async def _check_active(self) -> None:
+        active = await self._store.count_active()
+        if active >= settings.upload.MAX_ACTIVE_TASKS:
+            raise TooManyTasksError(
+                f"{active} uploads are already in progress, try later", retry_after=30
+            )
+
     async def _new_task(
         self, data: UploadServiceCreate, batch_id: UUID | None
     ) -> tuple[dict, bool]:
@@ -85,11 +96,7 @@ class UploadService:
             )
         if data.size is not None:
             self._runtime.disk.check(data.size)
-        active = await self._store.count_active()
-        if active >= settings.upload.MAX_ACTIVE_TASKS:
-            raise TooManyTasksError(
-                f"{active} uploads are already in progress, try later", retry_after=30
-            )
+        await self._check_active()
         await self._storages.get_db(storage_id)
         existing = await self._files.get_by_path(storage_id, folder, name)
         if existing and data.on_conflict == "error":
@@ -103,6 +110,7 @@ class UploadService:
         path = join_path(storage_id, folder, name)
         priority = TaskPriority(data.priority)
         source = TaskSource.URL if data.url else TaskSource.DEVICE
+        queue = UploadQueue.DOWNLOAD if data.url else UploadQueue.PREPARE
         task = {
             "id": uuid7(),
             "batch_id": batch_id,
@@ -116,7 +124,8 @@ class UploadService:
             "error": None,
             "warnings": [],
             "file_id": None,
-            "waiting": {"reason": f"queue:{UploadQueue.PREPARE}"},
+            "waiting": {"reason": f"queue:{queue}"},
+            "generation": 0,
             "params": {
                 "source": source,
                 "send_as": data.send_as,
@@ -141,22 +150,20 @@ class UploadService:
             raise UploadInProgressError(f"{path} is already being uploaded")
         return task, True
 
-    async def _release(self, task: dict) -> None:
-        await self._store.deactivate(task["id"])
-        await self._store.unlock_path(task["path"], task["id"])
-
-    async def _enqueue(self, task: dict) -> None:
-        await self._store.create(task)
+    async def _enqueue(self, task: dict, queue: UploadQueue, generation: int) -> None:
         await self._store.activate(task["id"])
         try:
             await enqueue(
-                UploadQueue.PREPARE, task["priority_level"], task_id=str(task["id"])
+                queue,
+                task["priority_level"],
+                task_id=str(task["id"]),
+                generation=generation,
             )
         except TCloudError as error:
             await self._store.update(
                 task["id"], status=TaskStatus.FAILED, error=error.to_dict()
             )
-            await self._release(task)
+            await self._store.release(task["id"], task["path"])
             raise
 
     async def upload(
@@ -176,10 +183,11 @@ class UploadService:
                 raise SizeMismatchError(
                     f"declared {data.size} bytes, received {received}"
                 )
-            await self._enqueue(task)
+            await self._store.create(task)
+            await self._enqueue(task, UploadQueue.PREPARE, 0)
         except BaseException:
             path.unlink(missing_ok=True)
-            await self._release(task)
+            await self._store.release(task["id"], task["path"])
             raise
         finally:
             reservation.release()
@@ -190,8 +198,71 @@ class UploadService:
     ) -> TaskServiceRead:
         task, queued = await self._new_task(data, batch_id)
         if queued:
-            await self._enqueue(task)
+            await self._store.create(task)
+            await self._enqueue(task, UploadQueue.DOWNLOAD, 0)
         return await self._tasks.get(task["id"])
+
+    async def _get_raw(self, task_id: UUID) -> dict:
+        task = await self._store.get(task_id)
+        if not task:
+            raise TaskNotFoundError("task not found")
+        return task
+
+    async def cancel(self, task_id: UUID) -> TaskServiceRead:
+        result = await self._store.cancel(task_id)
+        if result == "missing":
+            raise TaskNotFoundError("task not found")
+        if result == "finished":
+            raise TaskFinishedError("task is already finished")
+        if result == "cancelled":
+            task = await self._get_raw(task_id)
+            await self._store.release(task_id, task["path"])
+            remove_task_files(task)
+        return await self._tasks.get(task_id)
+
+    async def set_priority(self, task_id: UUID, priority: str) -> TaskServiceRead:
+        await self._get_raw(task_id)
+        level = TaskPriority(priority).level
+        requeued = await self._store.requeue(task_id, priority, level)
+        if not requeued:
+            raise TaskNotQueuedError("task is not waiting in a queue")
+        generation, queue = requeued
+        await enqueue(
+            UploadQueue(queue), level, task_id=str(task_id), generation=generation
+        )
+        return await self._tasks.get(task_id)
+
+    async def retry(self, task_id: UUID) -> TaskServiceRead:
+        task = await self._get_raw(task_id)
+        if task["status"] not in (TaskStatus.FAILED, TaskStatus.CANCELLED):
+            raise TaskNotRetryableError("only failed or cancelled tasks can be retried")
+        if task["params"]["source"] != TaskSource.URL:
+            raise TaskNotRetryableError(
+                "files from a device are not kept: upload the file again"
+            )
+        await self._check_active()
+        if not await self._store.lock_path(task["path"], task_id):
+            raise UploadInProgressError(f"{task['path']} is already being uploaded")
+        generation = (task.get("generation") or 0) + 1
+        await self._store.update(
+            task_id,
+            status=TaskStatus.QUEUED,
+            stage=TaskStage.DOWNLOADING,
+            waiting={"reason": f"queue:{UploadQueue.DOWNLOAD}"},
+            generation=generation,
+            bytes_done=0,
+            bytes_total=None,
+            error=None,
+            warnings=[],
+            file_id=None,
+            cancel=False,
+            claimed=None,
+            prepared=None,
+            sent=None,
+            committed=False,
+        )
+        await self._enqueue(task, UploadQueue.DOWNLOAD, generation)
+        return await self._tasks.get(task_id)
 
     async def create_batch(self, items: list[UploadServiceCreate]) -> BatchServiceRead:
         batch_id = uuid7()

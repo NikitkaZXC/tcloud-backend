@@ -11,7 +11,7 @@
 ## По ссылке
 
 `POST /api/uploads/from-url {url, path, send_as, on_conflict, priority, callback_url}`: имя файла берётся из `path`,
-а не из ссылки. Скачивает worker-prepare с теми же проверками и лимитами. Если первые байты не медиа, соединение
+а не из ссылки. Скачивает worker-download с теми же проверками и лимитами. Если первые байты не медиа, соединение
 обрывается.
 
 ## Пачкой
@@ -23,6 +23,14 @@
 ## `priority`
 
 `low`, `normal` (по умолчанию), `high`. Задачи `high` берутся из очереди раньше, см. background-tasks.md.
+
+## Управление задачей
+
+| Запрос | Что |
+|---|---|
+| `POST /api/tasks/{id}/cancel` | отмена: из очереди — сразу, во время работы — в течение пары секунд; `409 task_finished` для завершённых |
+| `POST /api/tasks/{id}/priority {"priority": "high"}` | новый приоритет задачи, которая ждёт в очереди; иначе `409 task_not_queued` |
+| `POST /api/tasks/{id}/retry` | повтор упавшей или отменённой загрузки по ссылке; с устройства — `409 task_not_retryable` |
 
 ## `send_as`
 
@@ -44,6 +52,6 @@
 
 ## Прогресс
 
-`GET /api/tasks/{id}`: `status` (`queued/running/done/failed`), `stage`, `priority`, `bytes_done`/`bytes_total`,
-`progress`, `speed`, `eta`, `waiting` (очередь, FloodWait, повтор), `error`, `warnings`, `file`.
+`GET /api/tasks/{id}`: `status` (`queued/running/done/failed/cancelled`), `stage`, `priority`, `bytes_done`/`bytes_total`,
+`progress`, `speed`, `eta`, `waiting` (очередь, FloodWait, повтор), `cancel_requested`, `error`, `warnings`, `file`.
 Задача хранится 7 дней (`UPLOAD_TASK_TTL`). Вебхук описан в background-tasks.md.

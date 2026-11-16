@@ -6,10 +6,11 @@ class TaskStatus(StrEnum):
     RUNNING = "running"
     DONE = "done"
     FAILED = "failed"
+    CANCELLED = "cancelled"
 
     @classmethod
     def finished(cls) -> tuple["TaskStatus", ...]:
-        return cls.DONE, cls.FAILED
+        return cls.DONE, cls.FAILED, cls.CANCELLED
 
 
 class TaskStage(StrEnum):
@@ -35,5 +36,6 @@ class TaskPriority(StrEnum):
 
 
 class UploadQueue(StrEnum):
+    DOWNLOAD = "uploads.download"
     PREPARE = "uploads.prepare"
     TELEGRAM = "uploads.telegram"

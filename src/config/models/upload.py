@@ -12,6 +12,9 @@ class UploadSettings(BaseSettings):
     MAX_ACTIVE_TASKS: int = 500
     TASK_TTL: int = 7 * 24 * 3600
     LOCK_TTL: int = 24 * 3600
+    HEARTBEAT_INTERVAL: float = 10.0
+    STALE_AFTER: float = 120.0
+    SWEEP_INTERVAL: float = 60.0
     MIN_FREE_DISK_MB: int = 1024
     RETRIES: int = 3
     RETRY_DELAY: float = 2.0

@@ -26,6 +26,10 @@ class BatchCreate(BaseModel):
     items: list[UrlUploadCreate] = Field(min_length=1, max_length=BATCH_MAX)
 
 
+class PriorityUpdate(BaseModel):
+    priority: Priority
+
+
 class TaskResponse(TaskServiceRead):
     pass
 

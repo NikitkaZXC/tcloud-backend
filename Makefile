@@ -1,4 +1,4 @@
-.PHONY: install install-test env app worker-prepare worker-telegram login check format test test-integration test-api test-all test-cov test-docker dev-up dev-up-all dev-down up down logs load-up load-app load load-ui load-down
+.PHONY: install install-test env app worker-download worker-prepare worker-telegram flower login check format test test-integration test-api test-all test-cov test-docker dev-up dev-up-all dev-down up down logs load-up load-app load-workers load load-ui load-down
 
 install:
 	uv sync
@@ -14,11 +14,17 @@ app:
 
 CELERY = uv run celery --app src.infrastructure.background.celery.app worker --pool threads --loglevel=INFO
 
+worker-download:
+	$(CELERY) --concurrency 4 --queues uploads.download --hostname download@%h
+
 worker-prepare:
 	$(CELERY) --concurrency 4 --queues uploads.prepare --hostname prepare@%h
 
 worker-telegram:
 	$(CELERY) --concurrency 2 --queues uploads.telegram --hostname telegram@%h
+
+flower:
+	uv run celery --app src.infrastructure.background.celery.app flower --port=5555
 
 login:
 	$(PROD_COMPOSE) run --rm --no-deps -e RUN_MIGRATIONS=0 app python -m src.application.bootstrap.login
@@ -70,7 +76,7 @@ down:
 	$(PROD_COMPOSE) down
 
 logs:
-	$(PROD_COMPOSE) logs -f app worker-prepare worker-telegram
+	$(PROD_COMPOSE) logs -f app worker-download worker-prepare worker-telegram
 
 LOAD_ENV = tests/load/env.load
 LOAD_COMPOSE = docker compose -f tests/load/docker-compose.yml
@@ -86,6 +92,14 @@ load-up:
 
 load-app:
 	uv run --env-file $(LOAD_ENV) uvicorn tests.load.app:app --port 8100 --no-access-log
+
+LOAD_CELERY = uv run --env-file $(LOAD_ENV) celery --app tests.load.worker worker --pool threads --loglevel=WARNING
+
+load-workers:
+	$(LOAD_CELERY) --concurrency 4 --queues uploads.download --hostname download@load & \
+	$(LOAD_CELERY) --concurrency 4 --queues uploads.prepare --hostname prepare@load & \
+	$(LOAD_CELERY) --concurrency 2 --queues uploads.telegram --hostname telegram@load & \
+	wait
 
 load:
 	mkdir -p logs/load

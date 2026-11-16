@@ -2,7 +2,8 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.application.schemas import HealthServiceRead
-from src.infrastructure.background import AppRuntime
+from src.infrastructure.background import AppRuntime, broker_alive
+from src.infrastructure.enums import UploadQueue
 
 
 class HealthService:
@@ -19,10 +20,20 @@ class HealthService:
         telegram = self._runtime.telegram.connected()
         antivirus = await self._runtime.scanner.ping()
         redis = await self._runtime.store.ping()
+        queue = await broker_alive()
+        alive = await self._runtime.store.workers() if redis else set()
+        workers = {item.value: item.value in alive for item in UploadQueue}
         return HealthServiceRead(
-            ok=db and telegram and antivirus and redis,
+            ok=db
+            and telegram
+            and antivirus
+            and redis
+            and queue
+            and all(workers.values()),
             db=db,
             telegram=telegram,
             antivirus=antivirus,
             redis=redis,
+            queue=queue,
+            workers=workers,
         )

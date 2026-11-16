@@ -14,8 +14,9 @@ src/
     exception/             код ошибки → HTTP-статус, обработчики, единый формат {"error": {...}}
     dependencies/          verify_api_key
   application/
-    services/              бизнес-логика: Account, Health, Storage, Folder, File, Task, Upload + UploadPipeline (стадии воркеров)
-    tasks/                 Celery-задачи uploads.prepare и uploads.telegram, WorkerRuntime воркера
+    services/              бизнес-логика: Account, Health, Storage, Folder, File, Task, Upload, UploadPipeline (стадии воркеров),
+                           TaskSweeper (потерянные задачи, крутится в API)
+    tasks/                 Celery-задачи uploads.download, uploads.prepare, uploads.telegram, WorkerRuntime и Heartbeat воркера
     schemas/               DTO сервисов (*ServiceRead, *ServiceCreate, *ServiceUpdate)
     factory/               FastAPI-зависимости get_service_*: сервисы роуты получают только через них
     exception/             доменные ошибки
@@ -24,9 +25,9 @@ src/
     database/              модели *DB, миксины (UUIDv7 id, created_at, updated_at), репозитории, миграции
     integrations/          telegram (Telethon), antivirus (clamd), web (безопасные исходящие запросы)
     media/                 определение типа, Pillow/ffprobe, превью, перевод в JPEG
-    background/            Celery-приложение и очереди, enqueue, DiskBudget (резерв места), AppRuntime (состояние API),
-                           WorkerRuntime (event loop, Telethon, БД и Redis воркера)
-    cache/                 Redis: TaskStore — задачи, пачки, блокировки путей, активные задачи
+    background/            Celery-приложение и очереди, enqueue, queue_sizes, DiskBudget (резерв места), AppRuntime (состояние API),
+                           WorkerRuntime (event loop, Telethon, БД и Redis воркера), Heartbeat
+    cache/                 Redis: TaskStore — задачи, пачки, блокировки путей, активные задачи, Lua CLAIM/REQUEUE/CANCEL
     enums/, logger/, limits.py
   utilities/
     errors.py              TCloudError: базовая ошибка с кодом

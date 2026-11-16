@@ -35,3 +35,27 @@ class TooManyTasksError(TCloudError):
     """Raised when too many uploads are already in progress."""
 
     code = "too_many_tasks"
+
+
+class TaskCancelledError(TCloudError):
+    """Raised inside a worker when the task was cancelled."""
+
+    code = "cancelled"
+
+
+class TaskFinishedError(TCloudError):
+    """Raised when a finished task is cancelled."""
+
+    code = "task_finished"
+
+
+class TaskNotQueuedError(TCloudError):
+    """Raised when the priority of a task that is not waiting in a queue is changed."""
+
+    code = "task_not_queued"
+
+
+class TaskNotRetryableError(TCloudError):
+    """Raised when a task cannot be retried."""
+
+    code = "task_not_retryable"

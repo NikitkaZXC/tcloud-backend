@@ -68,6 +68,14 @@ services:
       rabbitmq: {condition: service_healthy}
       redis: {condition: service_healthy}
 
+  worker-download:
+    <<: *app
+    ports: []
+    environment:
+      <<: *app-env
+      RUN_MIGRATIONS: "0"
+    command: ["celery", "--app=src.infrastructure.background.celery.app", "worker", "--pool=threads", "--concurrency=4", "--queues=uploads.download", "--hostname=download@%h", "--loglevel=INFO"]
+
   worker-prepare:
     <<: *app
     ports: []

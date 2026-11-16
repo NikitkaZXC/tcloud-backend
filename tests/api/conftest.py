@@ -1,7 +1,9 @@
 import asyncio
+import threading
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 from contextlib import ExitStack
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 from celery.contrib.testing.worker import start_worker
@@ -13,6 +15,7 @@ from src.application.tasks import upload as upload_tasks
 from src.config import settings
 from src.infrastructure.background import WorkerRuntime, app
 from src.infrastructure.enums import UploadQueue
+from src.infrastructure.integrations.web import client as web
 from tests.fakes import FakeScanner, FakeTelegram
 
 KEY = "test"
@@ -20,11 +23,12 @@ TELEGRAM_CONCURRENCY = 2
 
 
 @pytest.fixture(scope="session")
-def celery_workers() -> Iterator[None]:
+def celery_workers(redis_server: None) -> Iterator[None]:
     app.conf.broker_url = "memory://"
     app.conf.broker_transport_options = {"polling_interval": 0.01}
     with ExitStack() as stack:
         for queue, concurrency in (
+            (UploadQueue.DOWNLOAD, 4),
             (UploadQueue.PREPARE, 4),
             (UploadQueue.TELEGRAM, TELEGRAM_CONCURRENCY),
         ):
@@ -38,7 +42,9 @@ def celery_workers() -> Iterator[None]:
                     hostname=f"{queue.value}@test",
                 )
             )
+            upload_tasks.heartbeat.start([queue.value], f"{queue.value}@test")
         yield
+        upload_tasks.heartbeat.stop()
 
 
 @pytest.fixture
@@ -124,7 +130,7 @@ async def wait_task(client: AsyncClient, task_id: str, timeout: float = 30) -> d
     task = {}
     while time.monotonic() < deadline:
         task = (await client.get(f"/tasks/{task_id}")).json()
-        if task["status"] in ("done", "failed"):
+        if task["status"] in ("done", "failed", "cancelled"):
             return task
         await asyncio.sleep(0.02)
     raise AssertionError(f"task {task_id} did not finish: {task}")
@@ -140,3 +146,35 @@ async def start_upload(client: AsyncClient, target: str, data: bytes, **options)
 
 async def upload(client: AsyncClient, target: str, data: bytes, **options) -> dict:
     return await wait_task(client, await start_upload(client, target, data, **options))
+
+
+class Remote(BaseHTTPRequestHandler):
+    files: dict = {}
+    hooks: list = []
+
+    def do_GET(self):
+        body = self.files.get(self.path)
+        self.send_response(200 if body is not None else 404)
+        self.send_header("Content-Length", str(len(body or b"")))
+        self.end_headers()
+        self.wfile.write(body or b"")
+
+    def do_POST(self):
+        body = self.rfile.read(int(self.headers["Content-Length"]))
+        self.hooks.append((dict(self.headers), body))
+        self.send_response(204)
+        self.end_headers()
+
+    def log_message(self, *args):
+        pass
+
+
+@pytest.fixture
+def remote(monkeypatch):
+    monkeypatch.setattr(web, "ip_allowed", lambda ip: True)
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), Remote)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    yield f"http://127.0.0.1:{httpd.server_port}"
+    httpd.shutdown()
+    Remote.files.clear()
+    Remote.hooks.clear()

@@ -2,17 +2,14 @@ import asyncio
 import hashlib
 import hmac
 import json
-import threading
 import uuid
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 
 from src.config import settings
 from src.infrastructure import limits
-from src.infrastructure.integrations.web import client as web
 from src.infrastructure.media import analyze as probe_module
-from tests.api.conftest import KEY, path, start_upload, upload, wait_task
+from tests.api.conftest import KEY, Remote, path, start_upload, upload, wait_task
 from tests.factories import EXE, make_audio, make_gif_animated, make_image, make_video
 
 
@@ -364,38 +361,6 @@ async def test_tasks_survive_api_restart(make_client, telegram, storage):
     task_id = await start_upload(first, path(storage, "a.jpg"), make_image())
     second = await make_client()
     assert (await wait_task(second, task_id))["status"] == "done"
-
-
-class Remote(BaseHTTPRequestHandler):
-    files: dict = {}
-    hooks: list = []
-
-    def do_GET(self):
-        body = self.files.get(self.path)
-        self.send_response(200 if body is not None else 404)
-        self.send_header("Content-Length", str(len(body or b"")))
-        self.end_headers()
-        self.wfile.write(body or b"")
-
-    def do_POST(self):
-        body = self.rfile.read(int(self.headers["Content-Length"]))
-        self.hooks.append((dict(self.headers), body))
-        self.send_response(204)
-        self.end_headers()
-
-    def log_message(self, *args):
-        pass
-
-
-@pytest.fixture
-def remote(monkeypatch):
-    monkeypatch.setattr(web, "ip_allowed", lambda ip: True)
-    httpd = ThreadingHTTPServer(("127.0.0.1", 0), Remote)
-    threading.Thread(target=httpd.serve_forever, daemon=True).start()
-    yield f"http://127.0.0.1:{httpd.server_port}"
-    httpd.shutdown()
-    Remote.files.clear()
-    Remote.hooks.clear()
 
 
 async def test_upload_from_url_with_own_name(client, telegram, storage, remote):

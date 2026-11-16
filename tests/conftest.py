@@ -17,6 +17,7 @@ TEST_ENV = {
     "UPLOAD_TMP_DIR": tempfile.mkdtemp(prefix="tcloud-tmp-"),
     "UPLOAD_MIN_FREE_DISK_MB": "0",
     "UPLOAD_RETRY_DELAY": "0.01",
+    "UPLOAD_HEARTBEAT_INTERVAL": "0.2",
     "LOG_LEVEL": "WARNING",
 }
 os.environ.update(TEST_ENV)

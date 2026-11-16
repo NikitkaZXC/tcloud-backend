@@ -15,6 +15,59 @@ return 0
 """
 
 
+FINISHED = "local finished = {done = true, failed = true, cancelled = true}\n"
+
+FIELD = """
+local function field(name)
+    local raw = redis.call('HGET', KEYS[1], name)
+    if not raw then return nil end
+    local value = cjson.decode(raw)
+    if value == cjson.null then return nil end
+    return value
+end
+local function waiting_queue()
+    local waiting = field('waiting')
+    if waiting and string.sub(waiting.reason, 1, 6) == 'queue:' then
+        return string.sub(waiting.reason, 7)
+    end
+    return nil
+end
+"""
+
+CLAIM = FINISHED + FIELD + """
+if redis.call('EXISTS', KEYS[1]) == 0 then return 0 end
+if (field('generation') or 0) ~= tonumber(ARGV[2]) then return 0 end
+if finished[field('status')] then return 0 end
+if field('claimed') == ARGV[1] and ARGV[3] ~= '1' then return 0 end
+redis.call('HSET', KEYS[1], 'claimed', cjson.encode(ARGV[1]),
+    'status', cjson.encode('running'), 'waiting', 'null')
+return 1
+"""
+
+REQUEUE = FINISHED + FIELD + """
+if redis.call('EXISTS', KEYS[1]) == 0 or finished[field('status')] then return nil end
+local queue = waiting_queue()
+if not queue or field('claimed') == queue then return nil end
+local generation = (field('generation') or 0) + 1
+redis.call('HSET', KEYS[1], 'generation', generation,
+    'priority', cjson.encode(ARGV[1]), 'priority_level', ARGV[2])
+return {generation, queue}
+"""
+
+CANCEL = FINISHED + FIELD + """
+if redis.call('EXISTS', KEYS[1]) == 0 then return 'missing' end
+if finished[field('status')] then return 'finished' end
+redis.call('HSET', KEYS[1], 'cancel', 'true')
+local queue = waiting_queue()
+if queue and field('claimed') ~= queue then
+    redis.call('HSET', KEYS[1], 'status', cjson.encode('cancelled'), 'waiting', 'null',
+        'error', cjson.encode({code = 'cancelled', message = 'task was cancelled'}))
+    return 'cancelled'
+end
+return 'running'
+"""
+
+
 def encode(value) -> str:
     return json.dumps(value, default=str, ensure_ascii=False)
 
@@ -76,6 +129,31 @@ class TaskStore:
     async def batch(self, batch_id: UUID) -> list[str]:
         return await self._redis.lrange(self._key("batch", batch_id), 0, -1)
 
+    async def claim(
+        self, task_id: UUID, queue: str, generation: int, redelivered: bool
+    ) -> bool:
+        return bool(
+            await self._redis.eval(
+                CLAIM,
+                1,
+                self._key("task", task_id),
+                queue,
+                generation,
+                int(redelivered),
+            )
+        )
+
+    async def requeue(
+        self, task_id: UUID, priority: str, level: int
+    ) -> tuple[int, str] | None:
+        result = await self._redis.eval(
+            REQUEUE, 1, self._key("task", task_id), priority, level
+        )
+        return (int(result[0]), result[1]) if result else None
+
+    async def cancel(self, task_id: UUID) -> str:
+        return await self._redis.eval(CANCEL, 1, self._key("task", task_id))
+
     async def lock_path(self, path: str, task_id: UUID) -> bool:
         return bool(
             await self._redis.set(
@@ -92,11 +170,25 @@ class TaskStore:
     async def unlock_path(self, path: str, task_id: UUID) -> None:
         await self._redis.eval(UNLOCK, 1, self._key("path", path), str(task_id))
 
+    async def touch(self, task_id: UUID) -> None:
+        await self._redis.hset(self._key("task", task_id), "beat_at", time.time())
+
+    async def release(self, task_id: UUID, path: str) -> None:
+        await self.deactivate(task_id)
+        await self.unlock_path(path, task_id)
+
     async def activate(self, task_id: UUID) -> None:
         await self._redis.zadd(self._key("active"), {str(task_id): time.time()})
 
     async def deactivate(self, task_id: UUID) -> None:
         await self._redis.zrem(self._key("active"), str(task_id))
+
+    async def active_ids(self) -> list[str]:
+        return await self._redis.zrange(self._key("active"), 0, -1)
+
+    async def workers(self) -> set[str]:
+        keys = [key async for key in self._redis.scan_iter(self._key("worker", "*"))]
+        return {key.rsplit(":", 2)[1] for key in keys}
 
     async def count_active(self) -> int:
         key = self._key("active")

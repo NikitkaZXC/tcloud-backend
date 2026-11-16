@@ -26,7 +26,14 @@ class TaskService:
     @staticmethod
     def render(task: dict, file: FileServiceRead | None) -> TaskServiceRead:
         fields = {name: task.get(name) for name in TaskServiceRead.model_fields}
-        fields.update(progress=None, speed=None, eta=None, waiting=None, file=file)
+        fields.update(
+            progress=None,
+            speed=None,
+            eta=None,
+            waiting=None,
+            file=file,
+            cancel_requested=bool(task.get("cancel")),
+        )
         view = TaskServiceRead(**fields)
         waiting = task.get("waiting")
         if waiting:

@@ -12,12 +12,13 @@ import httpx
 from fastapi.encoders import jsonable_encoder
 from loguru import logger
 
-from src.application.exception import PathConflictError
+from src.application.exception import PathConflictError, TaskCancelledError
 from src.application.schemas import caption_token
 from src.application.services.task import TaskService
-from src.application.services.temp import temp_path
+from src.application.services.temp import remove_task_files, temp_path
 from src.config import settings
 from src.infrastructure.background import WorkerRuntime, enqueue
+from src.infrastructure.cache import TaskStore
 from src.infrastructure.database.models import FileDB
 from src.infrastructure.database.repositories import (
     FileRepository,
@@ -26,13 +27,13 @@ from src.infrastructure.database.repositories import (
 )
 from src.infrastructure.enums import (
     MediaKind,
-    TaskSource,
     TaskStage,
     TaskStatus,
     UploadQueue,
 )
 from src.infrastructure.integrations import (
     ScannerUnavailableError,
+    SentFile,
     TelegramFloodWaitError,
     TelegramUnavailableError,
     UnsafeUrlError,
@@ -61,57 +62,65 @@ def sha256_of(path: Path) -> str:
     return digest.hexdigest()
 
 
-def unlink(*paths: str | None) -> None:
-    for item in paths:
-        if item:
-            Path(item).unlink(missing_ok=True)
-
-
 class UploadPipeline:
     def __init__(self, runtime: WorkerRuntime) -> None:
         self._runtime = runtime
-        self._store = runtime.store
-        self._progress_at: dict[UUID, float] = {}
-        self._progress_save: dict[UUID, asyncio.Task] = {}
+        self._progress_at: dict[str, float] = {}
+        self._progress_save: dict[str, asyncio.Task] = {}
+        self._cancelled: set[str] = set()
 
-    async def _active(self, task_id: UUID) -> dict | None:
-        task = await self._store.get(task_id)
-        if not task or task["status"] in TaskStatus.finished():
-            return None
-        return task
+    @property
+    def _store(self) -> TaskStore:
+        return self._runtime.store
 
-    async def prepare(self, task_id: UUID) -> None:
-        task = await self._active(task_id)
-        if not task:
+    async def run(
+        self, queue: UploadQueue, task_id: UUID, generation: int, redelivered: bool
+    ) -> None:
+        if not await self._store.claim(task_id, queue, generation, redelivered):
+            logger.info("Task {} skipped in {}: stale or cancelled", task_id, queue)
             return
-        params = task["params"]
-        extra: list[str] = []
+        task = await self._store.get(task_id)
+        step = {
+            UploadQueue.DOWNLOAD: self._download,
+            UploadQueue.PREPARE: self._prepare,
+            UploadQueue.TELEGRAM: self._send,
+        }[queue]
+        beat = self._runtime.spawn(self._beat(task_id))
         try:
-            if params["source"] == TaskSource.URL:
-                await self.stage(task, TaskStage.DOWNLOADING, None)
-                await self._download(task)
-            await self.stage(task, TaskStage.SCANNING, None)
-            payload = await self._scan(task, Path(params["file"]), extra)
-            await self.stage(
-                task,
-                TaskStage.UPLOADING_TG,
-                Path(payload["send_path"]).stat().st_size,
-                waiting={"reason": f"queue:{UploadQueue.TELEGRAM}"},
-            )
-            await enqueue(
-                UploadQueue.TELEGRAM,
-                task["priority_level"],
-                task_id=str(task_id),
-                payload=payload,
-            )
+            await step(task)
         except BaseException as error:
-            unlink(params["file"], *extra)
             await self.fail(task, error)
             if isinstance(error, asyncio.CancelledError):
                 raise
+        finally:
+            beat.cancel()
+
+    async def _beat(self, task_id: UUID) -> None:
+        while True:
+            await self._store.touch(task_id)
+            await asyncio.sleep(settings.upload.HEARTBEAT_INTERVAL)
+
+    async def _checkpoint(self, task: dict) -> None:
+        current = await self._store.get(task["id"]) or {}
+        if current.get("cancel"):
+            raise TaskCancelledError("task was cancelled")
+
+    async def _handoff(
+        self, task: dict, queue: UploadQueue, stage: TaskStage, total: int | None
+    ) -> None:
+        await self._checkpoint(task)
+        await self.stage(task, stage, total, waiting={"reason": f"queue:{queue}"})
+        current = await self._store.get(task["id"])
+        await enqueue(
+            queue,
+            current["priority_level"],
+            task_id=str(task["id"]),
+            generation=current.get("generation") or 0,
+        )
 
     async def _download(self, task: dict) -> None:
         params = task["params"]
+        await self.stage(task, TaskStage.DOWNLOADING, None)
         reservation = self._runtime.disk.reserve(0)
 
         def progress(done: int, total: int | None) -> None:
@@ -124,6 +133,18 @@ class UploadPipeline:
             )
         finally:
             reservation.release()
+        await self._handoff(task, UploadQueue.PREPARE, TaskStage.SCANNING, None)
+
+    async def _prepare(self, task: dict) -> None:
+        await self.stage(task, TaskStage.SCANNING, task.get("bytes_total"))
+        prepared = await self._scan(task, Path(task["params"]["file"]))
+        await self._store.update(task["id"], prepared=prepared)
+        await self._handoff(
+            task,
+            UploadQueue.TELEGRAM,
+            TaskStage.UPLOADING_TG,
+            Path(prepared["send_path"]).stat().st_size,
+        )
 
     async def _retry(
         self,
@@ -157,7 +178,7 @@ class UploadPipeline:
         finally:
             await self._store.update(task["id"], waiting=None)
 
-    async def _scan(self, task: dict, path: Path, extra: list[str]) -> dict:
+    async def _scan(self, task: dict, path: Path) -> dict:
         _, _, name = split_file(task["path"])
         media = await asyncio.to_thread(probe, path, name)
         sha256 = await asyncio.to_thread(sha256_of, path)
@@ -166,7 +187,7 @@ class UploadPipeline:
         )
         as_file = task["params"]["send_as"] == "file"
         warnings: list[str] = []
-        send_path, thumb = path, None
+        prepared = {"send_path": str(path), "thumb": None}
         if not as_file and media.kind == MediaKind.PHOTO:
             if not photo_fits(media, path.stat().st_size):
                 as_file = True
@@ -175,7 +196,8 @@ class UploadPipeline:
                 )
             elif media.mime not in TELEGRAM_PHOTO_MIMES:
                 send_path = temp_path("photo.jpg")
-                extra.append(str(send_path))
+                prepared["send_path"] = str(send_path)
+                await self._store.update(task["id"], prepared=prepared)
                 await asyncio.to_thread(to_jpeg, path, send_path)
         if not as_file and media.kind == MediaKind.VIDEO and media.mime != "video/mp4":
             warnings.append(
@@ -183,48 +205,26 @@ class UploadPipeline:
             )
         if media.kind == MediaKind.VIDEO:
             thumb = temp_path("thumb.jpg")
-            extra.append(str(thumb))
+            prepared["thumb"] = str(thumb)
+            await self._store.update(task["id"], prepared=prepared)
             if not await asyncio.to_thread(thumbnail, path, thumb, media.duration):
-                thumb = None
+                prepared["thumb"] = None
         return {
+            **prepared,
             "media": asdict(media),
             "sha256": sha256,
             "as_file": as_file,
             "warnings": warnings,
-            "send_path": str(send_path),
-            "thumb": str(thumb) if thumb else None,
         }
 
-    async def send(self, task_id: UUID, payload: dict) -> None:
-        task = await self._active(task_id)
-        if not task:
-            unlink(payload["send_path"], payload["thumb"])
-            return
-        try:
-            await self._store.update(
-                task_id,
-                status=TaskStatus.RUNNING,
-                waiting=None,
-                stage_started=time.time(),
-            )
-            await self._send(task, payload)
-        except BaseException as error:
-            await self.fail(task, error)
-            if isinstance(error, asyncio.CancelledError):
-                raise
-        finally:
-            unlink(task["params"]["file"], payload["send_path"], payload["thumb"])
-
-    async def _existing(
-        self, storage_id: UUID, folder: str, name: str, on_conflict: str
+    async def _location(
+        self, storage_id: UUID, folder: str, name: str
     ) -> tuple[FileDB | None, int]:
         async with self._runtime.session_factory() as session:
             storage = await StorageRepository(session).get_by_id(storage_id)
             existing = await FileRepository(session).get_by_path(
                 storage_id, folder, name
             )
-        if existing and on_conflict in ("error", "keep_both"):
-            raise PathConflictError(f"{name} already exists")
         return existing, storage.tg_chat_id
 
     async def _send_to_telegram(self, task: dict, **kwargs):
@@ -248,27 +248,50 @@ class UploadPipeline:
                     "Telegram flood wait {} s: all uploads paused", error.seconds
                 )
 
-    async def _send(self, task: dict, payload: dict) -> None:
+    async def _send(self, task: dict) -> None:
+        await self._store.update(task["id"], stage_started=time.time())
+        prepared = task["prepared"]
         on_conflict = task["params"]["on_conflict"]
         storage_id, folder, name = split_file(task["path"])
-        existing, chat_id = await self._existing(storage_id, folder, name, on_conflict)
-        if existing and on_conflict == "skip":
-            await self.finish(task, existing.id, ["skipped: file already exists"])
-            return
-        file_id = existing.id if existing else uuid7()
-        media = Media(**payload["media"])
-        as_file = payload["as_file"]
-        sent = await self._send_to_telegram(
-            task,
-            chat_id=chat_id,
-            path=Path(payload["send_path"]),
-            name=name,
-            caption=caption_token(file_id),
-            media=media,
-            as_file=as_file,
-            thumb=Path(payload["thumb"]) if payload["thumb"] else None,
-            progress=lambda done, total: self.progress(task["id"], done, total),
-        )
+        existing, chat_id = await self._location(storage_id, folder, name)
+        telegram = await self._runtime.telegram()
+        recorded = task.get("sent")
+        planned = UUID(recorded["file_id"]) if recorded else None
+        if recorded and existing and existing.id == planned:
+            if existing.tg_message_id == recorded["message"]["message_id"]:
+                await self.finish(task, planned, prepared["warnings"])
+                return
+        if existing and existing.id != planned:
+            if on_conflict in ("error", "keep_both"):
+                raise PathConflictError(f"{name} already exists")
+            if on_conflict == "skip":
+                if recorded:
+                    await telegram.delete(chat_id, [recorded["message"]["message_id"]])
+                await self.finish(task, existing.id, ["skipped: file already exists"])
+                return
+        file_id = planned or (existing.id if existing else uuid7())
+        media = Media(**prepared["media"])
+        as_file = prepared["as_file"]
+        if recorded:
+            sent = SentFile(**recorded["message"])
+        else:
+            await self._checkpoint(task)
+            sent = await self._send_to_telegram(
+                task,
+                chat_id=chat_id,
+                path=Path(prepared["send_path"]),
+                name=name,
+                caption=caption_token(file_id),
+                media=media,
+                as_file=as_file,
+                thumb=Path(prepared["thumb"]) if prepared["thumb"] else None,
+                progress=lambda done, total: self.progress(task["id"], done, total),
+            )
+            await self._store.update(
+                task["id"],
+                sent={"file_id": file_id, "chat_id": chat_id, "message": asdict(sent)},
+            )
+            await self._checkpoint(task)
         compressed = media.kind == MediaKind.PHOTO and not as_file
         values = dict(
             folder_path=folder,
@@ -280,26 +303,26 @@ class UploadPipeline:
             width=sent.width or media.width,
             height=sent.height or media.height,
             duration=media.duration,
-            sha256=payload["sha256"],
+            sha256=prepared["sha256"],
             tg_message_id=sent.message_id,
         )
-        telegram = await self._runtime.telegram()
-        try:
-            async with self._runtime.session_factory() as session:
-                await FolderRepository(session).ensure(storage_id, folder)
-                if existing:
-                    await FileRepository(session).update(file_id, values)
-                else:
-                    await FileRepository(session).create(
-                        FileDB(id=file_id, storage_id=storage_id, **values)
-                    )
-                await session.commit()
-        except BaseException:
-            await telegram.delete(chat_id, [sent.message_id])
-            raise
-        if existing:
+        async with self._runtime.session_factory() as session:
+            await FolderRepository(session).ensure(storage_id, folder)
+            if existing and existing.id == file_id:
+                await FileRepository(session).update(file_id, values)
+            else:
+                await FileRepository(session).create(
+                    FileDB(id=file_id, storage_id=storage_id, **values)
+                )
+            await session.commit()
+        await self._store.update(task["id"], committed=True)
+        if (
+            existing
+            and existing.id == file_id
+            and existing.tg_message_id != sent.message_id
+        ):
             await telegram.delete(chat_id, [existing.tg_message_id])
-        await self.finish(task, file_id, payload["warnings"])
+        await self.finish(task, file_id, prepared["warnings"])
 
     async def stage(
         self,
@@ -311,7 +334,6 @@ class UploadPipeline:
         await self._flush_progress(task["id"])
         await self._store.update(
             task["id"],
-            status=TaskStatus.RUNNING,
             stage=stage,
             bytes_done=0,
             bytes_total=total,
@@ -320,7 +342,9 @@ class UploadPipeline:
         )
         self.hook(task)
 
-    def progress(self, task_id: UUID, done: int, total: int | None = None) -> None:
+    def progress(self, task_id: str, done: int, total: int | None = None) -> None:
+        if task_id in self._cancelled:
+            raise TaskCancelledError("task was cancelled")
         now = time.monotonic()
         if now - self._progress_at.get(task_id, 0) < settings.upload.WEBHOOK_INTERVAL:
             return
@@ -332,13 +356,15 @@ class UploadPipeline:
             self._save_progress(task_id, values)
         )
 
-    async def _save_progress(self, task_id: UUID, values: dict) -> None:
+    async def _save_progress(self, task_id: str, values: dict) -> None:
         await self._store.update(task_id, **values)
         task = await self._store.get(task_id)
+        if task and task.get("cancel"):
+            self._cancelled.add(task_id)
         if task:
             self.hook(task)
 
-    async def _flush_progress(self, task_id: UUID) -> None:
+    async def _flush_progress(self, task_id: str) -> None:
         self._progress_at.pop(task_id, None)
         pending = self._progress_save.pop(task_id, None)
         if pending:
@@ -347,8 +373,8 @@ class UploadPipeline:
     async def _close(self, task: dict, **values) -> None:
         await self._flush_progress(task["id"])
         await self._store.update(task["id"], waiting=None, **values)
-        await self._store.deactivate(task["id"])
-        await self._store.unlock_path(task["path"], task["id"])
+        await self._store.release(task["id"], task["path"])
+        remove_task_files(await self._store.get(task["id"]) or task)
         self.hook(task)
 
     async def finish(self, task: dict, file_id: UUID, warnings: list[str]) -> None:
@@ -364,12 +390,30 @@ class UploadPipeline:
         logger.info("Task {} done: {}", task["id"], task["path"])
 
     async def fail(self, task: dict, error: BaseException) -> None:
-        details = describe(error)
-        if details["code"] == "internal":
-            logger.opt(exception=error).error("Task {} failed", task["id"])
-        else:
-            logger.warning("Task {} failed: {}", task["id"], details["message"])
+        current = await self._store.get(task["id"]) or task
         try:
+            recorded = current.get("sent")
+            if recorded and not current.get("committed"):
+                telegram = await self._runtime.telegram()
+                await telegram.delete(
+                    recorded["chat_id"], [recorded["message"]["message_id"]]
+                )
+                await self._store.update(task["id"], sent=None)
+            if current.get("cancel") or isinstance(error, TaskCancelledError):
+                logger.info("Task {} cancelled", task["id"])
+                await asyncio.shield(
+                    self._close(
+                        task,
+                        status=TaskStatus.CANCELLED,
+                        error=TaskCancelledError("task was cancelled").to_dict(),
+                    )
+                )
+                return
+            details = describe(error)
+            if details["code"] == "internal":
+                logger.opt(exception=error).error("Task {} failed", task["id"])
+            else:
+                logger.warning("Task {} failed: {}", task["id"], details["message"])
             await asyncio.shield(
                 self._close(task, status=TaskStatus.FAILED, error=details)
             )

@@ -1,5 +1,7 @@
+import asyncio
 import uuid
 
+import main
 from src.config import settings
 from src.infrastructure import limits
 from tests.api.conftest import path, upload
@@ -17,16 +19,40 @@ async def test_missing_api_key(client):
     assert (await client.get("/health")).status_code == 401
 
 
-async def test_health(client, scanner):
-    assert (await client.get("/health")).json() == {
+async def healthy(client) -> dict:
+    for _ in range(50):
+        health = (await client.get("/health")).json()
+        if health["ok"]:
+            break
+        await asyncio.sleep(0.05)
+    return health
+
+
+async def test_health(client, scanner, redis):
+    assert await healthy(client) == {
         "ok": True,
         "db": True,
         "telegram": True,
         "antivirus": True,
         "redis": True,
+        "queue": True,
+        "workers": {
+            "uploads.download": True,
+            "uploads.prepare": True,
+            "uploads.telegram": True,
+        },
     }
     scanner.available = False
     assert (await client.get("/health")).json()["ok"] is False
+
+
+async def test_health_sees_dead_worker(client, monkeypatch):
+    async def workers() -> set[str]:
+        return {"uploads.download", "uploads.prepare"}
+
+    monkeypatch.setattr(main.app.state.runtime.store, "workers", workers)
+    health = (await client.get("/health")).json()
+    assert health["ok"] is False and health["workers"]["uploads.telegram"] is False
 
 
 async def test_account_limit(client, telegram):

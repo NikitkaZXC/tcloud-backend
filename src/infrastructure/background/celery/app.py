@@ -21,6 +21,8 @@ app.conf.update(
     worker_prefetch_multiplier=1,
     broker_connection_retry_on_startup=True,
     worker_hijack_root_logger=False,
+    worker_send_task_events=True,
+    task_send_sent_event=True,
     task_queues=[
         Queue(
             queue.value,

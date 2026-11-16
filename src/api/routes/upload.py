@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, Header, Query, Request, status
 from src.api.schemas import (
     BatchCreate,
     BatchResponse,
+    PriorityUpdate,
     TaskListResponse,
     TaskResponse,
     UploadParams,
@@ -86,3 +87,41 @@ async def get_task(
     task_id: UUID, task_service: TaskService = Depends(get_service_task)
 ) -> TaskResponse:
     return await task_service.get(task_id)
+
+
+@router.post(
+    path="/tasks/{task_id}/cancel",
+    name="tasks:cancel",
+    summary="Cancel a task: queued ones stop at once, running ones within seconds",
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def cancel_task(
+    task_id: UUID, upload_service: UploadService = Depends(get_service_upload)
+) -> TaskResponse:
+    return await upload_service.cancel(task_id)
+
+
+@router.post(
+    path="/tasks/{task_id}/priority",
+    name="tasks:priority",
+    summary="Change the priority of a task that waits in a queue",
+    status_code=status.HTTP_200_OK,
+)
+async def set_task_priority(
+    task_id: UUID,
+    data: PriorityUpdate,
+    upload_service: UploadService = Depends(get_service_upload),
+) -> TaskResponse:
+    return await upload_service.set_priority(task_id, data.priority)
+
+
+@router.post(
+    path="/tasks/{task_id}/retry",
+    name="tasks:retry",
+    summary="Retry a failed or cancelled upload from a link",
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def retry_task(
+    task_id: UUID, upload_service: UploadService = Depends(get_service_upload)
+) -> TaskResponse:
+    return await upload_service.retry(task_id)

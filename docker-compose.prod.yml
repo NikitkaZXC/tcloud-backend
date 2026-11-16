@@ -30,6 +30,19 @@ services:
       <<: *worker-depends
       clamav: {condition: service_started}
 
+  worker-download:
+    <<: *app
+    environment:
+      <<: *app-env
+      RUN_MIGRATIONS: "0"
+    command:
+      - sh
+      - -c
+      - exec celery --app=src.infrastructure.background.celery.app worker --pool=threads --concurrency="$${UPLOAD_DOWNLOAD_CONCURRENCY:-4}" --queues=uploads.download --hostname=download@%h --loglevel=INFO
+    depends_on:
+      <<: *worker-depends
+      app: {condition: service_started}
+
   worker-prepare:
     <<: *app
     environment:
@@ -56,6 +69,20 @@ services:
     depends_on:
       <<: *worker-depends
       app: {condition: service_started}
+
+  flower:
+    <<: *app
+    environment:
+      <<: *app-env
+      RUN_MIGRATIONS: "0"
+    command:
+      - sh
+      - -c
+      - exec celery --app=src.infrastructure.background.celery.app flower --port=5555 --basic-auth="$${FLOWER_USER:-tcloud}:$${FLOWER_PASSWORD:?set FLOWER_PASSWORD in .env}"
+    ports:
+      - "127.0.0.1:5555:5555"
+    depends_on:
+      rabbitmq: {condition: service_healthy}
 
   postgres:
     image: postgres:18

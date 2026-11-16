@@ -1,3 +1,4 @@
+import asyncio
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
@@ -8,6 +9,7 @@ from loguru import logger
 from src.api.endpoints import routers
 from src.api.exception import register_exception_handlers
 from src.application.bootstrap.startup import prepare
+from src.application.services import TaskSweeper
 from src.config import settings
 from src.infrastructure.background import AppRuntime
 from src.infrastructure.cache import TaskStore, create_redis
@@ -32,9 +34,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     )
     app.state.runtime = runtime
     await prepare(runtime)
+    sweeper = asyncio.create_task(TaskSweeper(runtime.store).run())
     try:
         yield
     finally:
+        sweeper.cancel()
         await telegram.stop()
         await redis.aclose()
         await engine.dispose()

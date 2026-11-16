@@ -10,8 +10,8 @@ tcloud складывает фото, видео, аудио и GIF в прив�
 | **Хранилище** | приватный канал Telegram. В БД — только наш UUID и `tg_chat_id`, название, описание и фото живут в Telegram |
 | **Путь** | `tcloud/{uuid хранилища}/{папки}/{имя}`; папки существуют только в БД |
 | **Файл** | одно сообщение в канале. В подписи — токен `#tc<uuid без дефисов>` для поиска внутри Telegram |
-| **Задача** | одна загрузка: `queued → running → done/failed`, стадии `downloading → scanning → uploading_tg → done`; живёт в Redis 7 дней |
-| **Очередь** | RabbitMQ: `uploads.prepare` (проверка) и `uploads.telegram` (отправка), с приоритетом `low/normal/high` |
+| **Задача** | одна загрузка: `queued → running → done/failed/cancelled`, стадии `downloading → scanning → uploading_tg → done`; живёт в Redis 7 дней |
+| **Очередь** | RabbitMQ: `uploads.download`, `uploads.prepare` (проверка) и `uploads.telegram` (отправка), с приоритетом `low/normal/high` |
 | **Пачка** | до 100 загрузок по ссылкам одним `POST /api/uploads/batch`, с общим прогрессом |
 
 ## Главные правила

@@ -12,3 +12,5 @@ class HealthServiceRead(BaseModel):
     telegram: bool
     antivirus: bool
     redis: bool
+    queue: bool
+    workers: dict[str, bool]

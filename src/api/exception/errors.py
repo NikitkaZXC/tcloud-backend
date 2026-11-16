@@ -25,6 +25,9 @@ STATUS_BY_CODE = {
     "length_required": status.HTTP_411_LENGTH_REQUIRED,
     "queue_unavailable": status.HTTP_503_SERVICE_UNAVAILABLE,
     "upload_in_progress": status.HTTP_409_CONFLICT,
+    "task_finished": status.HTTP_409_CONFLICT,
+    "task_not_queued": status.HTTP_409_CONFLICT,
+    "task_not_retryable": status.HTTP_409_CONFLICT,
     "too_many_tasks": status.HTTP_429_TOO_MANY_REQUESTS,
     "size_mismatch": status.HTTP_400_BAD_REQUEST,
 }

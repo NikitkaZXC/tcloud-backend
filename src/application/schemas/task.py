@@ -24,6 +24,7 @@ class TaskServiceRead(BaseModel):
     speed: int | None
     eta: float | None
     waiting: TaskWaitingServiceRead | None
+    cancel_requested: bool
     error: dict | None
     warnings: list[str]
     file: FileServiceRead | None

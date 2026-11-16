@@ -31,3 +31,18 @@ async def write_body(
             if progress:
                 progress(done)
     return done
+
+
+def task_files(task: dict) -> list[Path]:
+    prepared = task.get("prepared") or {}
+    paths = (
+        task["params"].get("file"),
+        prepared.get("send_path"),
+        prepared.get("thumb"),
+    )
+    return [Path(item) for item in paths if item]
+
+
+def remove_task_files(task: dict) -> None:
+    for item in task_files(task):
+        item.unlink(missing_ok=True)

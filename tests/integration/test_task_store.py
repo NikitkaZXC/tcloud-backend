@@ -76,3 +76,82 @@ async def test_active_count_drops_stale_entries(store, monkeypatch):
 
 async def test_ping(store):
     assert await store.ping()
+
+
+async def queued(store, queue: str = "uploads.prepare") -> object:
+    task_id = uuid7()
+    await store.create(
+        {
+            "id": task_id,
+            "status": "queued",
+            "generation": 0,
+            "waiting": {"reason": f"queue:{queue}"},
+        }
+    )
+    return task_id
+
+
+async def test_claim_once_per_queue_and_generation(store):
+    task_id = await queued(store)
+    assert not await store.claim(task_id, "uploads.prepare", 1, False)
+    results = await asyncio.gather(
+        *(store.claim(task_id, "uploads.prepare", 0, False) for _ in range(5))
+    )
+    assert sorted(results) == [False] * 4 + [True]
+    task = await store.get(task_id)
+    assert (task["status"], task["claimed"], task["waiting"]) == (
+        "running",
+        "uploads.prepare",
+        None,
+    )
+    assert await store.claim(task_id, "uploads.prepare", 0, True)
+    assert await store.claim(task_id, "uploads.telegram", 0, False)
+    assert not await store.claim(uuid7(), "uploads.prepare", 0, False)
+
+
+async def test_claim_refuses_finished_tasks(store):
+    task_id = await queued(store)
+    await store.update(task_id, status="cancelled")
+    assert not await store.claim(task_id, "uploads.prepare", 0, True)
+
+
+async def test_requeue_only_while_waiting_in_queue(store):
+    task_id = await queued(store, "uploads.telegram")
+    assert await store.requeue(task_id, "high", 9) == (1, "uploads.telegram")
+    task = await store.get(task_id)
+    assert (task["generation"], task["priority"], task["priority_level"]) == (
+        1,
+        "high",
+        9,
+    )
+    assert not await store.claim(task_id, "uploads.telegram", 0, False)
+    assert await store.claim(task_id, "uploads.telegram", 1, False)
+    assert await store.requeue(task_id, "low", 1) is None
+    assert await store.requeue(uuid7(), "low", 1) is None
+
+
+async def test_cancel_queued_running_and_finished(store):
+    waiting = await queued(store)
+    assert await store.cancel(waiting) == "cancelled"
+    task = await store.get(waiting)
+    assert (task["status"], task["cancel"], task["error"]["code"]) == (
+        "cancelled",
+        True,
+        "cancelled",
+    )
+    assert await store.cancel(waiting) == "finished"
+    running = await queued(store)
+    await store.claim(running, "uploads.prepare", 0, False)
+    assert await store.cancel(running) == "running"
+    assert (await store.get(running))["status"] == "running"
+    assert await store.cancel(uuid7()) == "missing"
+
+
+async def test_release_and_active_ids(store):
+    task_id = uuid7()
+    await store.activate(task_id)
+    await store.lock_path("tcloud/x/a.jpg", task_id)
+    assert await store.active_ids() == [str(task_id)]
+    await store.release(task_id, "tcloud/x/a.jpg")
+    assert await store.active_ids() == []
+    assert not await store.path_locked("tcloud/x/a.jpg")
