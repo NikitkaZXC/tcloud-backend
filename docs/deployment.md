@@ -16,7 +16,7 @@ make logs
 volume удалён или сессию завершили в Telegram. Без входа приложение работает, но Telegram-запросы отвечают
 `503 telegram_unauthorized`.
 
-- Порт — `127.0.0.1:8000`. Для доступа снаружи — reverse proxy с TLS.
+- Порт — `127.0.0.1:8000`. Для доступа снаружи — reverse proxy с TLS: фронтенд на `site.com`, на бэк — `/api/*`, `/docs`, `/redoc`, `/openapi.json`, с сохранением `Host` (иначе проверка `Origin` отклонит запросы, см. security.md).
 - `make env` кладёт RS256-ключи JWT в `certs/` (в git и образ не попадают), compose монтирует их в `/certs` read-only.
   Куки `Secure` (`JWT_SECURE=true`): снаружи нужен TLS. Приложение в контейнере — uid 1000: на Linux, если вы не uid 1000,
   выполните `sudo chown 1000 certs/jwt-private.pem`, иначе API не стартует (`JWT key ... is not readable`).

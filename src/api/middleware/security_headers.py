@@ -3,7 +3,6 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from src.config import settings
 
-DOCS_PATHS = frozenset({"/docs", "/docs/oauth2-redirect", "/redoc", "/openapi.json"})
 HEADERS = (
     ("X-Content-Type-Options", "nosniff"),
     ("X-Frame-Options", "DENY"),
@@ -24,7 +23,7 @@ class SecurityHeadersMiddleware:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
-        is_docs = scope["path"] in DOCS_PATHS
+        is_docs = scope["path"] in settings.app.docs_paths
 
         async def send_with_headers(message: Message) -> None:
             if message["type"] == "http.response.start":

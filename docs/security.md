@@ -50,14 +50,18 @@
   CSRF на куках.
 - `SecurityHeadersMiddleware` на всех ответах: `nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`,
   COOP/CORP, `Permissions-Policy`; CSP `default-src 'none'` и `Cache-Control: no-store`, если маршрут не задал своих
-  (кроме `/docs`, `/redoc`, `/openapi.json` — Swagger иначе не загрузится); HSTS при `JWT_SECURE=true`.
+  (кроме путей Swagger, `settings.app.docs_paths` — Swagger иначе не загрузится); HSTS при `JWT_SECURE=true`.
 
 ## CORS (фронтенд)
 
-- `CORSMiddleware` (в `main.py`, самый внешний) разрешает только адреса из `APP_ALLOWED_ORIGINS`, с куками
-  (`allow_credentials`), любыми методами и заголовками. Список пустой по умолчанию: чужой браузерный JS ответов не видит.
+- Схема деплоя: фронтенд на `site.com`, бэкенд на `site.com/api`. Это один origin, CORS браузеру не нужен,
+  `APP_ALLOWED_ORIGINS` пустой. Прокси отправляет на бэк `/api/*` и Swagger (`APP_DOCS_URL`, `APP_REDOC_URL`,
+  `APP_OPENAPI_URL`, по умолчанию `/docs`, `/redoc`, `/openapi.json`, как в nextgate) и сохраняет `Host`.
+- `CORSMiddleware` (в `main.py`, самый внешний, как в nextgate) настраивается `APP_ALLOWED_ORIGINS`,
+  `APP_IS_ALLOWED_CREDENTIALS`, `APP_ALLOWED_METHODS`, `APP_ALLOWED_HEADERS`. Нужен для dev-сервера фронтенда на другом
+  порту (`["http://localhost:3000"]`). Список пустой по умолчанию: чужой браузерный JS ответов не видит.
   Тот же список пропускает `OriginCheckMiddleware`, так что адрес фронтенда добавляется в одно место.
-- Фронтенду открыты заголовки `Accept-Ranges`, `Content-Disposition`, `Content-Range`, `Retry-After`, `X-Expires-At`.
+- Фронтенду открыты заголовки (`APP_EXPOSED_HEADERS`) `Accept-Ranges`, `Content-Disposition`, `Content-Range`, `Retry-After`, `X-Expires-At`.
 - Фронтенд должен быть на том же сайте (например `app.example.com` и `api.example.com`): куки `SameSite=lax` и
   `Cross-Origin-Resource-Policy: same-site` не работают между разными сайтами. Другой сайт потребует `JWT_SAME_SITE=none`
   (только с `JWT_SECURE=true`) и смены CORP — это ослабляет защиту, решать отдельно.
