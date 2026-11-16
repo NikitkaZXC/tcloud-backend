@@ -52,6 +52,17 @@
   COOP/CORP, `Permissions-Policy`; CSP `default-src 'none'` и `Cache-Control: no-store`, если маршрут не задал своих
   (кроме `/docs`, `/redoc`, `/openapi.json` — Swagger иначе не загрузится); HSTS при `JWT_SECURE=true`.
 
+## CORS (фронтенд)
+
+- `CORSMiddleware` (в `main.py`, самый внешний) разрешает только адреса из `APP_ALLOWED_ORIGINS`, с куками
+  (`allow_credentials`), любыми методами и заголовками. Список пустой по умолчанию: чужой браузерный JS ответов не видит.
+  Тот же список пропускает `OriginCheckMiddleware`, так что адрес фронтенда добавляется в одно место.
+- Фронтенду открыты заголовки `Accept-Ranges`, `Content-Disposition`, `Content-Range`, `Retry-After`, `X-Expires-At`.
+- Фронтенд должен быть на том же сайте (например `app.example.com` и `api.example.com`): куки `SameSite=lax` и
+  `Cross-Origin-Resource-Policy: same-site` не работают между разными сайтами. Другой сайт потребует `JWT_SAME_SITE=none`
+  (только с `JWT_SECURE=true`) и смены CORP — это ослабляет защиту, решать отдельно.
+- fetch с кук: `credentials: "include"`.
+
 ## Скачивание
 
 `GET /api/files/{uuid}/download` всегда отдаёт `X-Content-Type-Options: nosniff` и `Content-Security-Policy: sandbox`

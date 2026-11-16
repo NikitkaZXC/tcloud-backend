@@ -24,6 +24,7 @@ with open(os.path.join(SESSIONS, "jwt-public.pem"), "wb") as pem:
 TEST_ENV = {
     "ENV_FILE": "",
     "APP_SECRET_KEY": "test",
+    "APP_ALLOWED_ORIGINS": '["http://front.test"]',
     "ROOT_LOGIN": "root",
     "ROOT_PASSWORD": "root-password",
     "JWT_PRIVATE_KEY_PATH": os.path.join(SESSIONS, "jwt-private.pem"),

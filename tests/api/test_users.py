@@ -383,3 +383,31 @@ async def test_cross_site_writes_are_rejected(client):
     assert response.status_code == 403 and code(response) == "cross_site_request"
     response = await client.post("/auth/logout/all", headers={"Origin": "http://test"})
     assert response.status_code == 204
+
+
+async def test_cors_allows_configured_frontend(client):
+    preflight = await client.options(
+        "/auth/signin",
+        headers={
+            "Origin": "http://front.test",
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "content-type",
+        },
+    )
+    assert preflight.status_code == 200
+    assert preflight.headers["access-control-allow-origin"] == "http://front.test"
+    assert preflight.headers["access-control-allow-credentials"] == "true"
+    response = await client.post(
+        "/auth/logout/all", headers={"Origin": "http://front.test"}
+    )
+    assert response.status_code == 204
+    assert response.headers["access-control-allow-origin"] == "http://front.test"
+    assert "Retry-After" in response.headers["access-control-expose-headers"]
+    foreign = await client.options(
+        "/auth/signin",
+        headers={
+            "Origin": "https://evil.example",
+            "Access-Control-Request-Method": "POST",
+        },
+    )
+    assert "access-control-allow-origin" not in foreign.headers

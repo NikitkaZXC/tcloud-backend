@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 
 import uvicorn
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
 
 from src.api.endpoints import routers
@@ -30,6 +31,14 @@ from src.infrastructure.integrations import (
 from src.infrastructure.logger import setup_logging
 
 setup_logging()
+
+EXPOSED_HEADERS = [
+    "Accept-Ranges",
+    "Content-Disposition",
+    "Content-Range",
+    "Retry-After",
+    "X-Expires-At",
+]
 
 
 @asynccontextmanager
@@ -76,6 +85,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
 app = FastAPI(title=settings.app.TITLE, version=settings.app.VERSION, lifespan=lifespan)
 app.add_middleware(OriginCheckMiddleware)
 app.add_middleware(SecurityHeadersMiddleware)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.app.ALLOWED_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+    expose_headers=EXPOSED_HEADERS,
+)
 app.include_router(routers)
 register_exception_handlers(app)
 
