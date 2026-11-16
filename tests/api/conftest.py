@@ -75,6 +75,22 @@ def worker_telegram(worker_session: Path) -> FakeTelegram:
 
 
 @pytest.fixture
+def download_session() -> Iterator[Path]:
+    path = session_file(session_path(TelegramSession.DOWNLOAD))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"session")
+    yield path
+    path.unlink(missing_ok=True)
+
+
+@pytest.fixture
+def download_telegram(download_session: Path, telegram: FakeTelegram) -> FakeTelegram:
+    fake = FakeTelegram(session_path(TelegramSession.DOWNLOAD))
+    fake.chats = telegram.chats
+    return fake
+
+
+@pytest.fixture
 def logins() -> dict[TelegramSession, FakeLogin]:
     return {}
 
@@ -96,13 +112,18 @@ async def make_client(
     worker: WorkerRuntime,
     telegram: FakeTelegram,
     worker_telegram: FakeTelegram,
+    download_telegram: FakeTelegram,
     logins: dict[TelegramSession, FakeLogin],
     scanner: FakeScanner,
     tmp_path,
     monkeypatch,
 ) -> AsyncIterator[Callable[[], Awaitable[AsyncClient]]]:
     def create_telegram(session=TelegramSession.API, receive_updates=True):
-        return telegram if session == TelegramSession.API else worker_telegram
+        return {
+            TelegramSession.API: telegram,
+            TelegramSession.WORKER: worker_telegram,
+            TelegramSession.DOWNLOAD: download_telegram,
+        }[session]
 
     def create_login(session: TelegramSession) -> FakeLogin:
         logins[session] = FakeLogin(session_path(session))

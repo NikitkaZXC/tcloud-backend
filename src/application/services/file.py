@@ -3,7 +3,7 @@ from uuid import UUID
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.application.exception import StoredFileNotFoundError
+from src.application.exception import SessionNotAuthorizedError, StoredFileNotFoundError
 from src.application.schemas import FileServiceRead
 from src.application.services.storage import StorageService
 from src.infrastructure.background import AppRuntime
@@ -52,8 +52,12 @@ class FileService:
 
     async def open_download(self, file_id: UUID) -> tuple[FileDB, object]:
         file, chat_id = await self.get_db(file_id)
+        if not self._runtime.download.authorized:
+            raise SessionNotAuthorizedError(
+                "the download session is not logged in, log in with /api/auth/download"
+            )
         try:
-            media = await self._runtime.telegram.message_media(
+            media = await self._runtime.download.message_media(
                 chat_id, file.tg_message_id
             )
         except TelegramMessageGoneError:

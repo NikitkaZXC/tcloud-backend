@@ -74,6 +74,8 @@ class AuthService:
     def authorized(self, session: TelegramSession) -> bool:
         if session == TelegramSession.API:
             return self._runtime.telegram.authorized
+        if session == TelegramSession.DOWNLOAD:
+            return self._runtime.download.authorized
         return session_exists(session)
 
     def _login(self, session: TelegramSession) -> Login | None:
@@ -233,6 +235,8 @@ class AuthService:
         logger.info("Telegram {} session logged in", login.session)
         if login.session == TelegramSession.API:
             await self._switch_api()
+        elif login.session == TelegramSession.DOWNLOAD:
+            await self._switch_download()
         await self.sweep_quietly()
 
     async def _switch_api(self) -> None:
@@ -243,6 +247,19 @@ class AuthService:
         if old is not client:
             await old.stop()
         await self.connect()
+
+    async def _switch_download(self) -> None:
+        old = self._runtime.download
+        client = self._runtime.make_telegram(
+            TelegramSession.DOWNLOAD, receive_updates=False
+        )
+        if not await client.start():
+            raise TelegramUnauthorizedError(
+                "the new download session is not authorized"
+            )
+        self._runtime.download = client
+        if old is not client:
+            await old.stop()
 
     async def connect(self) -> None:
         async with session_factory() as session:
@@ -261,6 +278,11 @@ class AuthService:
                 client = self._runtime.make_telegram()
                 await client.start()
                 self._runtime.telegram, self._runtime.premium = client, None
+            elif session == TelegramSession.DOWNLOAD:
+                await self._runtime.download.log_out()
+                client = self._runtime.make_telegram(session, receive_updates=False)
+                await client.start()
+                self._runtime.download = client
             elif session_exists(session):
                 client = self._runtime.make_telegram(session, receive_updates=False)
                 await client.start()

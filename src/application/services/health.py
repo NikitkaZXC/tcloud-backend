@@ -22,6 +22,9 @@ class HealthService:
             self._runtime.telegram.connected() and self._runtime.telegram.authorized
         )
         telegram_worker = session_exists(TelegramSession.WORKER)
+        telegram_download = (
+            self._runtime.download.connected() and self._runtime.download.authorized
+        )
         antivirus = await self._runtime.scanner.ping()
         redis = await self._runtime.store.ping()
         queue = await broker_alive()
@@ -31,6 +34,7 @@ class HealthService:
             ok=db
             and telegram
             and telegram_worker
+            and telegram_download
             and antivirus
             and redis
             and queue
@@ -38,6 +42,7 @@ class HealthService:
             db=db,
             telegram=telegram,
             telegram_worker=telegram_worker,
+            telegram_download=telegram_download,
             antivirus=antivirus,
             redis=redis,
             queue=queue,

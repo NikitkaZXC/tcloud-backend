@@ -1,11 +1,12 @@
 # Вход в Telegram
 
-tcloud работает от пользовательского аккаунта через две сессии Telethon (в Telegram это два устройства):
+tcloud работает от пользовательского аккаунта через три сессии Telethon (в Telegram это три устройства):
 
 | Сессия | Файл | Кто использует | Устройство в Telegram |
 |---|---|---|---|
 | `api` | `TELEGRAM_SESSION` | API: каналы, скачивание, удаление, события об удалениях | `tcloud-api` |
 | `worker` | `TELEGRAM_WORKER_SESSION` | `worker-telegram`: отправка файлов | `tcloud-worker` |
+| `download` | `TELEGRAM_DOWNLOAD_SESSION` | API, отдельный клиент: скачивание файлов (`/files/{id}/download`) | `tcloud-download` |
 
 В каждую сессию входят отдельно, через API (Swagger `/docs`, раздел **Auth**). Все эндпоинты за `X-API-Key`.
 Сессия, которая подтверждала бы вход других устройств, не хранится: такая сессия могла бы подключить к аккаунту
@@ -13,14 +14,15 @@ tcloud работает от пользовательского аккаунта
 
 ## Без сессий
 
-Приложение стартует и без входа: `/docs`, `/api/auth` и `/api/health` работают, `health.telegram` / `health.telegram_worker`
-равны `false`. Всё, что ходит в Telegram через API-сессию, отвечает `503 telegram_unauthorized`; загрузки без сессии
-воркера отклоняются сразу тем же кодом. После входа в `api` каналы из `TELEGRAM_CHATS` подключаются и запускается
+Приложение стартует и без входа: `/docs`, `/api/auth` и `/api/health` работают, `health.telegram` / `health.telegram_worker` /
+`health.telegram_download` равны `false`. Всё, что ходит в Telegram через API-сессию, отвечает `503 telegram_unauthorized`; загрузки без сессии
+воркера отклоняются сразу тем же кодом, скачивания без сессии `download` — тоже. Вход в `download` подменяет клиент
+скачиваний на лету. После входа в `api` каналы из `TELEGRAM_CHATS` подключаются и запускается
 слежение за удалениями — перезапуск не нужен. Воркер подхватывает новую сессию при следующей задаче.
 
 ## Шаги
 
-`{session}` — `api` или `worker`. Текущее состояние — `GET /api/auth`: для каждой сессии `authorized` и незавершённый
+`{session}` — `api`, `worker` или `download`. Текущее состояние — `GET /api/auth`: для каждой сессии `authorized` и незавершённый
 вход `login` (`step`: `qr`, `code`, `password`, `expired`, `failed`; `expires_at`; `error`).
 
 **По QR.** `POST /api/auth/{session}/qr` отдаёт PNG (Swagger показывает картинку), срок — в заголовке `X-Expires-At`

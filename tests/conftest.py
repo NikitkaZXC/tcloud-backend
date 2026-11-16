@@ -14,6 +14,7 @@ TEST_ENV = {
     "TELEGRAM_CHATS": "",
     "TELEGRAM_SESSION": os.path.join(SESSIONS, "session"),
     "TELEGRAM_WORKER_SESSION": os.path.join(SESSIONS, "worker"),
+    "TELEGRAM_DOWNLOAD_SESSION": os.path.join(SESSIONS, "download"),
     "UPLOAD_TMP_DIR": tempfile.mkdtemp(prefix="tcloud-tmp-"),
     "UPLOAD_MIN_FREE_DISK_MB": "0",
     "UPLOAD_RETRY_DELAY": "0.01",

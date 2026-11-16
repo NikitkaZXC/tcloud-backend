@@ -268,3 +268,33 @@ async def test_revoked_worker_session_fails_task_and_reconnects(
     assert worker._telegram is None
     task = await upload(client, path(storage, "b.pdf"), PDF)
     assert task["status"] == "done", task
+
+
+async def test_download_needs_its_own_session(
+    logged_in, worker_session, download_session, download_telegram, make_client, logins
+):
+    download_session.unlink()
+    client = await make_client()
+    storage = (await client.post("/storages", json={"name": "Фото"})).json()
+    task = await upload(client, path(storage, "a.pdf"), PDF)
+    assert (await state(client, "download"))["authorized"] is False
+    assert (await client.get("/health")).json()["telegram_download"] is False
+    file_id = task["file"]["uuid"]
+    blocked = await client.get(f"/files/{file_id}/download")
+    assert blocked.status_code == 503
+    assert blocked.json()["error"]["code"] == "telegram_unauthorized"
+
+    await client.post("/auth/download/qr")
+    logins[TelegramSession.DOWNLOAD].scanned.set()
+
+    async def authorized():
+        return (await state(client, "download"))["authorized"]
+
+    await until(authorized)
+    response = await client.get(f"/files/{file_id}/download")
+    assert response.status_code == 200 and response.content == PDF
+    assert download_telegram.authorized
+
+    out = await client.post("/auth/download/logout")
+    assert out.json()["authorized"] is False and not download_session.exists()
+    assert (await client.get(f"/files/{file_id}/download")).status_code == 503

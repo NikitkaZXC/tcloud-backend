@@ -19,8 +19,8 @@ make env          # .env + сгенерированные ключи; запол
 make up           # API на 127.0.0.1:8000, Swagger — /docs
 ```
 
-Вход в Telegram — в Swagger, раздел **Auth**, по QR или по коду (с 2FA), отдельно для сессий `api` и `worker`:
-`POST /api/auth/api/qr`, затем `POST /api/auth/worker/qr` ([docs/flows/auth.md](docs/flows/auth.md)).
+Вход в Telegram — в Swagger, раздел **Auth**, по QR или по коду (с 2FA), отдельно для сессий `api`, `worker` и `download`:
+`POST /api/auth/api/qr`, `POST /api/auth/worker/qr`, `POST /api/auth/download/qr` ([docs/flows/auth.md](docs/flows/auth.md)).
 
 ```bash
 curl -H "X-API-Key: $APP_API_KEY" -H 'Content-Type: application/json' \

@@ -15,6 +15,7 @@ from src.infrastructure.background import AppRuntime
 from src.infrastructure.cache import TaskStore, create_redis
 from src.infrastructure.database.engine import create_engine
 from src.infrastructure.database.session import session_factory
+from src.infrastructure.enums import TelegramSession
 from src.infrastructure.integrations import (
     create_login,
     create_scanner,
@@ -32,9 +33,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     session_factory.configure(bind=engine)
     telegram = create_telegram()
     await telegram.start()
+    download = create_telegram(TelegramSession.DOWNLOAD, receive_updates=False)
+    await download.start()
     redis = create_redis()
     runtime = AppRuntime(
         telegram=telegram,
+        download=download,
         scanner=create_scanner(),
         store=TaskStore(redis),
         make_telegram=create_telegram,
@@ -54,7 +58,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
             sweeper.cancel()
         await auth.close()
         await runtime.stop()
-        await telegram.stop()
+        await runtime.telegram.stop()
+        await runtime.download.stop()
         await redis.aclose()
         await engine.dispose()
         logger.info("Stopped")

@@ -59,6 +59,7 @@ services:
       REDIS_HOST: redis
       TELEGRAM_SESSION: /data/session/tcloud
       TELEGRAM_WORKER_SESSION: /data/session/tcloud-worker
+      TELEGRAM_DOWNLOAD_SESSION: /data/session/tcloud-download
       UPLOAD_TMP_DIR: /data/tmp
       REDIS_PASSWORD: ""
     ports:

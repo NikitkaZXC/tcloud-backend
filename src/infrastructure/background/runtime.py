@@ -8,9 +8,16 @@ from src.infrastructure.cache import TaskStore
 
 class AppRuntime:
     def __init__(
-        self, telegram, scanner, store: TaskStore, make_telegram, make_login
+        self,
+        telegram,
+        download,
+        scanner,
+        store: TaskStore,
+        make_telegram,
+        make_login,
     ) -> None:
         self.telegram = telegram
+        self.download = download
         self.make_telegram = make_telegram
         self.make_login = make_login
         self.logins: dict = {}

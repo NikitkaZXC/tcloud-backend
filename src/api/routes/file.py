@@ -65,7 +65,7 @@ async def download_file(
     if range_header:
         headers["Content-Range"] = f"bytes {start}-{end}/{file.size}"
     return StreamingResponse(
-        runtime.telegram.iter_media(media, start, end - start + 1),
+        runtime.download.iter_media(media, start, end - start + 1),
         status_code=(
             status.HTTP_206_PARTIAL_CONTENT if range_header else status.HTTP_200_OK
         ),
