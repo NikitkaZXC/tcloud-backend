@@ -24,6 +24,7 @@ STATUS_BY_CODE = {
     "photo_not_found": status.HTTP_404_NOT_FOUND,
     "folder_not_found": status.HTTP_404_NOT_FOUND,
     "file_not_found": status.HTTP_404_NOT_FOUND,
+    "file_changed": status.HTTP_409_CONFLICT,
     "task_not_found": status.HTTP_404_NOT_FOUND,
     "conflict": status.HTTP_409_CONFLICT,
     "length_required": status.HTTP_411_LENGTH_REQUIRED,

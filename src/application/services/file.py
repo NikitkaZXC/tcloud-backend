@@ -3,7 +3,11 @@ from uuid import UUID
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.application.exception import SessionNotAuthorizedError, StoredFileNotFoundError
+from src.application.exception import (
+    FileChangedError,
+    SessionNotAuthorizedError,
+    StoredFileNotFoundError,
+)
 from src.application.schemas import Actor, FileServiceRead
 from src.application.services.access import require
 from src.application.services.storage import StorageService
@@ -65,7 +69,7 @@ class FileService:
                 "the download session is not logged in, log in with /api/telegram/download"
             )
         try:
-            media = await self._runtime.download.message_media(
+            media, size = await self._runtime.download.message_media(
                 chat_id, file.tg_message_id
             )
         except TelegramMessageGoneError:
@@ -73,6 +77,16 @@ class FileService:
             await self._session.commit()
             logger.info("File {} is gone from Telegram, record removed", file_id)
             raise
+        if size != file.size:
+            logger.warning(
+                "File {} changed in Telegram: {} bytes recorded, {} now",
+                file_id,
+                file.size,
+                size,
+            )
+            raise FileChangedError(
+                "the file in Telegram was replaced, its size no longer matches"
+            )
         return file, media
 
     async def forget_messages(self, chat_id: int, message_ids: list[int]) -> None:

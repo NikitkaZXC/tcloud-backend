@@ -92,7 +92,18 @@ class StorageService:
     async def get(self, actor: Actor, storage_id: UUID) -> StorageServiceRead:
         self.check_visible(actor, storage_id)
         storage = await self.get_db(storage_id)
-        files, total_size = await self._repo.get_stats(storage_id)
+        files, total_size = await self._repo.get_stats(
+            storage_id,
+            (
+                None
+                if actor.is_admin
+                else [
+                    (grant.folder, grant.recursive)
+                    for grant in actor.grants
+                    if grant.storage_id == storage_id and grant.can_read
+                ]
+            ),
+        )
         info = (await self._runtime.telegram.channels([storage.tg_chat_id])).get(
             storage.tg_chat_id
         )

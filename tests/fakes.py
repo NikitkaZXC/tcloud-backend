@@ -197,11 +197,11 @@ class FakeTelegram:
         )
         return SentFile(message_id, len(data), mime, media.width, media.height)
 
-    async def message_media(self, chat_id: int, message_id: int) -> dict:
+    async def message_media(self, chat_id: int, message_id: int) -> tuple[dict, int]:
         message = self.chats[chat_id]["messages"].get(message_id)
         if not message:
             raise TelegramMessageGoneError("gone")
-        return message
+        return message, len(message["data"])
 
     async def iter_media(self, media: dict, offset: int, length: int):
         data = media["data"][offset : offset + length]

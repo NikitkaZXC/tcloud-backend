@@ -170,3 +170,12 @@ async def test_delete_missing_folder(client, storage):
     assert (
         await client.delete("/folders", params={"path": path(storage, "nope")})
     ).status_code == 404
+
+
+async def test_download_refuses_a_replaced_file(client, photo, telegram):
+    for chat in telegram.chats.values():
+        for message in chat["messages"].values():
+            message["data"] = message["data"] + b"tampered"
+    response = await client.get(f"/files/{photo['uuid']}/download")
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "file_changed"

@@ -400,13 +400,13 @@ class TelegramClient:
         return types.InputFile(file_id, parts, path.name, md5_checksum="")
 
     @translate_errors
-    async def message_media(self, chat_id: int, message_id: int):
+    async def message_media(self, chat_id: int, message_id: int) -> tuple[object, int]:
         message = await self._client.get_messages(
             await self._entity(chat_id), ids=message_id
         )
         if not message or not message.media:
             raise TelegramMessageGoneError("telegram message with this file is gone")
-        return message.media
+        return message.media, message.file.size
 
     async def iter_media(self, media, offset: int, length: int) -> AsyncIterator[bytes]:
         start = offset - offset % CHUNK

@@ -331,3 +331,24 @@ async def test_root_password_follows_env(client, anonymous, monkeypatch):
         "/auth/signin", json={"login": "root", "password": "changed-password"}
     )
     assert response.status_code == 204
+
+
+async def test_storage_stats_count_only_readable_files(client, storage, make_user):
+    await upload(client, path(storage, "open/a.pdf"), PDF)
+    await upload(client, path(storage, "open/deep/b.pdf"), PDF + b"x")
+    await upload(client, path(storage, "flat/c.pdf"), PDF + b"xx")
+    await upload(client, path(storage, "flat/inner/d.pdf"), PDF)
+    await upload(client, path(storage, "closed/e.pdf"), PDF)
+    user = await make_user(
+        "counter",
+        "user",
+        {"path": path(storage, "open")},
+        {"path": path(storage, "open/deep")},
+        {"path": path(storage, "flat"), "recursive": False},
+        {"path": path(storage, "closed"), "can_read": False, "can_upload": True},
+    )
+    seen = (await user.get(f"/storages/{storage['id']}")).json()
+    assert seen["files"] == 3
+    assert seen["total_size"] == 3 * len(PDF) + 3
+    full = (await client.get(f"/storages/{storage['id']}")).json()
+    assert full["files"] == 5

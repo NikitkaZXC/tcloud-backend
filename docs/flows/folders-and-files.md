@@ -17,6 +17,8 @@
 - `GET /api/files/{uuid}` и `GET /api/files/by-path?path=` — все метаданные: размер, MIME, тип, `sent_as`,
   размеры, длительность, `sha256` оригинала, `telegram.chat_id`/`message_id`/`link`/`search`.
 - `GET /api/files/{uuid}/download` — поток из Telegram; `Range` (один диапазон) → `206`, видео можно перематывать.
+  Перед отдачей размер файла в Telegram сверяется с `files.size`: если файл в канале подменили (размер другой), ответ
+  `409 file_changed`, ничего не отдаётся. Полный `sha256` при потоковой отдаче не проверяется — он есть в метаданных.
 - `DELETE /api/files/{uuid}` — сообщение в Telegram и запись в БД.
 - Удалили сообщение руками в Telegram — запись тоже пропадает, см. «Ручные удаления в Telegram» ниже.
 - Для сжатого фото (`send_as=media`) `size`, `width`, `height` — того, что хранит Telegram; `sha256` — всегда от оригинала.
