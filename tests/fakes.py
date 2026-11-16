@@ -10,6 +10,7 @@ from src.infrastructure.integrations import (
     InfectedFileError,
     ScannerUnavailableError,
     SentFile,
+    TelegramChannelsLimitError,
     TelegramCodeInvalidError,
     TelegramFloodWaitError,
     TelegramLoginExpiredError,
@@ -30,6 +31,7 @@ class FakeTelegram:
         self.authorized = True
         self.authorizations_list: list[Authorization] = []
         self.too_fresh = False
+        self.channels_full = False
         self.premium = False
         self.chats: dict[int, dict] = {}
         self.next_chat = 1001234567000
@@ -112,6 +114,8 @@ class FakeTelegram:
 
     async def create_channel(self, title: str, about: str) -> int:
         self._check()
+        if self.channels_full:
+            raise TelegramChannelsLimitError("too many channels", limit=500)
         chat_id = self.add_channel(title)
         self.chats[chat_id]["about"] = about
         return chat_id

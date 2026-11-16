@@ -1,6 +1,7 @@
 from .client import TRANSIENT, TelegramClient
 from .exception import (
     ChannelCheckError,
+    TelegramChannelsLimitError,
     TelegramCodeInvalidError,
     TelegramError,
     TelegramFloodWaitError,
@@ -23,6 +24,7 @@ __all__ = [
     "ChannelCheckError",
     "ChannelInfo",
     "SentFile",
+    "TelegramChannelsLimitError",
     "TelegramClient",
     "TelegramCodeInvalidError",
     "TelegramError",

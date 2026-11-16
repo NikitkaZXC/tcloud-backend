@@ -253,3 +253,12 @@ async def test_delete_storage_with_uploads_in_progress(client, telegram, storage
 async def test_delete_storage_whose_channel_is_gone(client, telegram, storage):
     telegram.chats.pop(storage["telegram"]["chat_id"])
     assert (await client.delete(f"/storages/{storage['id']}")).status_code == 204
+
+
+async def test_channel_limit_is_reported(client, telegram):
+    telegram.channels_full = True
+    response = await client.post("/storages", json={"name": "Ещё одно"})
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "channels_limit"
+    assert response.json()["error"]["limit"] == 500
+    assert (await client.get("/storages")).json() == []

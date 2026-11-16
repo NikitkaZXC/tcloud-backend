@@ -11,6 +11,7 @@ from telethon import errors, events, functions, helpers, types, utils
 from src.infrastructure.enums import MediaKind
 from src.infrastructure.integrations.telegram.exception import (
     ChannelCheckError,
+    TelegramChannelsLimitError,
     TelegramCodeInvalidError,
     TelegramError,
     TelegramFloodWaitError,
@@ -27,7 +28,14 @@ from src.infrastructure.integrations.telegram.schemas import (
     ChannelInfo,
     SentFile,
 )
-from src.infrastructure.limits import BATCH, BIG_FILE, CHUNK, FLOOD_SLEEP_THRESHOLD
+from src.infrastructure.limits import (
+    BATCH,
+    BIG_FILE,
+    CHANNELS_MAX,
+    CHANNELS_MAX_PREMIUM,
+    CHUNK,
+    FLOOD_SLEEP_THRESHOLD,
+)
 from src.infrastructure.media import Media
 
 TRANSIENT = (
@@ -189,11 +197,19 @@ class TelegramClient:
 
     @translate_errors
     async def create_channel(self, title: str, about: str) -> int:
-        result = await self._client(
-            functions.channels.CreateChannelRequest(
-                title=title, about=about, broadcast=True
+        try:
+            result = await self._client(
+                functions.channels.CreateChannelRequest(
+                    title=title, about=about, broadcast=True
+                )
             )
-        )
+        except errors.ChannelsTooMuchError as error:
+            raise TelegramChannelsLimitError(
+                f"the account is in too many channels and groups ({CHANNELS_MAX}, "
+                f"{CHANNELS_MAX_PREMIUM} with Premium): delete a storage or leave "
+                "other channels in Telegram",
+                limit=CHANNELS_MAX_PREMIUM if await self.is_premium() else CHANNELS_MAX,
+            ) from error
         return utils.get_peer_id(result.chats[0])
 
     @translate_errors

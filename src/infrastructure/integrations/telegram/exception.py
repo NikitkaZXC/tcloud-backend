@@ -71,6 +71,12 @@ class TelegramLoginExpiredError(TCloudError):
     code = "login_expired"
 
 
+class TelegramChannelsLimitError(TCloudError):
+    """Raised when the account is in too many channels to create another one."""
+
+    code = "channels_limit"
+
+
 class TelegramSessionTooFreshError(TCloudError):
     """Raised when Telegram forbids a new session to end other sessions yet."""
 
