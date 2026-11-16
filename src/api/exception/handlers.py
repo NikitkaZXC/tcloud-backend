@@ -9,7 +9,10 @@ from src.utilities.errors import TCloudError
 
 
 def error_response(status_code: int, body: dict) -> JSONResponse:
-    return JSONResponse({"error": jsonable_encoder(body)}, status_code)
+    headers = (
+        {"Retry-After": str(body["retry_after"])} if "retry_after" in body else None
+    )
+    return JSONResponse({"error": jsonable_encoder(body)}, status_code, headers)
 
 
 async def tcloud_error(_: Request, error: TCloudError) -> JSONResponse:

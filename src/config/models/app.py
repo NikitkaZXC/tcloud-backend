@@ -12,3 +12,4 @@ class AppSettings(BaseSettings):
     SECRET_KEY: SecretStr
     HOST: str = "0.0.0.0"
     PORT: int = 8000
+    ALLOWED_ORIGINS: list[str] = []

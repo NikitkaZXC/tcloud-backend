@@ -9,6 +9,7 @@ src/
   config/                  настройки (pydantic-settings), по классу на группу: APP_, POSTGRES_, TELEGRAM_, CLAMAV_, UPLOAD_, RABBITMQ_, REDIS_, LOG_
   api/
     endpoints.py           все роутеры под /api; /api/telegram только для root
+    middleware/            заголовки безопасности, проверка Origin (CSRF), см. security.md
     routes/                system, storage, folder, upload, file
     schemas/               HTTP-схемы запросов и ответов
     exception/             код ошибки → HTTP-статус, обработчики, единый формат {"error": {...}}

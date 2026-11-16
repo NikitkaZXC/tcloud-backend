@@ -3,7 +3,7 @@ from collections.abc import Coroutine
 
 from src.config import settings
 from src.infrastructure.background.disk import DiskBudget, MiB
-from src.infrastructure.cache import TaskStore, TokenBlacklist
+from src.infrastructure.cache import RateLimiter, TaskStore, TokenBlacklist
 
 
 class AppRuntime:
@@ -14,6 +14,7 @@ class AppRuntime:
         scanner,
         store: TaskStore,
         blacklist: TokenBlacklist,
+        limiter: RateLimiter,
         make_telegram,
         make_login,
     ) -> None:
@@ -26,6 +27,7 @@ class AppRuntime:
         self.scanner = scanner
         self.store = store
         self.blacklist = blacklist
+        self.limiter = limiter
         self.disk = DiskBudget(
             settings.upload.TMP_DIR, settings.upload.MIN_FREE_DISK_MB * MiB
         )

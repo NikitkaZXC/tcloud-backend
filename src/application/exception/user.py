@@ -25,6 +25,12 @@ class AccountLockedError(TCloudError):
     code = "account_locked"
 
 
+class RateLimitedError(TCloudError):
+    """Raised when one client sends too many requests to a limited endpoint."""
+
+    code = "rate_limited"
+
+
 class UserBlockedError(TCloudError):
     """Raised when a blocked user signs in or uses a token or key."""
 

@@ -53,6 +53,7 @@ async def test_download_document_as_attachment(client, storage):
     assert response.headers["content-type"] == "application/octet-stream"
     assert response.headers["content-disposition"].startswith("attachment;")
     assert response.headers["x-content-type-options"] == "nosniff"
+    assert response.headers["content-security-policy"] == "sandbox"
 
 
 async def test_download_pdf_range(client, storage):

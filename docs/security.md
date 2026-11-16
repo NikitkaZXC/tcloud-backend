@@ -7,6 +7,9 @@
   ключи хранятся только как HMAC-SHA256 от `APP_SECRET_KEY`. Подробно — flows/users.md.
 - Права проверяются на каждый запрос по БД (роль, блокировка, гранты на папки), а не по содержимому токена.
 - Регистрации нет; Telegram-сессии (`/api/telegram`) доступны только root.
+- Вход ограничен по IP (`JWT_SIGNIN_IP_LIMIT` за `JWT_SIGNIN_IP_WINDOW` с, `429 rate_limited`) поверх блокировки аккаунта.
+  IP берётся из соединения: за обратным прокси uvicorn нужен `--forwarded-allow-ips` с адресом прокси, никогда `*`,
+  иначе клиент подделает IP через `X-Forwarded-For`.
 - Порт публикуется только на `127.0.0.1`. Postgres и ClamAV наружу не выходят.
 
 ## Файлы
@@ -39,9 +42,20 @@
 6. Временные файлы: случайные имена, права `0600`, удаляются в любом исходе; имя пользователя в ФС не попадает,
    только его расширение (по нему Telethon решает, фото это или документ).
 
+## CSRF и заголовки
+
+- `OriginCheckMiddleware`: POST/PUT/PATCH/DELETE с заголовком `Origin`, хост которого не совпадает с `Host` запроса и
+  которого нет в `APP_ALLOWED_ORIGINS`, получают `403 cross_site_request`. Запросы без `Origin` (скрипты, curl) проходят.
+  Если прокси меняет `Host`, внешний адрес нужно добавить в `APP_ALLOWED_ORIGINS`. Вместе с `SameSite=lax` это закрывает
+  CSRF на куках.
+- `SecurityHeadersMiddleware` на всех ответах: `nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`,
+  COOP/CORP, `Permissions-Policy`; CSP `default-src 'none'` и `Cache-Control: no-store`, если маршрут не задал своих
+  (кроме `/docs`, `/redoc`, `/openapi.json` — Swagger иначе не загрузится); HSTS при `JWT_SECURE=true`.
+
 ## Скачивание
 
-`GET /api/files/{uuid}/download` всегда отдаёт `X-Content-Type-Options: nosniff`. Не-медиа (`kind = document`) —
+`GET /api/files/{uuid}/download` всегда отдаёт `X-Content-Type-Options: nosniff` и `Content-Security-Policy: sandbox`
+(медиа показывается, скрипты не выполняются). Не-медиа (`kind = document`) —
 `application/octet-stream` и `Content-Disposition: attachment`: HTML, SVG или PDF не откроются в браузере
 на нашем адресе и не выполнят скрипт.
 

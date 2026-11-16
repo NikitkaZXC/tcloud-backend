@@ -40,6 +40,11 @@ JWT несёт `sub`, `user_id`, `role`, `jti`, `iat`, `exp`, `token_type`. Пр
 `429 account_locked` с `retry_after`. Для неизвестного логина тоже проверяется фиктивный argon2-хеш, чтобы по времени
 ответа нельзя было угадать логины.
 
+Кроме блокировки аккаунта вход ограничен по IP: не больше `JWT_SIGNIN_IP_LIMIT` (20) попыток за `JWT_SIGNIN_IP_WINDOW` (60) секунд
+с одного адреса, иначе `429 rate_limited` (подбор паролей сразу по многим логинам). Счётчик — фиксированное окно в Redis
+(`{REDIS_PREFIX}:rate:signin:{ip}`); если Redis недоступен, вход не блокируется (fail open, блокировка аккаунта
+продолжает работать). У всех ответов с `retry_after` в теле есть и заголовок `Retry-After`.
+
 Ключи RS256 лежат в `certs/jwt-private.pem` и `certs/jwt-public.pem` (`JWT_PRIVATE_KEY_PATH`, `JWT_PUBLIC_KEY_PATH`).
 `make env` создаёт их через openssl, compose монтирует `./certs` read-only в `/certs`. Если сменить ключи, все access-токены
 станут недействительны, refresh продолжат работать.

@@ -352,3 +352,34 @@ async def test_storage_stats_count_only_readable_files(client, storage, make_use
     assert seen["total_size"] == 3 * len(PDF) + 3
     full = (await client.get(f"/storages/{storage['id']}")).json()
     assert full["files"] == 5
+
+
+async def test_signin_is_rate_limited_by_ip(anonymous, monkeypatch):
+    monkeypatch.setattr(settings.jwt, "SIGNIN_IP_LIMIT", 3)
+    for _ in range(3):
+        await anonymous.post(
+            "/auth/signin", json={"login": "nobody", "password": "wrong-password"}
+        )
+    response = await anonymous.post(
+        "/auth/signin", json={"login": "root", "password": "root-password"}
+    )
+    assert response.status_code == 429 and code(response) == "rate_limited"
+    assert int(response.headers["retry-after"]) > 0
+
+
+async def test_security_headers(client):
+    response = await client.get("/users/me")
+    assert response.headers["x-frame-options"] == "DENY"
+    assert response.headers["content-security-policy"].startswith("default-src 'none'")
+    assert response.headers["cache-control"] == "no-store"
+    docs = await client.get("http://test/docs")
+    assert docs.status_code == 200 and "content-security-policy" not in docs.headers
+
+
+async def test_cross_site_writes_are_rejected(client):
+    response = await client.post(
+        "/auth/logout/all", headers={"Origin": "https://evil.example"}
+    )
+    assert response.status_code == 403 and code(response) == "cross_site_request"
+    response = await client.post("/auth/logout/all", headers={"Origin": "http://test"})
+    assert response.status_code == 204

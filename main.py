@@ -8,11 +8,17 @@ from loguru import logger
 
 from src.api.endpoints import routers
 from src.api.exception import register_exception_handlers
+from src.api.middleware import OriginCheckMiddleware, SecurityHeadersMiddleware
 from src.application.bootstrap.startup import prepare
 from src.application.services import AuthService, TaskSweeper
 from src.config import settings
 from src.infrastructure.background import AppRuntime
-from src.infrastructure.cache import TaskStore, TokenBlacklist, create_redis
+from src.infrastructure.cache import (
+    RateLimiter,
+    TaskStore,
+    TokenBlacklist,
+    create_redis,
+)
 from src.infrastructure.database.engine import create_engine
 from src.infrastructure.database.session import session_factory
 from src.infrastructure.enums import TelegramSession
@@ -42,6 +48,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         scanner=create_scanner(),
         store=TaskStore(redis),
         blacklist=TokenBlacklist(redis),
+        limiter=RateLimiter(redis),
         make_telegram=create_telegram,
         make_login=create_login,
     )
@@ -67,6 +74,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
 
 
 app = FastAPI(title=settings.app.TITLE, version=settings.app.VERSION, lifespan=lifespan)
+app.add_middleware(OriginCheckMiddleware)
+app.add_middleware(SecurityHeadersMiddleware)
 app.include_router(routers)
 register_exception_handlers(app)
 

@@ -53,6 +53,7 @@ STATUS_BY_CODE = {
     "invalid_credentials": status.HTTP_401_UNAUTHORIZED,
     "invalid_refresh_token": status.HTTP_401_UNAUTHORIZED,
     "account_locked": status.HTTP_429_TOO_MANY_REQUESTS,
+    "rate_limited": status.HTTP_429_TOO_MANY_REQUESTS,
     "user_blocked": status.HTTP_403_FORBIDDEN,
     "forbidden": status.HTTP_403_FORBIDDEN,
     "user_not_found": status.HTTP_404_NOT_FOUND,

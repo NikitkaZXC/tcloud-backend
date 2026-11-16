@@ -9,6 +9,7 @@ from src.application.exception import (
     InvalidCredentialsError,
     InvalidRefreshTokenError,
     NotAuthenticatedError,
+    RateLimitedError,
     UserBlockedError,
     UserSessionNotFoundError,
 )
@@ -47,6 +48,7 @@ class UserAuthService:
     def __init__(self, session: AsyncSession, runtime: AppRuntime) -> None:
         self._session = session
         self._blacklist = runtime.blacklist
+        self._limiter = runtime.limiter
         self._users = UserRepository(session)
         self._tokens = RefreshTokenRepository(session)
         self._keys = ApiKeyRepository(session)
@@ -83,6 +85,16 @@ class UserAuthService:
         return len(tokens)
 
     async def signin(self, login: str, password: str, client: ClientInfo) -> TokenPair:
+        retry_after = await self._limiter.hit(
+            f"signin:{client.ip_address}",
+            settings.jwt.SIGNIN_IP_LIMIT,
+            settings.jwt.SIGNIN_IP_WINDOW,
+        )
+        if retry_after:
+            logger.warning("Sign in rate limited: {}", client.ip_address)
+            raise RateLimitedError(
+                "too many sign in attempts, try later", retry_after=retry_after
+            )
         user = await self._users.get_by_login(login)
         if not user:
             await verify_password(password, DUMMY_HASH)
