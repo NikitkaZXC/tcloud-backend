@@ -6,6 +6,7 @@ from src.application.services import AuthService, UserAuthService, UserService
 from src.config import settings
 from src.infrastructure.background import AppRuntime
 from src.infrastructure.database.session import session_factory
+from src.infrastructure.security import check_keys
 
 
 async def prepare(runtime: AppRuntime) -> None:
@@ -14,6 +15,7 @@ async def prepare(runtime: AppRuntime) -> None:
     for item in settings.upload.TMP_DIR.iterdir():
         if item.stat().st_mtime < stale:
             item.unlink(missing_ok=True)
+    check_keys()
     async with session_factory() as session:
         await UserService(session, UserAuthService(session, runtime)).ensure_root()
     if runtime.telegram.authorized:

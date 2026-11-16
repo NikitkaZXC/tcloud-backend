@@ -31,6 +31,17 @@ def _public_key() -> str:
     return settings.jwt.PUBLIC_KEY_PATH.read_text()
 
 
+def check_keys() -> None:
+    for read in (_private_key, _public_key):
+        try:
+            read()
+        except OSError as error:
+            raise RuntimeError(
+                f"JWT key {error.filename} is not readable: run make env "
+                "and give the container user (uid 1000) read access"
+            ) from error
+
+
 def generate_access_token(user_id: UUID, role: str) -> tuple[str, JWTPayload]:
     now = datetime.now(UTC)
     payload = JWTPayload(

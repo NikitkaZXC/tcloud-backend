@@ -27,6 +27,9 @@ if [ ! -f certs/jwt-private.pem ]; then
     openssl rsa -in certs/jwt-private.pem -pubout -out certs/jwt-public.pem 2>/dev/null
     chmod 600 certs/jwt-private.pem
     echo "generated certs/jwt-private.pem and certs/jwt-public.pem"
+    if [ "$(uname)" = "Linux" ] && [ "$(id -u)" != "1000" ]; then
+        echo "the container runs as uid 1000: sudo chown 1000 certs/jwt-private.pem"
+    fi
 fi
 
 missing=$(grep -E "^(TELEGRAM_API_ID|TELEGRAM_API_HASH)=$" .env | cut -d= -f1 || true)

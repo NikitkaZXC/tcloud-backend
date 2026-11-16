@@ -18,7 +18,8 @@ volume удалён или сессию завершили в Telegram. Без �
 
 - Порт — `127.0.0.1:8000`. Для доступа снаружи — reverse proxy с TLS.
 - `make env` кладёт RS256-ключи JWT в `certs/` (в git и образ не попадают), compose монтирует их в `/certs` read-only.
-  Куки `Secure` (`JWT_SECURE=true`): снаружи нужен TLS.
+  Куки `Secure` (`JWT_SECURE=true`): снаружи нужен TLS. Приложение в контейнере — uid 1000: на Linux, если вы не uid 1000,
+  выполните `sudo chown 1000 certs/jwt-private.pem`, иначе API не стартует (`JWT key ... is not readable`).
 - `worker-telegram` — ровно одна реплика (общая пауза FloodWait и одна сессия); параллельность —
   `TELEGRAM_CONCURRENCY` и `TELEGRAM_UPLOAD_WORKERS`. `worker-download` и `worker-prepare` можно масштабировать
   репликами (`docker compose up --scale worker-prepare=2`), потоков на реплику — `UPLOAD_DOWNLOAD_CONCURRENCY` и
