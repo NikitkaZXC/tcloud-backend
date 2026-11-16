@@ -61,7 +61,7 @@
   `APP_IS_ALLOWED_CREDENTIALS`, `APP_ALLOWED_METHODS`, `APP_ALLOWED_HEADERS`. Нужен для dev-сервера фронтенда на другом
   порту (`["http://localhost:3000"]`). Список пустой по умолчанию: чужой браузерный JS ответов не видит.
   Тот же список пропускает `OriginCheckMiddleware`, так что адрес фронтенда добавляется в одно место.
-- Фронтенду открыты заголовки (`APP_EXPOSED_HEADERS`) `Accept-Ranges`, `Content-Disposition`, `Content-Range`, `Retry-After`, `X-Expires-At`.
+- Фронтенду открыты заголовки (`APP_EXPOSED_HEADERS`) `Accept-Ranges`, `Content-Disposition`, `Content-Range`, `Retry-After`.
 - Фронтенд должен быть на том же сайте (например `app.example.com` и `api.example.com`): куки `SameSite=lax` и
   `Cross-Origin-Resource-Policy: same-site` не работают между разными сайтами. Другой сайт потребует `JWT_SAME_SITE=none`
   (только с `JWT_SECURE=true`) и смены CORP — это ослабляет защиту, решать отдельно.

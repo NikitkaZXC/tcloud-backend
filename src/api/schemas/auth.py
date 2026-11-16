@@ -3,6 +3,7 @@ from pydantic import BaseModel
 from src.application.schemas import (
     AuthorizationServiceRead,
     AuthServiceRead,
+    QrServiceRead,
     SessionStateServiceRead,
 )
 from src.utilities.formatters import LoginCode, Password, PhoneNumber
@@ -29,4 +30,8 @@ class SessionStateResponse(SessionStateServiceRead):
 
 
 class AuthorizationResponse(AuthorizationServiceRead):
+    pass
+
+
+class QrResponse(QrServiceRead):
     pass

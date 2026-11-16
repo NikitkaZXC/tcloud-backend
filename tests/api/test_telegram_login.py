@@ -57,9 +57,9 @@ async def test_starts_without_telegram_session(client):
 async def test_qr_login_with_two_step_password(client, telegram, logins):
     response = await client.post("/telegram/api/qr")
     assert response.status_code == 200
-    assert response.headers["content-type"] == "image/png"
-    assert response.content.startswith(b"\x89PNG")
-    assert "x-expires-at" in response.headers
+    qr = response.json()
+    assert qr["url"].startswith("tg://login?token=") and qr["expires_at"]
+    assert response.headers["cache-control"] == "no-store"
     assert (await state(client, "api"))["login"]["step"] == "qr"
 
     login = logins[TelegramSession.API]

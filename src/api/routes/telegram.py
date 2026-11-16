@@ -1,7 +1,4 @@
-from io import BytesIO
-
-import qrcode
-from fastapi import APIRouter, Depends, Response, status
+from fastapi import APIRouter, Depends, status
 
 from src.api.schemas import (
     AuthorizationResponse,
@@ -9,6 +6,7 @@ from src.api.schemas import (
     CodeSignIn,
     CodeStart,
     PasswordSignIn,
+    QrResponse,
     SessionStateResponse,
 )
 from src.application.factory import get_service_auth
@@ -33,25 +31,13 @@ async def auth_status(
 @router.post(
     path="/{session}/qr",
     name="telegram:qr",
-    summary="Start a QR login: scan the image in Telegram → Settings → Devices",
+    summary="Start a QR login: render url as a QR code, scan it in Telegram → Settings → Devices",
     status_code=status.HTTP_200_OK,
-    response_class=Response,
-    responses={200: {"content": {"image/png": {}}}},
 )
 async def login_qr(
     session: TelegramSession, auth_service: AuthService = Depends(get_service_auth)
-) -> Response:
-    qr = await auth_service.start_qr(session)
-    image = BytesIO()
-    qrcode.make(qr.url).save(image, format="PNG")
-    return Response(
-        image.getvalue(),
-        media_type="image/png",
-        headers={
-            "X-Expires-At": qr.expires_at.isoformat(),
-            "Cache-Control": "no-store",
-        },
-    )
+) -> QrResponse:
+    return await auth_service.start_qr(session)
 
 
 @router.post(

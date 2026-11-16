@@ -4,6 +4,7 @@ from .auth import (
     CodeSignIn,
     CodeStart,
     PasswordSignIn,
+    QrResponse,
     SessionStateResponse,
 )
 from .file import FileResponse
@@ -56,6 +57,7 @@ __all__ = [
     "HealthResponse",
     "PasswordSignIn",
     "PriorityUpdate",
+    "QrResponse",
     "SessionStateResponse",
     "StorageCreate",
     "StorageResponse",

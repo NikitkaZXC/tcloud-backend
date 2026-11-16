@@ -24,7 +24,6 @@ class AppSettings(BaseSettings):
         "Content-Disposition",
         "Content-Range",
         "Retry-After",
-        "X-Expires-At",
     ]
 
     @property
