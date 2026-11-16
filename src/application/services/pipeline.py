@@ -1,21 +1,17 @@
 import asyncio
 import hashlib
-import hmac
-import json
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import asdict
 from pathlib import Path
 from uuid import UUID, uuid7
 
-import httpx
-from fastapi.encoders import jsonable_encoder
 from loguru import logger
 
 from src.application.exception import PathConflictError, TaskCancelledError
 from src.application.schemas import caption_token
-from src.application.services.task import TaskService
 from src.application.services.temp import remove_task_files, temp_path
+from src.application.services.webhook import send_hook
 from src.config import settings
 from src.infrastructure.background import WorkerRuntime, enqueue
 from src.infrastructure.cache import TaskStore
@@ -36,9 +32,8 @@ from src.infrastructure.integrations import (
     SentFile,
     TelegramFloodWaitError,
     TelegramUnavailableError,
-    UnsafeUrlError,
 )
-from src.infrastructure.integrations.web import download, open_url
+from src.infrastructure.integrations.web import download
 from src.infrastructure.media import Media, photo_fits, probe, thumbnail, to_jpeg
 from src.utilities.errors import TCloudError
 from src.utilities.parsers import split_file
@@ -423,30 +418,6 @@ class UploadPipeline:
     def hook(self, task: dict) -> None:
         url = task["params"].get("callback_url")
         if url:
-            self._runtime.spawn(self._send_hook(UUID(str(task["id"])), url))
-
-    async def _send_hook(self, task_id: UUID, url: str) -> None:
-        async with self._runtime.session_factory() as session:
-            view = await TaskService(session, self._store).get(task_id)
-        body = json.dumps(jsonable_encoder(view)).encode()
-        signature = hmac.new(
-            settings.app.API_KEY.get_secret_value().encode(), body, hashlib.sha256
-        ).hexdigest()
-        headers = {
-            "Content-Type": "application/json",
-            "X-Tcloud-Signature": f"sha256={signature}",
-        }
-        for delay in (1, 2, 4, None):
-            try:
-                async with open_url(
-                    url, "POST", headers=headers, content=body
-                ) as response:
-                    if response.status_code < 500:
-                        return
-            except UnsafeUrlError as error:
-                logger.warning("Webhook {} rejected: {}", url, error)
-                return
-            except httpx.HTTPError as error:
-                logger.warning("Webhook {} failed: {!r}", url, error)
-            if delay:
-                await asyncio.sleep(delay)
+            self._runtime.spawn(
+                send_hook(self._store, self._runtime.session_factory, task["id"], url)
+            )

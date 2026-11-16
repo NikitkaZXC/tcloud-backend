@@ -1,5 +1,7 @@
 import asyncio
 import hashlib
+import hmac
+import json
 import time
 from dataclasses import asdict
 from uuid import UUID, uuid7
@@ -17,6 +19,7 @@ from src.infrastructure.enums import MediaKind, UploadQueue
 from src.infrastructure.media import Media
 from src.utilities.parsers import split_file
 from tests.api.conftest import (
+    KEY,
     TELEGRAM_CONCURRENCY,
     Remote,
     path,
@@ -287,3 +290,32 @@ async def test_stale_generation_is_skipped(client, telegram, storage, worker):
     )
     assert (await store.get(task["id"]))["status"] == "done"
     assert len(telegram.messages()) == 1
+
+
+async def test_cancel_in_queue_sends_webhook(client, telegram, storage, remote):
+    telegram.delay = 0.5
+    ids = [
+        await start_upload(client, path(storage, f"q/{index}.jpg"), make_image())
+        for index in range(TELEGRAM_CONCURRENCY + 1)
+    ]
+    hooked = await start_upload(
+        client,
+        path(storage, "hooked.jpg"),
+        make_image(),
+        callback_url=f"{remote}/hook",
+    )
+    await wait_for(client, hooked, in_queue("uploads.telegram"))
+    response = await client.post(f"/tasks/{hooked}/cancel")
+    assert response.json()["status"] == "cancelled"
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        statuses = [json.loads(body)["status"] for _, body in Remote.hooks]
+        if "cancelled" in statuses:
+            break
+        await asyncio.sleep(0.02)
+    assert "cancelled" in statuses
+    headers, body = Remote.hooks[-1]
+    expected = "sha256=" + hmac.new(KEY.encode(), body, hashlib.sha256).hexdigest()
+    assert headers["X-Tcloud-Signature"] == expected
+    for task_id in ids:
+        await wait_task(client, task_id)

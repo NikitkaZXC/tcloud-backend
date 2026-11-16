@@ -26,9 +26,11 @@ from src.application.services.account import AccountService
 from src.application.services.storage import StorageService
 from src.application.services.task import TaskService
 from src.application.services.temp import remove_task_files, temp_path, write_body
+from src.application.services.webhook import send_hook
 from src.config import settings
 from src.infrastructure.background import AppRuntime, enqueue
 from src.infrastructure.database.repositories import FileRepository
+from src.infrastructure.database.session import session_factory
 from src.infrastructure.enums import (
     TaskPriority,
     TaskSource,
@@ -218,6 +220,15 @@ class UploadService:
             task = await self._get_raw(task_id)
             await self._store.release(task_id, task["path"])
             remove_task_files(task)
+            if task["params"].get("callback_url"):
+                self._runtime.spawn(
+                    send_hook(
+                        self._store,
+                        session_factory,
+                        task_id,
+                        task["params"]["callback_url"],
+                    )
+                )
         return await self._tasks.get(task_id)
 
     async def set_priority(self, task_id: UUID, priority: str) -> TaskServiceRead:

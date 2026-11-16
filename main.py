@@ -39,6 +39,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         yield
     finally:
         sweeper.cancel()
+        await runtime.stop()
         await telegram.stop()
         await redis.aclose()
         await engine.dispose()

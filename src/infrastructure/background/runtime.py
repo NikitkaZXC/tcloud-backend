@@ -1,3 +1,6 @@
+import asyncio
+from collections.abc import Coroutine
+
 from src.config import settings
 from src.infrastructure.background.disk import DiskBudget, MiB
 from src.infrastructure.cache import TaskStore
@@ -12,3 +15,12 @@ class AppRuntime:
             settings.upload.TMP_DIR, settings.upload.MIN_FREE_DISK_MB * MiB
         )
         self.premium: tuple[float, bool] | None = None
+        self._tasks: set[asyncio.Task] = set()
+
+    def spawn(self, coroutine: Coroutine) -> None:
+        task = asyncio.create_task(coroutine)
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+
+    async def stop(self) -> None:
+        await asyncio.gather(*list(self._tasks), return_exceptions=True)
