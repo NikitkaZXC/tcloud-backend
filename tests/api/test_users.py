@@ -1,3 +1,6 @@
+import io
+import zipfile
+
 import pytest
 from httpx import ASGITransport, AsyncClient
 from pydantic import SecretStr
@@ -229,6 +232,10 @@ async def test_grants_limit_files_and_folders(client, storage, make_user):
     assert response.status_code == 403
     assert (await reader.get(f"/files/{secret['uuid']}")).status_code == 403
     assert (await reader.get(f"/files/{secret['uuid']}/download")).status_code == 403
+    archive = await reader.get("/folders/archive", params={"path": path(storage)})
+    assert archive.status_code == 200
+    with zipfile.ZipFile(io.BytesIO(archive.content)) as content:
+        assert sorted(content.namelist()) == ["shared/a.pdf", "shared/deep/b.pdf"]
     assert (await reader.delete(f"/files/{secret['uuid']}")).status_code == 403
     response = await reader.post(
         "/uploads", params={"path": path(storage, "shared/new.pdf")}, content=PDF

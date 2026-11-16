@@ -53,6 +53,16 @@ class FileRepository:
         )
         return list((await self._session.scalars(statement)).all())
 
+    async def get_below(self, storage_id: UUID, folder: str) -> list[FileDB]:
+        statement = (
+            select(FileDB)
+            .where(FileDB.storage_id == storage_id)
+            .order_by(FileDB.folder_path, FileDB.name)
+        )
+        if folder:
+            statement = statement.where(folder_and_below(FileDB.folder_path, folder))
+        return list((await self._session.scalars(statement)).all())
+
     async def get_messages_below(
         self, storage_id: UUID, folder: str
     ) -> list[tuple[UUID, int]]:

@@ -1,7 +1,11 @@
+import io
+import tarfile
 import uuid
+import zipfile
 
 import pytest
 
+from src.config import settings
 from tests.api.conftest import path, upload
 from tests.factories import PDF, make_image
 
@@ -180,3 +184,52 @@ async def test_download_refuses_a_replaced_file(client, photo, telegram):
     response = await client.get(f"/files/{photo['uuid']}/download")
     assert response.status_code == 409
     assert response.json()["error"]["code"] == "file_changed"
+
+
+async def test_folder_archive_has_the_whole_tree(client, storage):
+    image = make_image()
+    await upload(client, path(storage, "trip/1.jpg"), image)
+    await upload(client, path(storage, "trip/day 2/2.pdf"), PDF)
+    await upload(client, path(storage, "other/3.jpg"), image)
+    response = await client.get(
+        "/folders/archive", params={"path": path(storage, "trip")}
+    )
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "application/zip"
+    assert "trip.zip" in response.headers["content-disposition"]
+    with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+        assert sorted(archive.namelist()) == ["1.jpg", "day 2/2.pdf"]
+        assert archive.read("day 2/2.pdf") == PDF
+    assert list(settings.upload.TMP_DIR.iterdir()) == []
+
+
+async def test_storage_archive_as_tar_xz(client, storage):
+    await upload(client, path(storage, "a/1.jpg"), make_image())
+    response = await client.get(
+        "/folders/archive", params={"path": path(storage), "format": "tar.xz"}
+    )
+    assert response.status_code == 200
+    assert response.headers["content-disposition"].endswith(f"{storage['id']}.tar.xz")
+    with tarfile.open(fileobj=io.BytesIO(response.content)) as archive:
+        assert archive.getnames() == ["a/1.jpg"]
+
+
+async def test_folder_archive_errors(client, storage):
+    response = await client.get(
+        "/folders/archive", params={"path": path(storage, "nope")}
+    )
+    assert response.status_code == 404
+    response = await client.get(
+        "/folders/archive", params={"path": path(storage), "format": "rar"}
+    )
+    assert response.status_code == 422
+
+
+async def test_folder_archive_skips_files_gone_from_telegram(client, telegram, storage):
+    await upload(client, path(storage, "a/1.jpg"), make_image())
+    gone = (await upload(client, path(storage, "a/2.pdf"), PDF))["file"]
+    for chat in telegram.chats.values():
+        chat["messages"].pop(gone["telegram"]["message_id"], None)
+    response = await client.get("/folders/archive", params={"path": path(storage, "a")})
+    with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+        assert archive.namelist() == ["1.jpg"]

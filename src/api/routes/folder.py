@@ -1,4 +1,7 @@
-from fastapi import APIRouter, Depends, status
+from urllib.parse import quote
+
+from fastapi import APIRouter, Depends, Query, status
+from fastapi.responses import StreamingResponse
 
 from src.api.dependencies import get_actor
 from src.api.schemas import (
@@ -10,6 +13,8 @@ from src.api.schemas import (
 from src.application.factory import get_service_folder
 from src.application.schemas import Actor
 from src.application.services import FolderService
+from src.infrastructure.archive import MEDIA_TYPES
+from src.infrastructure.enums import ArchiveFormat
 
 router = APIRouter(prefix="/folders", tags=["Folders"])
 
@@ -40,6 +45,30 @@ async def get_folder(
     folder_service: FolderService = Depends(get_service_folder),
 ) -> FolderListingResponse:
     return await folder_service.get_listing(actor, path)
+
+
+@router.get(
+    path="/archive",
+    name="folders:archive",
+    summary="Download the folder with everything readable inside as one archive",
+    status_code=status.HTTP_200_OK,
+    response_class=StreamingResponse,
+)
+async def download_folder(
+    path: str,
+    archive_format: ArchiveFormat = Query(ArchiveFormat.ZIP, alias="format"),
+    actor: Actor = Depends(get_actor),
+    folder_service: FolderService = Depends(get_service_folder),
+) -> StreamingResponse:
+    name, body = await folder_service.open_archive(actor, path, archive_format)
+    return StreamingResponse(
+        body,
+        media_type=MEDIA_TYPES[archive_format],
+        headers={
+            "Content-Disposition": f"attachment; filename*=UTF-8''{quote(name)}",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
 
 
 @router.delete(

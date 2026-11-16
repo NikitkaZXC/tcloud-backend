@@ -33,5 +33,5 @@
 | [flows/users.md](flows/users.md) | пользователи, роли root/admin/user, JWT в куках, API-ключи, гранты на папки |
 | [flows/auth.md](flows/auth.md) | вход в Telegram через API: QR, код, 2FA, выход, старые сессии, безопасность |
 | [flows/storages.md](flows/storages.md) | хранилища: создание, удаление, подключение из `.env`, название, описание, фото |
-| [flows/folders-and-files.md](flows/folders-and-files.md) | пути, папки, метаданные, скачивание с Range, удаление |
+| [flows/folders-and-files.md](flows/folders-and-files.md) | пути, папки, метаданные, скачивание с Range и папок архивом, удаление |
 | [flows/uploads.md](flows/uploads.md) | загрузка с устройства, по ссылке, пачками; `send_as`, `on_conflict`, `priority`, прогресс |
