@@ -136,10 +136,15 @@ async def test_animation(client, storage):
     assert task["file"]["kind"] == "animation"
 
 
-async def test_non_media_extension_rejected_before_upload(client, storage):
-    response = await client.post(
-        "/uploads", json={"path": path(storage, "doc.pdf"), "size": 10}
+async def post_file(client, target: str, data: bytes = b"x" * 10, **options):
+    headers = options.pop("headers", {})
+    return await client.post(
+        "/uploads", params={"path": target, **options}, content=data, headers=headers
     )
+
+
+async def test_non_media_extension_rejected_before_upload(client, storage):
+    response = await post_file(client, path(storage, "doc.pdf"))
     assert (
         response.status_code == 415
         and response.json()["error"]["code"] == "unsupported_media_type"
@@ -174,75 +179,67 @@ async def test_scanner_down_fails_closed(
     assert task["error"]["code"] == "scanner_unavailable" and telegram.messages() == []
 
 
+def declared(size: int) -> dict:
+    return {"headers": {"Content-Length": str(size)}}
+
+
 async def test_size_over_limit(client, telegram, storage):
-    response = await client.post(
-        "/uploads", json={"path": path(storage, "a.mp4"), "size": limits.FILE_MAX + 1}
-    )
+    target = path(storage, "a.mp4")
+    response = await post_file(client, target, **declared(limits.FILE_MAX + 1))
     assert (
         response.status_code == 413
         and response.json()["error"]["limit"] == limits.FILE_MAX
     )
     telegram.premium = True
     await client.get("/account")
-    response = await client.post(
-        "/uploads", json={"path": path(storage, "a.mp4"), "size": limits.FILE_MAX + 1}
-    )
-    assert response.status_code == 201
-    big = {"path": path(storage, "b.mp4"), "size": limits.FILE_MAX_PREMIUM + 1}
-    assert (await client.post("/uploads", json=big)).status_code == 413
+    response = await post_file(client, target, **declared(limits.FILE_MAX + 1))
+    assert response.json()["error"]["code"] == "size_mismatch"
+    big = declared(limits.FILE_MAX_PREMIUM + 1)
+    assert (await post_file(client, target, **big)).status_code == 413
 
 
 async def test_body_bigger_than_declared(client, storage):
     data = make_image()
-    task = (
-        await client.post(
-            "/uploads", json={"path": path(storage, "a.jpg"), "size": len(data) - 1}
-        )
-    ).json()
-    assert (await client.put(f"/uploads/{task['id']}", content=data)).status_code == 413
-    assert (await client.get(f"/tasks/{task['id']}")).json()["status"] == "failed"
+    response = await post_file(
+        client, path(storage, "a.jpg"), data, **declared(len(data) - 1)
+    )
+    assert response.status_code == 413
+    response = await post_file(client, path(storage, "a.jpg"), data)
+    assert response.status_code == 202
 
 
 async def test_body_smaller_than_declared(client, storage):
     data = make_image()
-    task = (
-        await client.post(
-            "/uploads", json={"path": path(storage, "a.jpg"), "size": len(data) + 1}
-        )
-    ).json()
-    response = await client.put(f"/uploads/{task['id']}", content=data)
+    response = await post_file(
+        client, path(storage, "a.jpg"), data, **declared(len(data) + 1)
+    )
     assert (
         response.status_code == 400
         and response.json()["error"]["code"] == "size_mismatch"
     )
+    assert list(settings.upload.TMP_DIR.iterdir()) == []
 
 
-async def test_put_twice(client, storage):
-    data = make_image()
-    task = (
-        await client.post(
-            "/uploads", json={"path": path(storage, "a.jpg"), "size": len(data)}
-        )
-    ).json()
-    assert (await client.put(f"/uploads/{task['id']}", content=data)).status_code == 202
-    response = await client.put(f"/uploads/{task['id']}", content=data)
+async def test_missing_content_length(client, storage):
+    async def chunks():
+        yield make_image()
+
+    response = await client.post(
+        "/uploads", params={"path": path(storage, "a.jpg")}, content=chunks()
+    )
     assert (
-        response.status_code == 409
-        and response.json()["error"]["code"] == "task_not_pending"
+        response.status_code == 411
+        and response.json()["error"]["code"] == "length_required"
     )
 
 
 async def test_unknown_storage(client):
-    response = await client.post(
-        "/uploads", json={"path": f"tcloud/{uuid.uuid4()}/a.jpg", "size": 1}
-    )
+    response = await post_file(client, f"tcloud/{uuid.uuid4()}/a.jpg")
     assert response.status_code == 404
 
 
 async def test_invalid_path(client, storage):
-    response = await client.post(
-        "/uploads", json={"path": path(storage, "../a.jpg"), "size": 1}
-    )
+    response = await post_file(client, path(storage, "../a.jpg"))
     assert (
         response.status_code == 422
         and response.json()["error"]["code"] == "invalid_path"
@@ -250,12 +247,9 @@ async def test_invalid_path(client, storage):
 
 
 async def test_bad_callback_url(client, storage):
-    body = {
-        "path": path(storage, "a.jpg"),
-        "size": 1,
-        "callback_url": "file:///etc/passwd",
-    }
-    response = await client.post("/uploads", json=body)
+    response = await post_file(
+        client, path(storage, "a.jpg"), callback_url="file:///etc/passwd"
+    )
     assert (
         response.status_code == 422 and response.json()["error"]["code"] == "unsafe_url"
     )
@@ -263,9 +257,7 @@ async def test_bad_callback_url(client, storage):
 
 async def test_conflict_error(client, storage):
     await upload(client, path(storage, "a.jpg"), make_image())
-    response = await client.post(
-        "/uploads", json={"path": path(storage, "a.jpg"), "size": 10}
-    )
+    response = await post_file(client, path(storage, "a.jpg"))
     assert (
         response.status_code == 409 and response.json()["error"]["code"] == "conflict"
     )
@@ -315,58 +307,63 @@ async def test_conflict_skip(client, telegram, storage):
     assert len(telegram.messages()) == 1
 
 
-async def test_second_upload_to_same_path_rejected(client, storage):
-    first = (
-        await client.post("/uploads", json={"path": path(storage, "a.jpg"), "size": 10})
-    ).json()
-    body = {"path": path(storage, "a.jpg"), "size": 10, "on_conflict": "replace"}
-    response = await client.post("/uploads", json=body)
+async def test_second_upload_to_same_path_rejected(client, telegram, storage):
+    telegram.delay = 0.5
+    first = await start_upload(client, path(storage, "a.jpg"), make_image())
+    response = await post_file(
+        client, path(storage, "a.jpg"), make_image(), on_conflict="replace"
+    )
     assert (
         response.status_code == 409
         and response.json()["error"]["code"] == "upload_in_progress"
     )
-    assert first["status"] == "pending"
+    assert (await wait_task(client, first))["status"] == "done"
+    response = await post_file(
+        client, path(storage, "a.jpg"), make_image(), on_conflict="replace"
+    )
+    assert response.status_code == 202
 
 
-async def test_keep_both_reserves_name_against_active_uploads(client, storage):
+async def test_keep_both_reserves_name_against_active_uploads(
+    client, telegram, storage
+):
+    telegram.delay = 0.3
     names = []
     for options in ({}, {"on_conflict": "keep_both"}, {"on_conflict": "keep_both"}):
-        body = {"path": path(storage, "a.jpg"), "size": 10, **options}
-        names.append(
-            (await client.post("/uploads", json=body)).json()["path"].rsplit("/", 1)[1]
+        response = await post_file(
+            client, path(storage, "a.jpg"), make_image(), **options
         )
+        names.append(response.json()["path"].rsplit("/", 1)[1])
     assert names == ["a.jpg", "a (1).jpg", "a (2).jpg"]
 
 
 async def test_task_fields(client, storage):
     data = make_image()
-    task = (
-        await client.post(
-            "/uploads", json={"path": path(storage, "a.jpg"), "size": len(data)}
-        )
-    ).json()
-    assert (
-        task["status"] == "pending"
-        and task["stage"] == "receiving"
-        and task["bytes_total"] == len(data)
+    response = await post_file(client, path(storage, "a.jpg"), data, priority="high")
+    task = response.json()
+    assert (task["status"], task["stage"], task["priority"]) == (
+        "queued",
+        "scanning",
+        "high",
     )
-    assert task["progress"] == 0.0
-    await client.put(f"/uploads/{task['id']}", content=data)
+    assert task["bytes_total"] == len(data) and task["progress"] == 0.0
+    assert task["waiting"] == {"reason": "queue:uploads.prepare", "seconds": None}
     done = await wait_task(client, task["id"])
-    assert done["stage"] == "done" and done["error"] is None
+    assert done["stage"] == "done" and done["error"] is None and not done["waiting"]
     assert (await client.get(f"/tasks/{uuid.uuid4()}")).status_code == 404
 
 
-async def test_restart_marks_running_tasks_failed(make_client, storage):
+async def test_bad_priority(client, storage):
+    response = await post_file(client, path(storage, "a.jpg"), priority="urgent")
+    assert response.status_code == 422
+
+
+async def test_tasks_survive_api_restart(make_client, telegram, storage):
+    telegram.delay = 0.3
     first = await make_client()
-    task = (
-        await first.post("/uploads", json={"path": path(storage, "a.jpg"), "size": 10})
-    ).json()
+    task_id = await start_upload(first, path(storage, "a.jpg"), make_image())
     second = await make_client()
-    restarted = (await second.get(f"/tasks/{task['id']}")).json()
-    assert (
-        restarted["status"] == "failed" and restarted["error"]["code"] == "interrupted"
-    )
+    assert (await wait_task(second, task_id))["status"] == "done"
 
 
 class Remote(BaseHTTPRequestHandler):
@@ -450,3 +447,65 @@ async def test_webhook_signed(client, storage, remote):
     for headers, body in Remote.hooks:
         expected = "sha256=" + hmac.new(KEY.encode(), body, hashlib.sha256).hexdigest()
         assert headers["X-Tcloud-Signature"] == expected
+
+
+async def test_batch_from_urls(client, storage, remote):
+    Remote.files["/1.jpg"] = Remote.files["/2.jpg"] = make_image()
+    items = [
+        {"url": f"{remote}/1.jpg", "path": path(storage, "b/1.jpg")},
+        {
+            "url": f"{remote}/2.jpg",
+            "path": path(storage, "b/2.jpg"),
+            "priority": "high",
+        },
+        {"url": f"{remote}/x.pdf", "path": path(storage, "b/doc.pdf")},
+    ]
+    response = await client.post("/uploads/batch", json={"items": items})
+    assert response.status_code == 202
+    body = response.json()
+    assert [item["error"] is None for item in body["items"]] == [True, True, False]
+    assert body["items"][2]["error"]["code"] == "unsupported_media_type"
+    assert body["items"][1]["task"]["priority"] == "high"
+    for item in body["items"][:2]:
+        assert item["task"]["batch_id"] == body["batch_id"]
+        await wait_task(client, item["task"]["id"])
+    batch = (await client.get("/tasks", params={"batch_id": body["batch_id"]})).json()
+    assert batch["summary"]["total"] == 2
+    assert batch["summary"]["by_status"] == {"done": 2}
+    assert batch["summary"]["progress"] == 100.0 and batch["summary"]["finished"] == 2
+    assert all(
+        task["file"]["path"].startswith(path(storage, "b/")) for task in batch["items"]
+    )
+
+
+async def test_batch_validation(client, storage):
+    assert (await client.post("/uploads/batch", json={"items": []})).status_code == 422
+    no_url = {"path": path(storage, "a.jpg")}
+    assert (
+        await client.post("/uploads/batch", json={"items": [no_url]})
+    ).status_code == 422
+    many = [
+        {"path": path(storage, f"{index}.jpg"), "url": "https://x.com/a.jpg"}
+        for index in range(101)
+    ]
+    assert (
+        await client.post("/uploads/batch", json={"items": many})
+    ).status_code == 422
+
+
+async def test_batch_same_path_twice(client, storage, remote):
+    Remote.files["/a.jpg"] = make_image()
+    item = {"url": f"{remote}/a.jpg", "path": path(storage, "a.jpg")}
+    items = (await client.post("/uploads/batch", json={"items": [item, item]})).json()[
+        "items"
+    ]
+    assert (
+        items[0]["error"] is None and items[1]["error"]["code"] == "upload_in_progress"
+    )
+    await wait_task(client, items[0]["task"]["id"])
+
+
+async def test_unknown_batch_is_empty(client):
+    batch = (await client.get("/tasks", params={"batch_id": str(uuid.uuid4())})).json()
+    assert batch["items"] == [] and batch["summary"]["total"] == 0
+    assert (await client.get("/tasks")).status_code == 422

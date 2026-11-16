@@ -17,14 +17,14 @@
 | [database.md](database.md) | таблицы, индексы и зачем они, миграции |
 | [security.md](security.md) | API-ключ, проверка файлов, ClamAV, SSRF, контейнер, секреты |
 | [integrations.md](integrations.md) | Telegram (Telethon) и его лимиты, ClamAV, исходящий HTTP |
-| [background-tasks.md](background-tasks.md) | конвейер загрузки, стадии, лимиты, диск, FloodWait, повторы, вебхуки |
+| [background-tasks.md](background-tasks.md) | Celery и RabbitMQ: очереди, приоритеты, воркеры, состояние в Redis, лимиты, FloodWait, повторы, вебхуки |
 
 ### Работа с проектом
 
 | Документ | О чём |
 |---|---|
 | [development.md](development.md) | установка, запуск локально, команды `make`, миграции, форматирование, зависимости |
-| [deployment.md](deployment.md) | Docker-образ, compose для прода, вход в Telegram, обновление |
+| [deployment.md](deployment.md) | Docker-образ, compose для прода (API, воркеры, RabbitMQ, Redis), вход в Telegram |
 | [testing.md](testing.md) | unit, integration, API и нагрузочные тесты |
 
 ### Процессы
@@ -33,4 +33,4 @@
 |---|---|
 | [flows/storages.md](flows/storages.md) | хранилища: создание, подключение из `.env`, название, описание, фото |
 | [flows/folders-and-files.md](flows/folders-and-files.md) | пути, папки, метаданные, скачивание с Range, удаление |
-| [flows/uploads.md](flows/uploads.md) | загрузка с устройства, по ссылке, пачками; `send_as`, `on_conflict`, прогресс |
+| [flows/uploads.md](flows/uploads.md) | загрузка с устройства, по ссылке, пачками; `send_as`, `on_conflict`, `priority`, прогресс |

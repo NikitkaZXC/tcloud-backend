@@ -1,4 +1,4 @@
-.PHONY: install install-test env app login check format test test-integration test-api test-all test-cov test-docker dev-up dev-up-all dev-down up down logs load-up load-app load load-ui load-down
+.PHONY: install install-test env app worker-prepare worker-telegram login check format test test-integration test-api test-all test-cov test-docker dev-up dev-up-all dev-down up down logs load-up load-app load load-ui load-down
 
 install:
 	uv sync
@@ -11,6 +11,14 @@ env:
 
 app:
 	uv run uvicorn --host=127.0.0.1 --port=8000 main:app --reload
+
+CELERY = uv run celery --app src.infrastructure.background.celery.app worker --pool threads --loglevel=INFO
+
+worker-prepare:
+	$(CELERY) --concurrency 4 --queues uploads.prepare --hostname prepare@%h
+
+worker-telegram:
+	$(CELERY) --concurrency 2 --queues uploads.telegram --hostname telegram@%h
 
 login:
 	$(PROD_COMPOSE) run --rm --no-deps -e RUN_MIGRATIONS=0 app python -m src.application.bootstrap.login
@@ -45,7 +53,7 @@ test-docker:
 DEV_COMPOSE = docker compose -f docker-compose.dev.yml
 
 dev-up:
-	$(DEV_COMPOSE) up -d --wait postgres
+	$(DEV_COMPOSE) up -d --wait postgres rabbitmq redis
 
 dev-up-all:
 	$(DEV_COMPOSE) --profile app up -d --build
@@ -62,7 +70,7 @@ down:
 	$(PROD_COMPOSE) down
 
 logs:
-	$(PROD_COMPOSE) logs -f app
+	$(PROD_COMPOSE) logs -f app worker-prepare worker-telegram
 
 LOAD_ENV = tests/load/env.load
 LOAD_COMPOSE = docker compose -f tests/load/docker-compose.yml

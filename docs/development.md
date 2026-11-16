@@ -5,10 +5,12 @@ Python 3.14, зависимости — `uv` (`pyproject.toml`, `uv.lock`). Гр
 
 ```bash
 make install        # uv sync
-make env            # .env из .env.exemple + сгенерированные APP_API_KEY и POSTGRES_PASSWORD
-make dev-up         # Postgres (и ClamAV через docker-compose.dev.yml) на localhost
-make app            # uvicorn с --reload на 127.0.0.1:8000 (для локального запуска в .env: POSTGRES_HOST=127.0.0.1, CLAMAV_HOST=127.0.0.1)
-make login          # вход в Telegram (телефон, код, 2FA)
+make env            # .env из .env.exemple + сгенерированные APP_API_KEY и пароли Postgres, RabbitMQ, Redis
+make dev-up         # Postgres, RabbitMQ (панель :15672), Redis на localhost; ClamAV — docker-compose.dev.yml
+make app            # uvicorn с --reload на 127.0.0.1:8000 (в .env: POSTGRES_HOST, CLAMAV_HOST, RABBITMQ_HOST, REDIS_HOST=127.0.0.1)
+make worker-prepare # Celery-воркер очереди uploads.prepare
+make worker-telegram  # Celery-воркер очереди uploads.telegram
+make login          # вход в Telegram (телефон, код, 2FA) — дважды: сессии API и воркера
 make format         # black + isort
 make check          # pip-audit + проверка миграций
 uv run alembic revision --autogenerate -m "msg"
@@ -18,5 +20,5 @@ uv run alembic revision --autogenerate -m "msg"
 
 ## Настройки
 
-`src/config/models/*`, по классу на префикс: `APP_`, `POSTGRES_`, `TELEGRAM_`, `CLAMAV_`, `UPLOAD_`, `LOG_`.
+`src/config/models/*`, по классу на префикс: `APP_`, `POSTGRES_`, `TELEGRAM_`, `CLAMAV_`, `UPLOAD_`, `RABBITMQ_`, `REDIS_`, `LOG_`.
 Читаются из `.env` (путь меняется переменной `ENV_FILE`, пусто — не читать, как в тестах), переменные окружения важнее.

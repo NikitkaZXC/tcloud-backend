@@ -16,13 +16,13 @@ class TaskServiceRead(BaseModel):
     batch_id: UUID | None
     status: str
     stage: str
+    priority: str
     path: str
     bytes_done: int
     bytes_total: int | None
     progress: float | None
     speed: int | None
     eta: float | None
-    queue_position: int | None
     waiting: TaskWaitingServiceRead | None
     error: dict | None
     warnings: list[str]
@@ -34,10 +34,10 @@ class TaskServiceRead(BaseModel):
 class TaskSummaryServiceRead(BaseModel):
     total: int
     by_status: dict[str, int]
-    bytes_done: int | None = None
-    bytes_total: int | None = None
-    finished: int | None = None
-    progress: float | None = None
+    bytes_done: int
+    bytes_total: int
+    finished: int
+    progress: float | None
 
 
 class TaskListServiceRead(BaseModel):
@@ -51,6 +51,7 @@ class UploadServiceCreate(BaseModel):
     url: str | None = None
     send_as: str = "file"
     on_conflict: str = "error"
+    priority: str = "normal"
     callback_url: str | None = None
 
 

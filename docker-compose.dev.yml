@@ -16,6 +16,30 @@ services:
       interval: 2s
       retries: 30
 
+  rabbitmq:
+    image: rabbitmq:4-management-alpine
+    hostname: rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-tcloud}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-tcloud}
+      RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS: "-rabbit consumer_timeout 86400000"
+    ports:
+      - "127.0.0.1:5672:5672"
+      - "127.0.0.1:15672:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      retries: 30
+
+  redis:
+    image: redis:8
+    ports:
+      - "127.0.0.1:6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      retries: 30
+
   clamav:
     image: clamav/clamav:1.5.4-debian
     ports:
@@ -24,13 +48,16 @@ services:
       - clamdb:/var/lib/clamav
       - ./docker/clamd.conf:/etc/clamav/clamd.conf:ro
 
-  app:
+  app: &app
     profiles: [app]
     build: .
     env_file: .env
-    environment:
+    environment: &app-env
       POSTGRES_HOST: postgres
       CLAMAV_HOST: clamav
+      RABBITMQ_HOST: rabbitmq
+      REDIS_HOST: redis
+      REDIS_PASSWORD: ""
     ports:
       - "127.0.0.1:8000:8000"
     volumes:
@@ -38,6 +65,24 @@ services:
       - tmp:/data/tmp
     depends_on:
       postgres: {condition: service_healthy}
+      rabbitmq: {condition: service_healthy}
+      redis: {condition: service_healthy}
+
+  worker-prepare:
+    <<: *app
+    ports: []
+    environment:
+      <<: *app-env
+      RUN_MIGRATIONS: "0"
+    command: ["celery", "--app=src.infrastructure.background.celery.app", "worker", "--pool=threads", "--concurrency=4", "--queues=uploads.prepare", "--hostname=prepare@%h", "--loglevel=INFO"]
+
+  worker-telegram:
+    <<: *app
+    ports: []
+    environment:
+      <<: *app-env
+      RUN_MIGRATIONS: "0"
+    command: ["celery", "--app=src.infrastructure.background.celery.app", "worker", "--pool=threads", "--concurrency=2", "--queues=uploads.telegram", "--hostname=telegram@%h", "--loglevel=INFO"]
 
 volumes:
   pgdata:

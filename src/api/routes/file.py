@@ -7,7 +7,7 @@ from fastapi.responses import StreamingResponse
 from src.api.schemas import FileResponse
 from src.application.factory import get_runtime, get_service_file
 from src.application.services import FileService
-from src.infrastructure.background import BackgroundRuntime
+from src.infrastructure.background import AppRuntime
 from src.utilities.parsers import parse_range
 
 router = APIRouter(prefix="/files", tags=["Files"])
@@ -48,7 +48,7 @@ async def download_file(
     file_id: UUID,
     range_header: str | None = Header(None, alias="range"),
     file_service: FileService = Depends(get_service_file),
-    runtime: BackgroundRuntime = Depends(get_runtime),
+    runtime: AppRuntime = Depends(get_runtime),
 ) -> StreamingResponse:
     file, media = await file_service.open_download(file_id)
     start, end = (

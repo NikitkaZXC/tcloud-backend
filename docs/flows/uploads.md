@@ -1,21 +1,28 @@
 # Загрузки
 
-## С устройства — в два шага
+## С устройства — одним запросом
 
-1. `POST /api/uploads {path, size, send_as, on_conflict, callback_url?}` — проверки до приёма: путь, расширение,
-   лимит аккаунта, место на диске, число активных задач, конфликт. Ответ — задача `pending`.
-2. `PUT /api/uploads/{task_id}` — тело файла потоком. Два шага нужны, чтобы прогресс был виден с первого байта.
-   Тело больше заявленного → `413`, меньше → `400 size_mismatch`. Второй PUT → `409 task_not_pending`.
+`POST /api/uploads?path=...&send_as=...&on_conflict=...&priority=...&callback_url=...`, тело — сам файл.
+Размер берётся из `Content-Length` (без него `411 length_required`). Все проверки идут до чтения тела: путь, расширение,
+лимит аккаунта, место на диске, число активных задач, конфликт, занятость пути. Затем тело пишется во временный файл,
+и задача встаёт в очередь. Ответ `202` с задачей `queued`.
+Тело больше заявленного → `413`, меньше → `400 size_mismatch`; в обоих случаях задача не создаётся.
 
 ## По ссылке
 
-`POST /api/uploads/from-url {url, path, ...}` — имя файла берётся из `path`, а не из ссылки. Скачивание идёт в фоне
-с теми же проверками и лимитами; если первые байты не медиа, соединение обрывается.
+`POST /api/uploads/from-url {url, path, send_as, on_conflict, priority, callback_url}`: имя файла берётся из `path`,
+а не из ссылки. Скачивает worker-prepare с теми же проверками и лимитами. Если первые байты не медиа, соединение
+обрывается.
 
 ## Пачкой
 
-`POST /api/uploads/batch {items: [...]}` — до 100 пунктов, каждый с `size` или `url`. Ответ — `batch_id` и по пункту
-`task` или `error`. Затем PUT для пунктов с устройства и `GET /api/tasks?batch_id=` для общего прогресса.
+`POST /api/uploads/batch {items: [...]}`: до 100 загрузок по ссылкам (поля как у `from-url`). В ответе `batch_id`
+и по каждому пункту `task` или `error`. Общий прогресс: `GET /api/tasks?batch_id=`. Файлы с устройства загружаются
+параллельными `POST /api/uploads`, очередь и лимиты одни и те же.
+
+## `priority`
+
+`low`, `normal` (по умолчанию), `high`. Задачи `high` берутся из очереди раньше, см. background-tasks.md.
 
 ## `send_as`
 
@@ -31,11 +38,12 @@
 | `error` (по умолчанию) | `409 conflict` |
 | `replace` | новое сообщение, UUID сохраняется, `updated_at` обновляется, старое сообщение удаляется |
 | `keep_both` | свободное имя `a (1).jpg`, резервируется сразу при создании задачи |
-| `skip` | задача сразу `done` со ссылкой на существующий файл |
+| `skip` | задача сразу `done` со ссылкой на существующий файл, тело не читается |
 
 Если в этот путь уже идёт другая загрузка — `409 upload_in_progress` при любом режиме.
 
 ## Прогресс
 
-`GET /api/tasks/{id}`: `status`, `stage`, `bytes_done`/`bytes_total`, `progress`, `speed`, `eta`,
-`queue_position` и `waiting` (очередь, FloodWait, повтор), `error`, `warnings`, `file`. Вебхук — см. background-tasks.md.
+`GET /api/tasks/{id}`: `status` (`queued/running/done/failed`), `stage`, `priority`, `bytes_done`/`bytes_total`,
+`progress`, `speed`, `eta`, `waiting` (очередь, FloodWait, повтор), `error`, `warnings`, `file`.
+Задача хранится 7 дней (`UPLOAD_TASK_TTL`). Вебхук описан в background-tasks.md.

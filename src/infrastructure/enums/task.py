@@ -2,18 +2,18 @@ from enum import StrEnum
 
 
 class TaskStatus(StrEnum):
-    PENDING = "pending"
+    QUEUED = "queued"
     RUNNING = "running"
     DONE = "done"
     FAILED = "failed"
 
     @classmethod
-    def active(cls) -> tuple["TaskStatus", ...]:
-        return cls.PENDING, cls.RUNNING
+    def finished(cls) -> tuple["TaskStatus", ...]:
+        return cls.DONE, cls.FAILED
 
 
 class TaskStage(StrEnum):
-    RECEIVING = "receiving"
+    DOWNLOADING = "downloading"
     SCANNING = "scanning"
     UPLOADING_TG = "uploading_tg"
     DONE = "done"
@@ -22,3 +22,18 @@ class TaskStage(StrEnum):
 class TaskSource(StrEnum):
     DEVICE = "device"
     URL = "url"
+
+
+class TaskPriority(StrEnum):
+    LOW = "low"
+    NORMAL = "normal"
+    HIGH = "high"
+
+    @property
+    def level(self) -> int:
+        return {TaskPriority.LOW: 1, TaskPriority.NORMAL: 5, TaskPriority.HIGH: 9}[self]
+
+
+class UploadQueue(StrEnum):
+    PREPARE = "uploads.prepare"
+    TELEGRAM = "uploads.telegram"

@@ -12,7 +12,7 @@ from src.application.schemas import (
     StorageServiceUpdate,
 )
 from src.application.services.temp import temp_path, write_body
-from src.infrastructure.background import BackgroundRuntime
+from src.infrastructure.background import AppRuntime
 from src.infrastructure.database.models import StorageDB
 from src.infrastructure.database.repositories import StorageRepository
 from src.infrastructure.enums import MediaKind
@@ -23,7 +23,7 @@ TELEGRAM_PHOTO_MIMES = ("image/jpeg", "image/png")
 
 
 class StorageService:
-    def __init__(self, session: AsyncSession, runtime: BackgroundRuntime) -> None:
+    def __init__(self, session: AsyncSession, runtime: AppRuntime) -> None:
         self._session = session
         self._runtime = runtime
         self._repo = StorageRepository(session)

@@ -11,3 +11,4 @@ class HealthServiceRead(BaseModel):
     db: bool
     telegram: bool
     antivirus: bool
+    redis: bool

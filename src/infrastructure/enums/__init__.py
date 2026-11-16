@@ -1,4 +1,11 @@
 from .media import MediaKind
-from .task import TaskSource, TaskStage, TaskStatus
+from .task import TaskPriority, TaskSource, TaskStage, TaskStatus, UploadQueue
 
-__all__ = ["MediaKind", "TaskSource", "TaskStage", "TaskStatus"]
+__all__ = [
+    "MediaKind",
+    "TaskPriority",
+    "TaskSource",
+    "TaskStage",
+    "TaskStatus",
+    "UploadQueue",
+]

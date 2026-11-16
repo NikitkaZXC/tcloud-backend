@@ -11,3 +11,4 @@ TcloudPath = Annotated[
 FileSize = Annotated[int, Field(gt=0, description="file size in bytes")]
 SendAs = Literal["media", "file"]
 OnConflict = Literal["error", "replace", "keep_both", "skip"]
+Priority = Literal["low", "normal", "high"]

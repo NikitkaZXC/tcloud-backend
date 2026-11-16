@@ -2,9 +2,9 @@
 
 | Команда | Что |
 |---|---|
-| `make test` | unit (`tests/unit`): пути, Range, медиа, SSRF, ClamAV-протокол, ворота и диск, параллельная выгрузка кусков, настройки |
-| `make test-integration` | `tests/integration`: миграции туда-обратно и `alembic check`, гонки на уровне БД |
-| `make test-api` | `tests/api`: HTTP через `httpx.AsyncClient` + `ASGITransport`, lifespan приложения с фейковыми Telegram и ClamAV |
+| `make test` | unit (`tests/unit`): пути, Range, медиа, SSRF, ClamAV-протокол, бюджет диска, параллельная выгрузка кусков, настройки |
+| `make test-integration` | `tests/integration`: миграции туда-обратно и `alembic check`, гонки на уровне БД, `TaskStore` на Redis, приоритет очереди на настоящем RabbitMQ |
+| `make test-api` | `tests/api`: HTTP через `httpx.AsyncClient` + `ASGITransport`, lifespan приложения и настоящие Celery-воркеры в потоках (брокер `memory://`) с фейковыми Telegram и ClamAV |
 | `make test-all` / `make test-cov` | всё / с покрытием |
 | `make test-docker` | всё в контейнере с ffmpeg и Postgres (`docker-compose.test.yml`) — так же, как в CI |
 
@@ -12,21 +12,25 @@
   без него они пропускаются.
 - Postgres: testcontainers (`postgres:18`) или готовый сервер через `TEST_POSTGRES_HOST`/`TEST_POSTGRES_PORT`
   (тогда создаётся своя временная база). Перед каждым тестом таблицы очищаются.
+- Redis: testcontainers (`redis:8`) или `TEST_REDIS_HOST`; перед каждым тестом `FLUSHDB`.
+  RabbitMQ: testcontainers (`rabbitmq:4-alpine`) или `TEST_RABBITMQ_URL` — только для теста приоритета.
+- Воркеры (`celery.contrib.testing.worker.start_worker`, пул `threads`) поднимаются раз на сессию: prepare — 4 потока,
+  telegram — 2. На каждый тест — свой `WorkerRuntime` с фейками; после теста ждём, пока активные задачи закончатся.
 - `tests/fakes.py` — `FakeTelegram` (каналы и сообщения в памяти, задержка, FloodWait, сетевые сбои, счётчик
   одновременных отправок) и `FakeScanner`. `tests/factories.py` — образцы медиа (Pillow, ffmpeg lavfi).
-- Гонки: 100 параллельных загрузок при лимите 2, места в очереди, пауза FloodWait, одновременные вставки одного пути,
-  атомарный захват задачи.
+- Гонки: 100 параллельных загрузок при 2 потоках worker-telegram, ожидание в очереди `uploads.telegram`, пауза FloodWait,
+  блокировка пути в Redis, частичные обновления задачи не затирают друг друга.
 
 ## Нагрузка
 
 ```bash
-make load-up        # Postgres для стенда + миграции
-make load-app       # приложение на :8100 с фейковым Telegram (LOAD_TELEGRAM_DELAY, с на файл)
+make load-up        # Postgres и Redis для стенда + миграции
+make load-app       # приложение на :8100 с воркерами в том же процессе (memory://) и фейковым Telegram (LOAD_TELEGRAM_DELAY, с на файл)
 make load           # locust headless: LOAD_CLIENTS, LOAD_SPAWN_RATE, LOAD_DURATION; отчёт в logs/load/
 make load-down
 ```
 
-Пороги: `LOAD_MAX_P95_MS` (500) для обычных ручек, `LOAD_MAX_BATCH_P95_MS` (1500) для пачек, `LOAD_MAX_FAIL_RATIO` (1%).
+Пороги: `LOAD_MAX_P95_MS` (500), `LOAD_MAX_FAIL_RATIO` (1%).
 `429` от ограничителя — ожидаемое поведение, клиент стенда ждёт `retry_after`.
-Замер 2026-11-15, 100 пользователей / 45 с: ~460 RPS, 0% ошибок, p95 56 мс; полный путь загрузки упирается
-в пропускную способность Telegram (2 параллельные выгрузки × 0,2 с на файл).
+Замер 2026-11-16 (Celery), 100 пользователей / 30 с: ~460 RPS, 0% ошибок, `POST /api/uploads` p95 130 мс;
+полный путь загрузки упирается в пропускную способность Telegram (2 потока × 0,2 с на файл), остальные ждут в очереди.

@@ -9,7 +9,8 @@ from src.api.endpoints import routers
 from src.api.exception import register_exception_handlers
 from src.application.bootstrap.startup import prepare
 from src.config import settings
-from src.infrastructure.background import BackgroundRuntime
+from src.infrastructure.background import AppRuntime
+from src.infrastructure.cache import TaskStore, create_redis
 from src.infrastructure.database.engine import create_engine
 from src.infrastructure.database.session import session_factory
 from src.infrastructure.integrations import create_scanner, create_telegram
@@ -25,14 +26,17 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     session_factory.configure(bind=engine)
     telegram = create_telegram()
     await telegram.start()
-    runtime = BackgroundRuntime(telegram=telegram, scanner=create_scanner())
+    redis = create_redis()
+    runtime = AppRuntime(
+        telegram=telegram, scanner=create_scanner(), store=TaskStore(redis)
+    )
     app.state.runtime = runtime
     await prepare(runtime)
     try:
         yield
     finally:
-        await runtime.stop()
         await telegram.stop()
+        await redis.aclose()
         await engine.dispose()
         logger.info("Stopped")
 

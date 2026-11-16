@@ -1,19 +1,20 @@
+from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, Request, status
+from fastapi import APIRouter, Depends, Header, Query, Request, status
 
 from src.api.schemas import (
     BatchCreate,
     BatchResponse,
     TaskListResponse,
     TaskResponse,
-    TaskStatusFilter,
-    UploadCreate,
+    UploadParams,
     UrlUploadCreate,
 )
 from src.application.factory import get_service_task, get_service_upload
 from src.application.schemas import UploadServiceCreate
 from src.application.services import TaskService, UploadService
+from src.utilities.formatters import FileSize
 
 router = APIRouter(tags=["Uploads"])
 
@@ -21,29 +22,17 @@ router = APIRouter(tags=["Uploads"])
 @router.post(
     path="/uploads",
     name="uploads:create",
-    summary="Create an upload task; send the file with PUT /uploads/{task_id}",
-    status_code=status.HTTP_201_CREATED,
-)
-async def create_upload(
-    data: UploadCreate, upload_service: UploadService = Depends(get_service_upload)
-) -> TaskResponse:
-    return await upload_service.create(
-        UploadServiceCreate.model_validate(data.model_dump())
-    )
-
-
-@router.put(
-    path="/uploads/{task_id}",
-    name="uploads:send-file",
-    summary="Send the file body of an upload task",
+    summary="Upload a file: parameters in the query, the file in the body",
     status_code=status.HTTP_202_ACCEPTED,
 )
-async def send_file(
-    task_id: UUID,
+async def create_upload(
+    params: Annotated[UploadParams, Query()],
     request: Request,
+    content_length: Annotated[FileSize | None, Header()] = None,
     upload_service: UploadService = Depends(get_service_upload),
 ) -> TaskResponse:
-    return await upload_service.receive(task_id, request.stream())
+    data = UploadServiceCreate(**params.model_dump(), size=content_length)
+    return await upload_service.upload(data, request.stream())
 
 
 @router.post(
@@ -55,7 +44,7 @@ async def send_file(
 async def create_url_upload(
     data: UrlUploadCreate, upload_service: UploadService = Depends(get_service_upload)
 ) -> TaskResponse:
-    return await upload_service.create(
+    return await upload_service.upload_url(
         UploadServiceCreate.model_validate(data.model_dump())
     )
 
@@ -63,8 +52,8 @@ async def create_url_upload(
 @router.post(
     path="/uploads/batch",
     name="uploads:batch",
-    summary="Create up to 100 uploads at once; an error in one item does not stop the others",
-    status_code=status.HTTP_201_CREATED,
+    summary="Queue up to 100 uploads from links; an error in one item does not stop the others",
+    status_code=status.HTTP_202_ACCEPTED,
 )
 async def create_batch(
     data: BatchCreate, upload_service: UploadService = Depends(get_service_upload)
@@ -77,18 +66,14 @@ async def create_batch(
 
 @router.get(
     path="/tasks",
-    name="tasks:list",
-    summary="Upload tasks with a batch summary",
+    name="tasks:batch",
+    summary="Tasks of a batch with a summary",
     status_code=status.HTTP_200_OK,
 )
-async def get_tasks(
-    batch_id: UUID | None = None,
-    task_status: TaskStatusFilter | None = Query(None, alias="status"),
-    limit: int = Query(100, ge=1, le=500),
-    offset: int = Query(0, ge=0),
-    task_service: TaskService = Depends(get_service_task),
+async def get_batch_tasks(
+    batch_id: UUID, task_service: TaskService = Depends(get_service_task)
 ) -> TaskListResponse:
-    return await task_service.get_page(batch_id, task_status, limit, offset)
+    return await task_service.get_batch(batch_id)
 
 
 @router.get(

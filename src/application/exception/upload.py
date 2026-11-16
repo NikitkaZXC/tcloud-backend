@@ -19,10 +19,10 @@ class TaskNotFoundError(TCloudError):
     code = "task_not_found"
 
 
-class TaskNotPendingError(TCloudError):
-    """Raised when a file is sent to a task that is not waiting for one."""
+class LengthRequiredError(TCloudError):
+    """Raised when a file upload has no Content-Length header."""
 
-    code = "task_not_pending"
+    code = "length_required"
 
 
 class UploadInProgressError(TCloudError):

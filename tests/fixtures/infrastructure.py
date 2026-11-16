@@ -9,15 +9,19 @@ import asyncpg
 import pytest
 from alembic import command
 from alembic.config import Config
+from redis.asyncio import Redis
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlalchemy.pool import NullPool
 
 from src.config import settings
+from src.infrastructure.cache import create_redis
 from src.infrastructure.database.base import Base
 
 ROOT = Path(__file__).resolve().parents[2]
 POSTGRES_IMAGE = "postgres:18"
+REDIS_IMAGE = "redis:8"
+RABBITMQ_IMAGE = "rabbitmq:4-alpine"
 MAINTENANCE_DB = "postgres"
 
 
@@ -108,3 +112,47 @@ async def engine(migrated: None) -> AsyncIterator[AsyncEngine]:
         await connection.execute(text(f"TRUNCATE {tables} CASCADE"))
     yield engine
     await engine.dispose()
+
+
+@pytest.fixture(scope="session")
+def redis_server() -> Iterator[None]:
+    if os.environ.get("TEST_REDIS_HOST"):
+        settings.redis.HOST = os.environ["TEST_REDIS_HOST"]
+        settings.redis.PORT = int(os.environ.get("TEST_REDIS_PORT", "6379"))
+        yield
+        return
+
+    if not _docker_available():
+        pytest.skip("Docker is not available")
+
+    from testcontainers.community.redis import RedisContainer
+
+    with RedisContainer(REDIS_IMAGE) as redis:
+        settings.redis.HOST = redis.get_container_host_ip()
+        settings.redis.PORT = int(redis.get_exposed_port(6379))
+        yield
+
+
+@pytest.fixture
+async def redis(redis_server: None) -> AsyncIterator[Redis]:
+    client = create_redis()
+    await client.flushdb()
+    yield client
+    await client.aclose()
+
+
+@pytest.fixture(scope="session")
+def rabbitmq_url() -> Iterator[str]:
+    if os.environ.get("TEST_RABBITMQ_URL"):
+        yield os.environ["TEST_RABBITMQ_URL"]
+        return
+
+    if not _docker_available():
+        pytest.skip("Docker is not available")
+
+    from testcontainers.community.rabbitmq import RabbitMqContainer
+
+    with RabbitMqContainer(RABBITMQ_IMAGE) as rabbitmq:
+        host = rabbitmq.get_container_host_ip()
+        port = rabbitmq.get_exposed_port(5672)
+        yield f"amqp://guest:guest@{host}:{port}//"

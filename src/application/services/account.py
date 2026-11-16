@@ -2,12 +2,12 @@ import time
 
 from src.application.schemas import AccountServiceRead
 from src.config import settings
-from src.infrastructure.background import BackgroundRuntime
+from src.infrastructure.background import AppRuntime
 from src.infrastructure.limits import file_limit
 
 
 class AccountService:
-    def __init__(self, runtime: BackgroundRuntime) -> None:
+    def __init__(self, runtime: AppRuntime) -> None:
         self._runtime = runtime
 
     async def is_premium(self, fresh: bool = False) -> bool:

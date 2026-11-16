@@ -1,40 +1,9 @@
-import asyncio
 import shutil
-from collections.abc import AsyncIterator, Hashable
-from contextlib import asynccontextmanager
 from pathlib import Path
 
 from src.infrastructure.background.exception import InsufficientStorageError
 
 MiB = 1024 * 1024
-
-
-class Gate:
-    def __init__(self, name: str, size: int) -> None:
-        self.name = name
-        self._semaphore = asyncio.Semaphore(size)
-        self._waiting: list[Hashable] = []
-        self.active = 0
-
-    @asynccontextmanager
-    async def slot(self, key: Hashable) -> AsyncIterator[None]:
-        self._waiting.append(key)
-        try:
-            await self._semaphore.acquire()
-        finally:
-            self._waiting.remove(key)
-        self.active += 1
-        try:
-            yield
-        finally:
-            self.active -= 1
-            self._semaphore.release()
-
-    def position(self, key: Hashable) -> int | None:
-        try:
-            return self._waiting.index(key) + 1
-        except ValueError:
-            return None
 
 
 class Reservation:

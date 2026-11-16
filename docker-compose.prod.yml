@@ -1,24 +1,61 @@
 name: tcloud
 
+x-app: &app
+  build: .
+  image: tcloud:latest
+  env_file: .env
+  environment: &app-env
+    POSTGRES_HOST: postgres
+    CLAMAV_HOST: clamav
+    RABBITMQ_HOST: rabbitmq
+    REDIS_HOST: redis
+  volumes:
+    - session:/data/session
+    - tmp:/data/tmp
+  read_only: true
+  tmpfs: [/tmp]
+  restart: unless-stopped
+
+x-worker-depends: &worker-depends
+  postgres: {condition: service_healthy}
+  redis: {condition: service_healthy}
+  rabbitmq: {condition: service_healthy}
+
 services:
   app:
-    build: .
-    image: tcloud:latest
-    env_file: .env
-    environment:
-      POSTGRES_HOST: postgres
-      CLAMAV_HOST: clamav
+    <<: *app
     ports:
       - "127.0.0.1:8000:8000"
-    volumes:
-      - session:/data/session
-      - tmp:/data/tmp
-    read_only: true
-    tmpfs: [/tmp]
     depends_on:
-      postgres: {condition: service_healthy}
+      <<: *worker-depends
       clamav: {condition: service_started}
-    restart: unless-stopped
+
+  worker-prepare:
+    <<: *app
+    environment:
+      <<: *app-env
+      RUN_MIGRATIONS: "0"
+    command:
+      - sh
+      - -c
+      - exec celery --app=src.infrastructure.background.celery.app worker --pool=threads --concurrency="$${UPLOAD_PREPARE_CONCURRENCY:-4}" --queues=uploads.prepare --hostname=prepare@%h --loglevel=INFO
+    depends_on:
+      <<: *worker-depends
+      app: {condition: service_started}
+      clamav: {condition: service_started}
+
+  worker-telegram:
+    <<: *app
+    environment:
+      <<: *app-env
+      RUN_MIGRATIONS: "0"
+    command:
+      - sh
+      - -c
+      - exec celery --app=src.infrastructure.background.celery.app worker --pool=threads --concurrency="$${TELEGRAM_CONCURRENCY:-2}" --queues=uploads.telegram --hostname=telegram@%h --loglevel=INFO
+    depends_on:
+      <<: *worker-depends
+      app: {condition: service_started}
 
   postgres:
     image: postgres:18
@@ -30,6 +67,34 @@ services:
       - pgdata:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      retries: 10
+    restart: unless-stopped
+
+  rabbitmq:
+    image: rabbitmq:4-alpine
+    hostname: rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-tcloud}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?set RABBITMQ_PASSWORD in .env}
+      RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS: "-rabbit consumer_timeout 86400000"
+    volumes:
+      - rabbitmq:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      retries: 10
+    restart: unless-stopped
+
+  redis:
+    image: redis:8
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}
+    command: ["sh", "-c", "exec redis-server --requirepass \"$$REDIS_PASSWORD\" --appendonly yes"]
+    volumes:
+      - redis:/data
+    healthcheck:
+      test: ["CMD-SHELL", "REDISCLI_AUTH=\"$$REDIS_PASSWORD\" redis-cli ping | grep -q PONG"]
       interval: 5s
       retries: 10
     restart: unless-stopped
@@ -46,3 +111,5 @@ volumes:
   session:
   tmp:
   clamdb:
+  rabbitmq:
+  redis:

@@ -23,6 +23,7 @@ async def test_health(client, scanner):
         "db": True,
         "telegram": True,
         "antivirus": True,
+        "redis": True,
     }
     scanner.available = False
     assert (await client.get("/health")).json()["ok"] is False

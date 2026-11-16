@@ -10,9 +10,7 @@ from PIL import Image
 
 API_KEY = os.environ.get("LOAD_API_KEY", "load")
 MAX_P95_MS = int(os.environ.get("LOAD_MAX_P95_MS", "500"))
-MAX_BATCH_P95_MS = int(os.environ.get("LOAD_MAX_BATCH_P95_MS", "1500"))
 MAX_FAIL_RATIO = float(os.environ.get("LOAD_MAX_FAIL_RATIO", "0.01"))
-BATCH_SIZE = int(os.environ.get("LOAD_BATCH_SIZE", "20"))
 TASK_TIMEOUT = float(os.environ.get("LOAD_TASK_TIMEOUT", "120"))
 
 
@@ -61,48 +59,24 @@ class Uploader(HttpUser):
         )
 
     def _start(self, target: str) -> str | None:
-        body = {"path": target, "size": len(IMAGE)}
         with self.client.post(
-            "/api/uploads", json=body, name="/api/uploads", catch_response=True
+            "/api/uploads",
+            params={"path": target},
+            data=IMAGE,
+            name="/api/uploads",
+            catch_response=True,
         ) as response:
             if response.status_code == 429:
                 response.success()
                 time.sleep(response.json()["error"].get("retry_after", 1))
                 return None
-            created = response.json()
-        self.client.put(
-            f"/api/uploads/{created['id']}", data=IMAGE, name="/api/uploads/[id]"
-        )
-        return created["id"]
+            return response.json()["id"]
 
     @task(5)
     def upload_one(self) -> None:
         task_id = self._start(f"{self.root}/single/{uuid4().hex}.jpg")
         if task_id:
             self._wait(task_id)
-
-    @task(1)
-    def upload_batch(self) -> None:
-        items = [
-            {"path": f"{self.root}/batch/{uuid4().hex}.jpg", "size": len(IMAGE)}
-            for _ in range(BATCH_SIZE)
-        ]
-        batch = self.client.post(
-            "/api/uploads/batch", json={"items": items}, name="/api/uploads/batch"
-        ).json()
-        for item in batch["items"]:
-            if not item["task"]:
-                continue
-            self.client.put(
-                f"/api/uploads/{item['task']['id']}",
-                data=IMAGE,
-                name="/api/uploads/[id]",
-            )
-        self.client.get(
-            "/api/tasks",
-            params={"batch_id": batch["batch_id"]},
-            name="/api/tasks?batch_id",
-        )
 
     @task(2)
     def browse(self) -> None:
@@ -119,10 +93,9 @@ def check_thresholds(environment: Environment, **_: object) -> None:
     for (name, method), entry in environment.stats.entries.items():
         if method == "TASK":
             continue
-        limit = MAX_BATCH_P95_MS if name == "/api/uploads/batch" else MAX_P95_MS
         p95 = entry.get_response_time_percentile(0.95) or 0
-        if p95 > limit:
-            problems.append(f"{method} {name} p95 {p95} ms > {limit} ms")
+        if p95 > MAX_P95_MS:
+            problems.append(f"{method} {name} p95 {p95} ms > {MAX_P95_MS} ms")
     if problems:
         logger.error("Load test failed: {}", "; ".join(problems))
         environment.process_exit_code = 1

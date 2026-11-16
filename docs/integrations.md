@@ -3,7 +3,9 @@
 ## Telegram (Telethon)
 
 Пользовательский аккаунт, а не бот: бот не может создавать каналы и не имеет Premium.
-Сессия — файл в volume `session`, вход один раз: `make login`.
+Две сессии одного аккаунта в volume `session`: `TELEGRAM_SESSION` (API: каналы, скачивание, удаление) и
+`TELEGRAM_WORKER_SESSION` (worker-telegram: выгрузка). Один SQLite-файл сессии нельзя открывать из двух процессов —
+будут блокировки и риск `AUTH_KEY_DUPLICATED`, поэтому `make login` входит дважды (в Telegram это два устройства).
 
 | Лимит | Значение | Как учитываем |
 |---|---|---|

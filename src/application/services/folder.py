@@ -9,7 +9,7 @@ from src.application.schemas import (
     FolderServiceRead,
 )
 from src.application.services.storage import StorageService
-from src.infrastructure.background import BackgroundRuntime
+from src.infrastructure.background import AppRuntime
 from src.infrastructure.database.repositories import FileRepository, FolderRepository
 from src.utilities.parsers import join_path, split_folder
 
@@ -18,7 +18,7 @@ class FolderService:
     def __init__(
         self,
         session: AsyncSession,
-        runtime: BackgroundRuntime,
+        runtime: AppRuntime,
         storage_service: StorageService,
     ) -> None:
         self._session = session

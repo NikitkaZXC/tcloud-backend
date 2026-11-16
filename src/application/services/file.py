@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.application.exception import StoredFileNotFoundError
 from src.application.schemas import FileServiceRead
 from src.application.services.storage import StorageService
-from src.infrastructure.background import BackgroundRuntime
+from src.infrastructure.background import AppRuntime
 from src.infrastructure.database.models import FileDB
 from src.infrastructure.database.repositories import FileRepository
 from src.utilities.parsers import split_file
@@ -16,7 +16,7 @@ class FileService:
     def __init__(
         self,
         session: AsyncSession,
-        runtime: BackgroundRuntime,
+        runtime: AppRuntime,
         storage_service: StorageService,
     ) -> None:
         self._session = session

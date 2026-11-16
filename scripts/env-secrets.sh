@@ -16,6 +16,8 @@ fill() {
 
 fill APP_API_KEY "$(secret 32)"
 fill POSTGRES_PASSWORD "$(secret 24)"
+fill RABBITMQ_PASSWORD "$(secret 24)"
+fill REDIS_PASSWORD "$(secret 24)"
 
 missing=$(grep -E "^(TELEGRAM_API_ID|TELEGRAM_API_HASH)=$" .env | cut -d= -f1 || true)
 [ -z "$missing" ] || echo "fill by hand in .env: $missing (https://my.telegram.org)"

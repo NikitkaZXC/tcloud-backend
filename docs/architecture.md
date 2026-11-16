@@ -4,9 +4,9 @@
 `src/application` никогда не импортирует `src/api`, `src/infrastructure` — ни то, ни другое.
 
 ```
-main.py                    FastAPI-приложение, lifespan: БД, Telegram, ClamAV, BackgroundRuntime, подготовка при старте
+main.py                    FastAPI-приложение, lifespan: БД, Telegram, ClamAV, Redis, AppRuntime, подготовка при старте
 src/
-  config/                  настройки (pydantic-settings), по классу на группу: APP_, POSTGRES_, TELEGRAM_, CLAMAV_, UPLOAD_, LOG_
+  config/                  настройки (pydantic-settings), по классу на группу: APP_, POSTGRES_, TELEGRAM_, CLAMAV_, UPLOAD_, RABBITMQ_, REDIS_, LOG_
   api/
     endpoints.py           все роутеры под /api, проверка X-API-Key на уровне роутера
     routes/                system, storage, folder, upload, file
@@ -14,16 +14,19 @@ src/
     exception/             код ошибки → HTTP-статус, обработчики, единый формат {"error": {...}}
     dependencies/          verify_api_key
   application/
-    services/              бизнес-логика: Account, Health, Storage, Folder, File, Task, Upload + UploadPipeline (фон)
+    services/              бизнес-логика: Account, Health, Storage, Folder, File, Task, Upload + UploadPipeline (стадии воркеров)
+    tasks/                 Celery-задачи uploads.prepare и uploads.telegram, WorkerRuntime воркера
     schemas/               DTO сервисов (*ServiceRead, *ServiceCreate, *ServiceUpdate)
     factory/               FastAPI-зависимости get_service_*: сервисы роуты получают только через них
     exception/             доменные ошибки
-    bootstrap/             login (вход в Telegram), startup (очистка tmp, упавшие задачи, каналы из .env)
+    bootstrap/             login (вход в Telegram, сессии API и воркера), startup (старые файлы tmp, каналы из .env)
   infrastructure/
     database/              модели *DB, миксины (UUIDv7 id, created_at, updated_at), репозитории, миграции
     integrations/          telegram (Telethon), antivirus (clamd), web (безопасные исходящие запросы)
     media/                 определение типа, Pillow/ffprobe, превью, перевод в JPEG
-    background/            Gate (слоты стадий), DiskBudget (резерв места), BackgroundRuntime (состояние процесса)
+    background/            Celery-приложение и очереди, enqueue, DiskBudget (резерв места), AppRuntime (состояние API),
+                           WorkerRuntime (event loop, Telethon, БД и Redis воркера)
+    cache/                 Redis: TaskStore — задачи, пачки, блокировки путей, активные задачи
     enums/, logger/, limits.py
   utilities/
     errors.py              TCloudError: базовая ошибка с кодом
@@ -33,10 +36,11 @@ src/
 
 ## Сервисы, репозитории, транзакции
 
-- Сервис получает `AsyncSession` и `BackgroundRuntime`, репозитории создаёт сам в `__init__`.
+- Сервис получает `AsyncSession` и `AppRuntime`, репозитории создаёт сам в `__init__`.
   Другие сервисы передаются в конструктор (`FolderService(storage_service=...)`).
 - Репозитории только `flush()`; **коммитит сервис**.
-- Фоновый конвейер (`UploadPipeline`) живёт дольше запроса, поэтому открывает свои короткие сессии через `session_factory`.
+- `UploadPipeline` работает в воркере Celery и открывает короткие сессии через `WorkerRuntime.session_factory`
+  (свой движок с `NullPool` в event loop воркера). API ставит задачи через `enqueue` по имени — без импорта задач.
 - После ORM-`UPDATE` c `onupdate=func.now()` SQLAlchemy помечает `updated_at` устаревшим; `get_by_id` в репозиториях
   читают с `populate_existing=True`, иначе ленивая подгрузка в async-коде падает с `MissingGreenlet`.
 

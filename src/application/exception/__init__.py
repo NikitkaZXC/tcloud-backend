@@ -3,9 +3,9 @@ from .folder import FolderNotFoundError, StorageRootError
 from .storage import StorageNotFoundError, StoragePhotoNotFoundError
 from .upload import (
     FileTooLargeError,
+    LengthRequiredError,
     SizeMismatchError,
     TaskNotFoundError,
-    TaskNotPendingError,
     TooManyTasksError,
     UploadInProgressError,
 )
@@ -20,7 +20,7 @@ __all__ = [
     "StorageRootError",
     "StoredFileNotFoundError",
     "TaskNotFoundError",
-    "TaskNotPendingError",
+    "LengthRequiredError",
     "TooManyTasksError",
     "UploadInProgressError",
 ]

@@ -9,10 +9,9 @@ class UploadSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="UPLOAD_")
 
     TMP_DIR: Path = Path("/data/tmp")
-    DOWNLOAD_CONCURRENCY: int = 4
-    SCAN_CONCURRENCY: int = 4
     MAX_ACTIVE_TASKS: int = 500
-    PENDING_TTL: int = 3600
+    TASK_TTL: int = 7 * 24 * 3600
+    LOCK_TTL: int = 24 * 3600
     MIN_FREE_DISK_MB: int = 1024
     RETRIES: int = 3
     RETRY_DELAY: float = 2.0

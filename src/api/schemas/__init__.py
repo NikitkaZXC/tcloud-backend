@@ -10,12 +10,10 @@ from .system import AccountResponse, HealthResponse
 from .upload import (
     BATCH_MAX,
     BatchCreate,
-    BatchItemCreate,
     BatchResponse,
     TaskListResponse,
     TaskResponse,
-    TaskStatusFilter,
-    UploadCreate,
+    UploadParams,
     UrlUploadCreate,
 )
 
@@ -23,7 +21,6 @@ __all__ = [
     "BATCH_MAX",
     "AccountResponse",
     "BatchCreate",
-    "BatchItemCreate",
     "BatchResponse",
     "FileResponse",
     "FolderCreate",
@@ -36,7 +33,6 @@ __all__ = [
     "StorageUpdate",
     "TaskListResponse",
     "TaskResponse",
-    "TaskStatusFilter",
-    "UploadCreate",
+    "UploadParams",
     "UrlUploadCreate",
 ]
