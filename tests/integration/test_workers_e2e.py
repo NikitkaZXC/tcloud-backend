@@ -300,7 +300,7 @@ async def test_queue_positions_match_real_order(workers, store, storage_id):
     in_telegram = f"queue:{UploadQueue.TELEGRAM}"
     deadline = time.monotonic() + TIMEOUT
     snapshot = {}
-    while time.monotonic() < deadline and len(snapshot) < len(ids) - 1:
+    while time.monotonic() < deadline and len(snapshot) != len(ids) - 1:
         tasks = await store.get_many(ids)
         waiting = [
             task
