@@ -16,6 +16,7 @@ from .storage import (
 from .upload import (
     ArchiveExpiredError,
     ArchiveNotReadyError,
+    EncryptRequiresFileError,
     FileTooLargeError,
     LengthRequiredError,
     SizeMismatchError,
@@ -61,6 +62,7 @@ __all__ = [
     "StoredFileNotFoundError",
     "ArchiveExpiredError",
     "ArchiveNotReadyError",
+    "EncryptRequiresFileError",
     "TaskCancelledError",
     "TaskFinishedError",
     "TaskNotFoundError",

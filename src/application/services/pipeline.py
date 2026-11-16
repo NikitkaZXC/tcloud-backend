@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import hashlib
 import time
 from collections.abc import Awaitable, Callable
@@ -39,6 +40,7 @@ from src.infrastructure.integrations import (
 )
 from src.infrastructure.integrations.web import download
 from src.infrastructure.media import Media, photo_fits, probe, thumbnail, to_jpeg
+from src.infrastructure.security import cipher_size, encrypt_file
 from src.utilities.errors import TCloudError
 from src.utilities.parsers import split_file
 
@@ -154,6 +156,8 @@ class UploadPipeline:
     async def _prepare(self, task: dict) -> None:
         await self.stage(task, TaskStage.SCANNING, task.get("bytes_total"))
         prepared = await self._scan(task, Path(task["params"]["file"]))
+        if task["params"].get("encrypt"):
+            prepared = await self._encrypt(task, prepared)
         await self._store.update(task["id"], prepared=prepared)
         await self._handoff(
             task,
@@ -161,6 +165,21 @@ class UploadPipeline:
             TaskStage.UPLOADING_TG,
             Path(prepared["send_path"]).stat().st_size,
         )
+        if task["params"].get("encrypt"):
+            Path(task["params"]["file"]).unlink(missing_ok=True)
+
+    async def _encrypt(self, task: dict, prepared: dict) -> dict:
+        source = Path(prepared["send_path"])
+        plain_size = source.stat().st_size
+        target = temp_path("file.bin")
+        prepared = {**prepared, "send_path": str(target), "plain_size": plain_size}
+        await self._store.update(task["id"], prepared=prepared)
+        reservation = self._runtime.disk.reserve(cipher_size(plain_size))
+        try:
+            header = await asyncio.to_thread(encrypt_file, source, target)
+        finally:
+            reservation.release()
+        return {**prepared, "encryption_header": base64.b64encode(header).decode()}
 
     async def _retry(
         self,
@@ -227,7 +246,7 @@ class UploadPipeline:
             warnings.append(
                 f"{media.mime} may be shown as a file instead of a player in Telegram"
             )
-        if media.kind == MediaKind.VIDEO:
+        if media.kind == MediaKind.VIDEO and not task["params"].get("encrypt"):
             thumb = temp_path("thumb.jpg")
             prepared["thumb"] = str(thumb)
             await self._store.update(task["id"], prepared=prepared)
@@ -296,6 +315,7 @@ class UploadPipeline:
         file_id = planned or (existing.id if existing else uuid7())
         media = Media(**prepared["media"])
         as_file = prepared["as_file"]
+        header = prepared.get("encryption_header")
         if recorded:
             sent = SentFile(**recorded["message"])
         else:
@@ -304,7 +324,7 @@ class UploadPipeline:
                 task,
                 chat_id=chat_id,
                 path=Path(prepared["send_path"]),
-                name=name,
+                name=f"{file_id}.bin" if header else name,
                 caption=caption_token(file_id),
                 media=media,
                 as_file=as_file,
@@ -320,7 +340,7 @@ class UploadPipeline:
         values = dict(
             folder_path=folder,
             name=name,
-            size=sent.size,
+            size=prepared["plain_size"] if header else sent.size,
             mime=(sent.mime or "image/jpeg") if compressed else media.mime,
             kind=media.kind,
             sent_as="file" if as_file else "media",
@@ -329,6 +349,7 @@ class UploadPipeline:
             duration=media.duration,
             sha256=prepared["sha256"],
             tg_message_id=sent.message_id,
+            encryption_header=base64.b64decode(header) if header else None,
         )
         async with self._runtime.session_factory() as session:
             await FolderRepository(session).ensure(storage_id, folder)

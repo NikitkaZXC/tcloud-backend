@@ -65,6 +65,7 @@ class UploadServiceCreate(BaseModel):
     on_conflict: str = "error"
     priority: str = "normal"
     allow_unscannable: bool = False
+    encrypt: bool = False
     callback_url: str | None = None
 
 

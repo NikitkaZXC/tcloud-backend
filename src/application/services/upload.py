@@ -5,6 +5,7 @@ from uuid import UUID, uuid7
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.application.exception import (
+    EncryptRequiresFileError,
     FileTooLargeError,
     LengthRequiredError,
     PathConflictError,
@@ -46,6 +47,7 @@ from src.infrastructure.enums import (
 from src.infrastructure.integrations import session_exists
 from src.infrastructure.integrations.web import check_scheme
 from src.infrastructure.media import check_name
+from src.infrastructure.security import check_available, plain_limit
 from src.utilities.errors import TCloudError
 from src.utilities.parsers import check_segment, join_path, split_file
 
@@ -133,7 +135,15 @@ class UploadService:
             raise SessionNotAuthorizedError(
                 "the worker Telegram session is not logged in, use /api/telegram/worker"
             )
+        if data.encrypt:
+            if data.send_as != "file":
+                raise EncryptRequiresFileError(
+                    "only files sent with send_as=file can be encrypted"
+                )
+            check_available()
         limit = await self._account.file_limit()
+        if data.encrypt:
+            limit = plain_limit(limit)
         if data.size is not None and data.size > limit:
             raise FileTooLargeError(
                 f"file is {data.size} bytes, account limit is {limit}", limit=limit
@@ -177,6 +187,7 @@ class UploadService:
                 "send_as": data.send_as,
                 "on_conflict": data.on_conflict,
                 "allow_unscannable": data.allow_unscannable,
+                "encrypt": data.encrypt,
                 "callback_url": data.callback_url,
                 "url": data.url,
                 "limit": limit,

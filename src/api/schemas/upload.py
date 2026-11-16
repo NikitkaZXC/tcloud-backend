@@ -16,6 +16,7 @@ class UploadParams(BaseModel):
     on_conflict: OnConflict = "error"
     priority: Priority = "normal"
     allow_unscannable: bool = False
+    encrypt: bool = False
     callback_url: str | None = None
 
 

@@ -83,6 +83,7 @@ def archived_files() -> list[SimpleNamespace]:
             name=f"{index}.bin",
             size=3_000_000,
             tg_message_id=index,
+            encryption_header=None,
             updated_at=datetime.now(UTC),
         )
         for index in range(2)

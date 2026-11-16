@@ -71,3 +71,9 @@ class ArchiveExpiredError(TCloudError):
     """Raised when a finished archive was already removed from the server."""
 
     code = "archive_expired"
+
+
+class EncryptRequiresFileError(TCloudError):
+    """Raised when encryption is requested for a file sent as Telegram media."""
+
+    code = "encrypt_requires_file"

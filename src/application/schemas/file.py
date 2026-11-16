@@ -35,6 +35,7 @@ class FileServiceRead(BaseModel):
     height: int | None
     duration: float | None
     sha256: str
+    encrypted: bool
     created_at: datetime
     updated_at: datetime
     telegram: TelegramFileServiceRead
@@ -54,6 +55,7 @@ class FileServiceRead(BaseModel):
             height=file.height,
             duration=file.duration,
             sha256=file.sha256,
+            encrypted=file.encryption_header is not None,
             created_at=file.created_at,
             updated_at=file.updated_at,
             telegram=TelegramFileServiceRead(

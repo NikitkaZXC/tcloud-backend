@@ -6,6 +6,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    LargeBinary,
     Text,
     UniqueConstraint,
     Uuid,
@@ -48,3 +49,4 @@ class FileDB(PrimaryKeyMixin, CreatedAtMixin, UpdatedAtMixin, Base):
     duration: Mapped[float | None] = mapped_column(Float)
     sha256: Mapped[str] = mapped_column(Text, nullable=False)
     tg_message_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    encryption_header: Mapped[bytes | None] = mapped_column(LargeBinary)

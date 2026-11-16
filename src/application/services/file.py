@@ -1,3 +1,4 @@
+from collections.abc import AsyncIterator
 from uuid import UUID
 
 from loguru import logger
@@ -15,8 +16,28 @@ from src.infrastructure.background import AppRuntime
 from src.infrastructure.database.models import FileDB
 from src.infrastructure.database.repositories import FileRepository, StorageRepository
 from src.infrastructure.enums import Permission
-from src.infrastructure.integrations import TelegramMessageGoneError
+from src.infrastructure.integrations import TelegramClient, TelegramMessageGoneError
+from src.infrastructure.security import cipher_size, cipher_span, decrypt
 from src.utilities.parsers import split_file
+
+
+def stored_size(file: FileDB) -> int:
+    return cipher_size(file.size) if file.encryption_header else file.size
+
+
+def file_body(
+    telegram: TelegramClient, media: object, file: FileDB, start: int, end: int
+) -> AsyncIterator[bytes]:
+    if not file.encryption_header:
+        return telegram.iter_media(media, start, end - start + 1)
+    offset, length = cipher_span(file.size, start, end)
+    return decrypt(
+        telegram.iter_media(media, offset, length),
+        file.encryption_header,
+        file.size,
+        start,
+        end,
+    )
 
 
 class FileService:
@@ -77,11 +98,11 @@ class FileService:
             await self._session.commit()
             logger.info("File {} is gone from Telegram, record removed", file_id)
             raise
-        if size != file.size:
+        if size != stored_size(file):
             logger.warning(
                 "File {} changed in Telegram: {} bytes recorded, {} now",
                 file_id,
-                file.size,
+                stored_size(file),
                 size,
             )
             raise FileChangedError(

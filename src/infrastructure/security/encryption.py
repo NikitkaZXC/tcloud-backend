@@ -90,10 +90,21 @@ def cipher_span(plain_size: int, start: int, end: int) -> tuple[int, int]:
     return offset, stop - offset
 
 
-async def decrypt(
+def decrypt(
     chunks: AsyncIterator[bytes], header: bytes, plain_size: int, start: int, end: int
 ) -> AsyncIterator[bytes]:
     cipher, prefix = _open(header)
+    return _decrypt(chunks, cipher, prefix, plain_size, start, end)
+
+
+async def _decrypt(
+    chunks: AsyncIterator[bytes],
+    cipher: AESGCM,
+    prefix: bytes,
+    plain_size: int,
+    start: int,
+    end: int,
+) -> AsyncIterator[bytes]:
     total = blocks(plain_size)
     index, last = start // BLOCK, end // BLOCK if plain_size else 0
     skip = start - index * BLOCK

@@ -9,6 +9,7 @@ from src.api.schemas import FileResponse
 from src.application.factory import get_runtime, get_service_file
 from src.application.schemas import Actor
 from src.application.services import FileService
+from src.application.services.file import file_body
 from src.infrastructure.background import AppRuntime
 from src.infrastructure.enums import MediaKind
 from src.utilities.parsers import parse_range
@@ -73,7 +74,7 @@ async def download_file(
     if range_header:
         headers["Content-Range"] = f"bytes {start}-{end}/{file.size}"
     return StreamingResponse(
-        runtime.download.iter_media(media, start, end - start + 1),
+        file_body(runtime.download, media, file, start, end),
         status_code=(
             status.HTTP_206_PARTIAL_CONTENT if range_header else status.HTTP_200_OK
         ),
