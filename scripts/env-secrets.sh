@@ -15,6 +15,7 @@ fill() {
 }
 
 fill APP_SECRET_KEY "$(secret 32)"
+fill APP_ENCRYPTION_KEY "$(python3 -c "import base64, os; print(base64.b64encode(os.urandom(32)).decode())")"
 fill ROOT_PASSWORD "$(secret 18)"
 fill POSTGRES_PASSWORD "$(secret 24)"
 fill RABBITMQ_PASSWORD "$(secret 24)"

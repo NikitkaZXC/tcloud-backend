@@ -2,7 +2,7 @@
 
 ## С устройства — одним запросом
 
-`POST /api/uploads?path=...&send_as=...&on_conflict=...&priority=...&allow_unscannable=...&callback_url=...`, тело — сам файл.
+`POST /api/uploads?path=...&send_as=...&on_conflict=...&priority=...&allow_unscannable=...&encrypt=...&callback_url=...`, тело — сам файл.
 Размер берётся из `Content-Length` (без него `411 length_required`). Все проверки идут до чтения тела: путь, расширение,
 лимит аккаунта, место на диске, число активных задач, конфликт, занятость пути. Затем тело пишется во временный файл,
 и задача встаёт в очередь. Ответ `202` с задачей `queued`.
@@ -10,7 +10,7 @@
 
 ## По ссылке
 
-`POST /api/uploads/from-url {url, path, send_as, on_conflict, priority, allow_unscannable, callback_url}`: имя файла берётся из `path`,
+`POST /api/uploads/from-url {url, path, send_as, on_conflict, priority, allow_unscannable, encrypt, callback_url}`: имя файла берётся из `path`,
 а не из ссылки. Скачивает worker-download с теми же проверками и лимитами. Если первые байты — исполняемый файл, соединение
 обрывается.
 
@@ -42,6 +42,16 @@
 
 `false` по умолчанию: зашифрованные архивы и PDF, Office с макросами и файлы, на которых ClamAV упёрся в лимит, —
 `unscannable`. `true` — такие файлы принимаются, в задаче предупреждение. Вирусы отклоняются в любом случае.
+
+## `encrypt`
+
+`false` по умолчанию. `true` — файл шифруется ключом сервера `APP_ENCRYPTION_KEY` перед отправкой в Telegram
+(security.md, «Шифрование файлов»). Только для `send_as=file`: с `send_as=media` → `422 encrypt_requires_file`; ключ не
+задан → `503 encryption_unavailable`. Проверки типа и ClamAV идут по открытому файлу, как обычно. В Telegram уходит
+документ `{uuid}.bin` без превью и атрибутов, в БД — настоящие имя, MIME, тип, размер и `sha256` открытого файла.
+Лимит файла меньше лимита Telegram на накладные расходы (≈16 байт на 64 КиБ + 71 байт заголовка). На стадии
+`scanning` на диске одновременно лежат открытый файл и шифротекст; открытый удаляется сразу после передачи в очередь
+`uploads.telegram`.
 
 ## `send_as`
 

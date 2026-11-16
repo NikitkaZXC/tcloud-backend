@@ -11,7 +11,7 @@ PostgreSQL 18, SQLAlchemy 2 async (asyncpg), миграции Alembic в `src/in
 | `refresh_tokens` | `user_id`, HMAC `token_hash`, `access_jti`, user-agent, IP, `signed_in_at`, `expires_at`, `revoked` | `UNIQUE(token_hash)` — поиск при refresh; `user_id` — сессии пользователя, отзыв всех |
 | `api_keys` | `user_id`, `name`, HMAC `key_hash`, `last_used_at` | `UNIQUE(key_hash)` — проверка `X-API-Key`; `user_id` — список ключей |
 | `folder_grants` | `user_id`, `storage_id`, `path` (папка без корня, `''` — всё хранилище), `recursive`, `can_read`, `can_upload`, `can_delete` | `UNIQUE(user_id, storage_id, path)` — один грант на папку и гранты пользователя на каждый запрос; `storage_id` — каскадное удаление с хранилищем |
-| `files` | путь (`folder_path` + `name`), размер, MIME, тип (`photo/video/audio/animation/document`), `sent_as`, размеры, длительность, `sha256`, `tg_message_id` | `UNIQUE(storage_id, folder_path, name)` — один файл на путь; `(storage_id, folder_path text_pattern_ops)` — листинг и удаление поддерева; `UNIQUE(storage_id, tg_message_id)`; `sha256` |
+| `files` | путь (`folder_path` + `name`), размер, MIME, тип (`photo/video/audio/animation/document`), `sent_as`, размеры, длительность, `sha256`, `tg_message_id`, `encryption_header` (заголовок шифрования, `NULL` — файл открыт; security.md) | `UNIQUE(storage_id, folder_path, name)` — один файл на путь; `(storage_id, folder_path text_pattern_ops)` — листинг и удаление поддерева; `UNIQUE(storage_id, tg_message_id)`; `sha256` |
 
 `_` и `%` в именах папок экранируются перед `LIKE` (`\` в путях запрещён, им и экранируем).
 Задачи загрузки в БД не хранятся: очередь — RabbitMQ, статус и прогресс — Redis (см. background-tasks.md).
@@ -24,6 +24,7 @@ PostgreSQL 18, SQLAlchemy 2 async (asyncpg), миграции Alembic в `src/in
 | `0002` | `tasks.path`, `tasks.batch_id`, индексы для пачек и списков, уникальность активного пути |
 | `0003` | удалена таблица `tasks`: состояние загрузок переехало в Redis |
 | `0004` | `users`, `refresh_tokens`, `api_keys`, `folder_grants` (flows/users.md) |
+| `0005` | `files.encryption_header` для файлов с `encrypt=true` |
 
 Новая ревизия: `uv run alembic revision --autogenerate -m "..."`. Существующие файлы не правим.
 `tests/integration/test_migrations.py` проверяет, что модели совпадают с миграциями и что всё откатывается до `base` и обратно.
