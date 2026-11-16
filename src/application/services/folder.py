@@ -1,16 +1,23 @@
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.application.exception import FolderNotFoundError, StorageRootError
+from src.application.exception import (
+    FolderNotFoundError,
+    ForbiddenError,
+    StorageRootError,
+)
 from src.application.schemas import (
+    Actor,
     FileServiceRead,
     FolderDeleteServiceRead,
     FolderListingServiceRead,
     FolderServiceRead,
 )
+from src.application.services.access import allowed, leads_to_grant, require
 from src.application.services.storage import StorageService
 from src.infrastructure.background import AppRuntime
 from src.infrastructure.database.repositories import FileRepository, FolderRepository
+from src.infrastructure.enums import Permission
 from src.utilities.parsers import join_path, split_folder
 
 
@@ -27,32 +34,44 @@ class FolderService:
         self._repo = FolderRepository(session)
         self._files = FileRepository(session)
 
-    async def create(self, raw_path: str) -> FolderServiceRead:
+    async def create(self, actor: Actor, raw_path: str) -> FolderServiceRead:
         storage_id, path = split_folder(raw_path)
         if not path:
             raise StorageRootError("storage root always exists")
+        require(actor, storage_id, path, Permission.UPLOAD)
         await self._storage_service.get_db(storage_id)
         await self._repo.ensure(storage_id, path)
         await self._session.commit()
         return FolderServiceRead.from_db(await self._repo.get_by_path(storage_id, path))
 
-    async def get_listing(self, raw_path: str) -> FolderListingServiceRead:
+    async def get_listing(
+        self, actor: Actor, raw_path: str
+    ) -> FolderListingServiceRead:
         storage_id, path = split_folder(raw_path)
+        readable = allowed(actor, storage_id, path, Permission.READ)
+        if not readable and not leads_to_grant(actor, storage_id, path):
+            raise ForbiddenError("no read access to this folder")
         storage = await self._storage_service.get_db(storage_id)
         if not await self._repo.exists(storage_id, path):
             raise FolderNotFoundError("folder not found")
-        folders = await self._repo.get_children(storage_id, path)
-        files = await self._files.get_in_folder(storage_id, path)
+        folders = [
+            folder
+            for folder in await self._repo.get_children(storage_id, path)
+            if allowed(actor, storage_id, folder.path, Permission.READ)
+            or leads_to_grant(actor, storage_id, folder.path)
+        ]
+        files = await self._files.get_in_folder(storage_id, path) if readable else []
         return FolderListingServiceRead(
             path=join_path(storage_id, path),
             folders=[FolderServiceRead.from_db(folder) for folder in folders],
             files=[FileServiceRead.from_db(file, storage.tg_chat_id) for file in files],
         )
 
-    async def delete(self, raw_path: str) -> FolderDeleteServiceRead:
+    async def delete(self, actor: Actor, raw_path: str) -> FolderDeleteServiceRead:
         storage_id, path = split_folder(raw_path)
         if not path:
             raise StorageRootError("storage root cannot be deleted")
+        require(actor, storage_id, path, Permission.DELETE, subtree=True)
         storage = await self._storage_service.get_db(storage_id)
         if not await self._repo.exists(storage_id, path):
             raise FolderNotFoundError("folder not found")

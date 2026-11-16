@@ -5,7 +5,6 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException
 
 from src.api.exception.errors import status_for
-from src.api.exception.http import UnauthorizedErrorHTTP
 from src.utilities.errors import TCloudError
 
 
@@ -18,9 +17,8 @@ async def tcloud_error(_: Request, error: TCloudError) -> JSONResponse:
 
 
 async def http_error(_: Request, error: HTTPException) -> JSONResponse:
-    code = "unauthorized" if isinstance(error, UnauthorizedErrorHTTP) else "http_error"
     return error_response(
-        error.status_code, {"code": code, "message": str(error.detail)}
+        error.status_code, {"code": "http_error", "message": str(error.detail)}
     )
 
 

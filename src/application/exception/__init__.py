@@ -25,6 +25,19 @@ from .upload import (
     TooManyTasksError,
     UploadInProgressError,
 )
+from .user import (
+    AccountLockedError,
+    ApiKeyNotFoundError,
+    ForbiddenError,
+    GrantNotFoundError,
+    InvalidCredentialsError,
+    InvalidRefreshTokenError,
+    NotAuthenticatedError,
+    UserBlockedError,
+    UserExistsError,
+    UserNotFoundError,
+    UserSessionNotFoundError,
+)
 
 __all__ = [
     "AlreadyAuthorizedError",
@@ -50,4 +63,15 @@ __all__ = [
     "LengthRequiredError",
     "TooManyTasksError",
     "UploadInProgressError",
+    "AccountLockedError",
+    "ApiKeyNotFoundError",
+    "ForbiddenError",
+    "GrantNotFoundError",
+    "InvalidCredentialsError",
+    "InvalidRefreshTokenError",
+    "NotAuthenticatedError",
+    "UserBlockedError",
+    "UserExistsError",
+    "UserNotFoundError",
+    "UserSessionNotFoundError",
 ]

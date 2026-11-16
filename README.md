@@ -19,13 +19,17 @@ make env          # .env + сгенерированные ключи; запол
 make up           # API на 127.0.0.1:8000, Swagger — /docs
 ```
 
-Вход в Telegram — в Swagger, раздел **Auth**, по QR или по коду (с 2FA), отдельно для сессий `api`, `worker` и `download`:
-`POST /api/auth/api/qr`, `POST /api/auth/worker/qr`, `POST /api/auth/download/qr` ([docs/flows/auth.md](docs/flows/auth.md)).
+Сначала войдите как root (`ROOT_LOGIN` / `ROOT_PASSWORD` из `.env`): `POST /api/auth/signin`, токены придут в HttpOnly-куках.
+Потом войдите в Telegram (Swagger, раздел **Telegram**, по QR или по коду с 2FA) отдельно для сессий `api`, `worker` и `download`:
+`POST /api/telegram/api/qr`, `POST /api/telegram/worker/qr`, `POST /api/telegram/download/qr` ([docs/flows/auth.md](docs/flows/auth.md)).
+
+Пользователи, роли и гранты на папки описаны в [docs/flows/users.md](docs/flows/users.md). Для скриптов удобнее API-ключ:
+`POST /api/users/{id}/api-keys`.
 
 ```bash
-curl -H "X-API-Key: $APP_API_KEY" -H 'Content-Type: application/json' \
+curl -H "X-API-Key: $TCLOUD_KEY" -H 'Content-Type: application/json' \
   -d '{"name":"Фото"}' http://127.0.0.1:8000/api/storages
-curl -H "X-API-Key: $APP_API_KEY" --data-binary @photo.jpg \
+curl -H "X-API-Key: $TCLOUD_KEY" --data-binary @photo.jpg \
   "http://127.0.0.1:8000/api/uploads?path=tcloud/<uuid>/отпуск/photo.jpg&priority=high"
 ```
 

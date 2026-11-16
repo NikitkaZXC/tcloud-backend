@@ -15,7 +15,7 @@
 | [overview.md](overview.md) | что делает сервис, словарь терминов, главные правила |
 | [architecture.md](architecture.md) | слои, папки, сервисы, репозитории, фабрики, транзакции, соглашения по коду |
 | [database.md](database.md) | таблицы, индексы и зачем они, миграции |
-| [security.md](security.md) | API-ключ, проверка файлов, ClamAV, SSRF, контейнер, секреты |
+| [security.md](security.md) | доступ, проверка файлов, ClamAV, SSRF, контейнер, секреты |
 | [integrations.md](integrations.md) | Telegram (Telethon) и его лимиты, ClamAV, исходящий HTTP |
 | [background-tasks.md](background-tasks.md) | Celery и RabbitMQ: очереди, приоритеты, воркеры, состояние в Redis, лимиты, FloodWait, повторы, вебхуки |
 
@@ -31,6 +31,7 @@
 
 | Документ | О чём |
 |---|---|
+| [flows/users.md](flows/users.md) | пользователи, роли root/admin/user, JWT в куках, API-ключи, гранты на папки |
 | [flows/auth.md](flows/auth.md) | вход в Telegram через API: QR, код, 2FA, выход, старые сессии, безопасность |
 | [flows/storages.md](flows/storages.md) | хранилища: создание, удаление, подключение из `.env`, название, описание, фото |
 | [flows/folders-and-files.md](flows/folders-and-files.md) | пути, папки, метаданные, скачивание с Range, удаление |

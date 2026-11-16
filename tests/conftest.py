@@ -1,10 +1,34 @@
 import os
 import tempfile
 
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
+
 SESSIONS = tempfile.mkdtemp(prefix="tcloud-tests-")
+KEY = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+with open(os.path.join(SESSIONS, "jwt-private.pem"), "wb") as pem:
+    pem.write(
+        KEY.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption(),
+        )
+    )
+with open(os.path.join(SESSIONS, "jwt-public.pem"), "wb") as pem:
+    pem.write(
+        KEY.public_key().public_bytes(
+            serialization.Encoding.PEM,
+            serialization.PublicFormat.SubjectPublicKeyInfo,
+        )
+    )
 TEST_ENV = {
     "ENV_FILE": "",
-    "APP_API_KEY": "test",
+    "APP_SECRET_KEY": "test",
+    "ROOT_LOGIN": "root",
+    "ROOT_PASSWORD": "root-password",
+    "JWT_PRIVATE_KEY_PATH": os.path.join(SESSIONS, "jwt-private.pem"),
+    "JWT_PUBLIC_KEY_PATH": os.path.join(SESSIONS, "jwt-public.pem"),
+    "JWT_SECURE": "false",
     "POSTGRES_HOST": "127.0.0.1",
     "POSTGRES_DB": "tcloud_test",
     "POSTGRES_USER": "test",

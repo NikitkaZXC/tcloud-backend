@@ -2,9 +2,10 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Request, Response, status
 
+from src.api.dependencies import get_actor
 from src.api.schemas import StorageCreate, StorageResponse, StorageUpdate
 from src.application.factory import get_service_storage
-from src.application.schemas import StorageServiceCreate, StorageServiceUpdate
+from src.application.schemas import Actor, StorageServiceCreate, StorageServiceUpdate
 from src.application.services import StorageService
 
 router = APIRouter(prefix="/storages", tags=["Storages"])
@@ -17,10 +18,12 @@ router = APIRouter(prefix="/storages", tags=["Storages"])
     status_code=status.HTTP_201_CREATED,
 )
 async def create_storage(
-    data: StorageCreate, storage_service: StorageService = Depends(get_service_storage)
+    data: StorageCreate,
+    actor: Actor = Depends(get_actor),
+    storage_service: StorageService = Depends(get_service_storage),
 ) -> StorageResponse:
     return await storage_service.create(
-        StorageServiceCreate.model_validate(data.model_dump())
+        actor, StorageServiceCreate.model_validate(data.model_dump())
     )
 
 
@@ -31,9 +34,10 @@ async def create_storage(
     status_code=status.HTTP_200_OK,
 )
 async def get_storages(
+    actor: Actor = Depends(get_actor),
     storage_service: StorageService = Depends(get_service_storage),
 ) -> list[StorageResponse]:
-    return await storage_service.get_all()
+    return await storage_service.get_all(actor)
 
 
 @router.get(
@@ -43,9 +47,11 @@ async def get_storages(
     status_code=status.HTTP_200_OK,
 )
 async def get_storage(
-    storage_id: UUID, storage_service: StorageService = Depends(get_service_storage)
+    storage_id: UUID,
+    actor: Actor = Depends(get_actor),
+    storage_service: StorageService = Depends(get_service_storage),
 ) -> StorageResponse:
-    return await storage_service.get(storage_id)
+    return await storage_service.get(actor, storage_id)
 
 
 @router.patch(
@@ -57,10 +63,11 @@ async def get_storage(
 async def update_storage(
     storage_id: UUID,
     data: StorageUpdate,
+    actor: Actor = Depends(get_actor),
     storage_service: StorageService = Depends(get_service_storage),
 ) -> StorageResponse:
     update = StorageServiceUpdate.model_validate(data.model_dump(exclude_unset=True))
-    return await storage_service.update(storage_id, update)
+    return await storage_service.update(actor, storage_id, update)
 
 
 @router.delete(
@@ -72,9 +79,10 @@ async def update_storage(
 async def delete_storage(
     storage_id: UUID,
     keep_channel: bool = False,
+    actor: Actor = Depends(get_actor),
     storage_service: StorageService = Depends(get_service_storage),
 ) -> None:
-    await storage_service.delete(storage_id, keep_channel)
+    await storage_service.delete(actor, storage_id, keep_channel)
 
 
 @router.put(
@@ -86,9 +94,10 @@ async def delete_storage(
 async def set_photo(
     storage_id: UUID,
     request: Request,
+    actor: Actor = Depends(get_actor),
     storage_service: StorageService = Depends(get_service_storage),
 ) -> StorageResponse:
-    return await storage_service.set_photo(storage_id, request.stream())
+    return await storage_service.set_photo(actor, storage_id, request.stream())
 
 
 @router.delete(
@@ -98,9 +107,11 @@ async def set_photo(
     status_code=status.HTTP_200_OK,
 )
 async def delete_photo(
-    storage_id: UUID, storage_service: StorageService = Depends(get_service_storage)
+    storage_id: UUID,
+    actor: Actor = Depends(get_actor),
+    storage_service: StorageService = Depends(get_service_storage),
 ) -> StorageResponse:
-    return await storage_service.delete_photo(storage_id)
+    return await storage_service.delete_photo(actor, storage_id)
 
 
 @router.get(
@@ -111,8 +122,10 @@ async def delete_photo(
     response_class=Response,
 )
 async def get_photo(
-    storage_id: UUID, storage_service: StorageService = Depends(get_service_storage)
+    storage_id: UUID,
+    actor: Actor = Depends(get_actor),
+    storage_service: StorageService = Depends(get_service_storage),
 ) -> Response:
     return Response(
-        await storage_service.get_photo(storage_id), media_type="image/jpeg"
+        await storage_service.get_photo(actor, storage_id), media_type="image/jpeg"
     )

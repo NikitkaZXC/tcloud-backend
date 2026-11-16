@@ -11,12 +11,14 @@ make up             # сборка и запуск
 make logs
 ```
 
-Затем вход в Telegram через Swagger `http://127.0.0.1:8000/docs`, раздел **Auth** — отдельно для сессий `api` и `worker`
+Затем вход как root (`ROOT_LOGIN`/`ROOT_PASSWORD`, `POST /api/auth/signin`) и вход в Telegram через Swagger `http://127.0.0.1:8000/docs`, раздел **Telegram** — отдельно для сессий `api` и `worker`
 (flows/auth.md). Файлы сессий лежат в volume `session` и переживают пересборку; входить заново нужно, только если
 volume удалён или сессию завершили в Telegram. Без входа приложение работает, но Telegram-запросы отвечают
 `503 telegram_unauthorized`.
 
 - Порт — `127.0.0.1:8000`. Для доступа снаружи — reverse proxy с TLS.
+- `make env` кладёт RS256-ключи JWT в `certs/` (в git и образ не попадают), compose монтирует их в `/certs` read-only.
+  Куки `Secure` (`JWT_SECURE=true`): снаружи нужен TLS.
 - `worker-telegram` — ровно одна реплика (общая пауза FloodWait и одна сессия); параллельность —
   `TELEGRAM_CONCURRENCY` и `TELEGRAM_UPLOAD_WORKERS`. `worker-download` и `worker-prepare` можно масштабировать
   репликами (`docker compose up --scale worker-prepare=2`), потоков на реплику — `UPLOAD_DOWNLOAD_CONCURRENCY` и

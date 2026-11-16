@@ -3,6 +3,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, Query, Request, status
 
+from src.api.dependencies import get_actor
 from src.api.schemas import (
     BatchCreate,
     BatchResponse,
@@ -13,7 +14,7 @@ from src.api.schemas import (
     UrlUploadCreate,
 )
 from src.application.factory import get_service_task, get_service_upload
-from src.application.schemas import UploadServiceCreate
+from src.application.schemas import Actor, UploadServiceCreate
 from src.application.services import TaskService, UploadService
 from src.utilities.formatters import FileSize
 
@@ -30,10 +31,11 @@ async def create_upload(
     params: Annotated[UploadParams, Query()],
     request: Request,
     content_length: Annotated[FileSize | None, Header()] = None,
+    actor: Actor = Depends(get_actor),
     upload_service: UploadService = Depends(get_service_upload),
 ) -> TaskResponse:
     data = UploadServiceCreate(**params.model_dump(), size=content_length)
-    return await upload_service.upload(data, request.stream())
+    return await upload_service.upload(actor, data, request.stream())
 
 
 @router.post(
@@ -43,10 +45,12 @@ async def create_upload(
     status_code=status.HTTP_202_ACCEPTED,
 )
 async def create_url_upload(
-    data: UrlUploadCreate, upload_service: UploadService = Depends(get_service_upload)
+    data: UrlUploadCreate,
+    actor: Actor = Depends(get_actor),
+    upload_service: UploadService = Depends(get_service_upload),
 ) -> TaskResponse:
     return await upload_service.upload_url(
-        UploadServiceCreate.model_validate(data.model_dump())
+        actor, UploadServiceCreate.model_validate(data.model_dump())
     )
 
 
@@ -57,12 +61,14 @@ async def create_url_upload(
     status_code=status.HTTP_202_ACCEPTED,
 )
 async def create_batch(
-    data: BatchCreate, upload_service: UploadService = Depends(get_service_upload)
+    data: BatchCreate,
+    actor: Actor = Depends(get_actor),
+    upload_service: UploadService = Depends(get_service_upload),
 ) -> BatchResponse:
     items = [
         UploadServiceCreate.model_validate(item.model_dump()) for item in data.items
     ]
-    return await upload_service.create_batch(items)
+    return await upload_service.create_batch(actor, items)
 
 
 @router.get(
@@ -72,9 +78,11 @@ async def create_batch(
     status_code=status.HTTP_200_OK,
 )
 async def get_batch_tasks(
-    batch_id: UUID, task_service: TaskService = Depends(get_service_task)
+    batch_id: UUID,
+    actor: Actor = Depends(get_actor),
+    task_service: TaskService = Depends(get_service_task),
 ) -> TaskListResponse:
-    return await task_service.get_batch(batch_id)
+    return await task_service.get_batch(actor, batch_id)
 
 
 @router.get(
@@ -84,9 +92,11 @@ async def get_batch_tasks(
     status_code=status.HTTP_200_OK,
 )
 async def get_task(
-    task_id: UUID, task_service: TaskService = Depends(get_service_task)
+    task_id: UUID,
+    actor: Actor = Depends(get_actor),
+    task_service: TaskService = Depends(get_service_task),
 ) -> TaskResponse:
-    return await task_service.get(task_id)
+    return await task_service.get(task_id, actor)
 
 
 @router.post(
@@ -96,9 +106,11 @@ async def get_task(
     status_code=status.HTTP_202_ACCEPTED,
 )
 async def cancel_task(
-    task_id: UUID, upload_service: UploadService = Depends(get_service_upload)
+    task_id: UUID,
+    actor: Actor = Depends(get_actor),
+    upload_service: UploadService = Depends(get_service_upload),
 ) -> TaskResponse:
-    return await upload_service.cancel(task_id)
+    return await upload_service.cancel(actor, task_id)
 
 
 @router.post(
@@ -110,9 +122,10 @@ async def cancel_task(
 async def set_task_priority(
     task_id: UUID,
     data: PriorityUpdate,
+    actor: Actor = Depends(get_actor),
     upload_service: UploadService = Depends(get_service_upload),
 ) -> TaskResponse:
-    return await upload_service.set_priority(task_id, data.priority)
+    return await upload_service.set_priority(actor, task_id, data.priority)
 
 
 @router.post(
@@ -122,6 +135,8 @@ async def set_task_priority(
     status_code=status.HTTP_202_ACCEPTED,
 )
 async def retry_task(
-    task_id: UUID, upload_service: UploadService = Depends(get_service_upload)
+    task_id: UUID,
+    actor: Actor = Depends(get_actor),
+    upload_service: UploadService = Depends(get_service_upload),
 ) -> TaskResponse:
-    return await upload_service.retry(task_id)
+    return await upload_service.retry(actor, task_id)

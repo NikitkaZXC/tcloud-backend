@@ -1,3 +1,3 @@
-from .auth import verify_api_key
+from .auth import get_actor, get_root
 
-__all__ = ["verify_api_key"]
+__all__ = ["get_actor", "get_root"]

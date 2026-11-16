@@ -21,7 +21,8 @@ from src.infrastructure.integrations.telegram.login import session_file
 from src.infrastructure.integrations.web import client as web
 from tests.fakes import FakeLogin, FakeScanner, FakeTelegram
 
-KEY = "test"
+ROOT_LOGIN = "root"
+ROOT_PASSWORD = "root-password"
 TELEGRAM_CONCURRENCY = 2
 
 
@@ -139,11 +140,10 @@ async def make_client(
         lifespan = main.app.router.lifespan_context(main.app)
         await lifespan.__aenter__()
         client = AsyncClient(
-            transport=ASGITransport(main.app),
-            base_url="http://test/api",
-            headers={"X-API-Key": KEY},
+            transport=ASGITransport(main.app), base_url="http://test/api"
         )
         opened.append((lifespan, client))
+        await sign_in(client, ROOT_LOGIN, ROOT_PASSWORD)
         return client
 
     yield make
@@ -152,6 +152,13 @@ async def make_client(
         await asyncio.to_thread(worker.run, worker.drain())
         await client.aclose()
         await lifespan.__aexit__(None, None, None)
+
+
+async def sign_in(client: AsyncClient, login: str, password: str) -> None:
+    response = await client.post(
+        "/auth/signin", json={"login": login, "password": password}
+    )
+    assert response.status_code == 204, response.text
 
 
 async def settle(store, timeout: float = 30) -> None:
@@ -163,6 +170,43 @@ async def settle(store, timeout: float = 30) -> None:
 @pytest.fixture
 async def client(make_client) -> AsyncClient:
     return await make_client()
+
+
+@pytest.fixture
+async def login_as(client: AsyncClient) -> AsyncIterator[Callable]:
+    opened = []
+
+    async def make(login: str, password: str) -> AsyncClient:
+        other = AsyncClient(
+            transport=ASGITransport(main.app), base_url="http://test/api"
+        )
+        opened.append(other)
+        await sign_in(other, login, password)
+        return other
+
+    yield make
+    for other in opened:
+        await other.aclose()
+
+
+@pytest.fixture
+async def make_user(client: AsyncClient, login_as) -> Callable:
+    async def make(login: str, role: str = "user", *grants: dict) -> AsyncClient:
+        password = f"{login}-password"
+        created = await client.post(
+            "/users", json={"login": login, "password": password, "role": role}
+        )
+        assert created.status_code == 201, created.text
+        for grant in grants:
+            response = await client.put(
+                f"/users/{created.json()['id']}/grants", json=grant
+            )
+            assert response.status_code == 200, response.text
+        other = await login_as(login, password)
+        other.user_id = created.json()["id"]
+        return other
+
+    return make
 
 
 @pytest.fixture

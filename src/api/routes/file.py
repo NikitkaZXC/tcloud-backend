@@ -4,8 +4,10 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Header, status
 from fastapi.responses import StreamingResponse
 
+from src.api.dependencies import get_actor
 from src.api.schemas import FileResponse
 from src.application.factory import get_runtime, get_service_file
+from src.application.schemas import Actor
 from src.application.services import FileService
 from src.infrastructure.background import AppRuntime
 from src.infrastructure.enums import MediaKind
@@ -21,9 +23,11 @@ router = APIRouter(prefix="/files", tags=["Files"])
     status_code=status.HTTP_200_OK,
 )
 async def get_file_by_path(
-    path: str, file_service: FileService = Depends(get_service_file)
+    path: str,
+    actor: Actor = Depends(get_actor),
+    file_service: FileService = Depends(get_service_file),
 ) -> FileResponse:
-    return await file_service.get_by_path(path)
+    return await file_service.get_by_path(actor, path)
 
 
 @router.get(
@@ -33,9 +37,11 @@ async def get_file_by_path(
     status_code=status.HTTP_200_OK,
 )
 async def get_file(
-    file_id: UUID, file_service: FileService = Depends(get_service_file)
+    file_id: UUID,
+    actor: Actor = Depends(get_actor),
+    file_service: FileService = Depends(get_service_file),
 ) -> FileResponse:
-    return await file_service.get(file_id)
+    return await file_service.get(actor, file_id)
 
 
 @router.get(
@@ -48,10 +54,11 @@ async def get_file(
 async def download_file(
     file_id: UUID,
     range_header: str | None = Header(None, alias="range"),
+    actor: Actor = Depends(get_actor),
     file_service: FileService = Depends(get_service_file),
     runtime: AppRuntime = Depends(get_runtime),
 ) -> StreamingResponse:
-    file, media = await file_service.open_download(file_id)
+    file, media = await file_service.open_download(actor, file_id)
     start, end = (
         parse_range(range_header, file.size) if range_header else (0, file.size - 1)
     )
@@ -81,6 +88,8 @@ async def download_file(
     status_code=status.HTTP_204_NO_CONTENT,
 )
 async def delete_file(
-    file_id: UUID, file_service: FileService = Depends(get_service_file)
+    file_id: UUID,
+    actor: Actor = Depends(get_actor),
+    file_service: FileService = Depends(get_service_file),
 ) -> None:
-    await file_service.delete(file_id)
+    await file_service.delete(actor, file_id)

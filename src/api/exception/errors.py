@@ -46,6 +46,19 @@ STATUS_BY_CODE = {
     "session_too_fresh": status.HTTP_409_CONFLICT,
     "session_not_found": status.HTTP_404_NOT_FOUND,
     "current_session": status.HTTP_409_CONFLICT,
+    "unauthorized": status.HTTP_401_UNAUTHORIZED,
+    "token_invalid": status.HTTP_401_UNAUTHORIZED,
+    "token_expired": status.HTTP_401_UNAUTHORIZED,
+    "invalid_credentials": status.HTTP_401_UNAUTHORIZED,
+    "invalid_refresh_token": status.HTTP_401_UNAUTHORIZED,
+    "account_locked": status.HTTP_429_TOO_MANY_REQUESTS,
+    "user_blocked": status.HTTP_403_FORBIDDEN,
+    "forbidden": status.HTTP_403_FORBIDDEN,
+    "user_not_found": status.HTTP_404_NOT_FOUND,
+    "user_exists": status.HTTP_409_CONFLICT,
+    "grant_not_found": status.HTTP_404_NOT_FOUND,
+    "api_key_not_found": status.HTTP_404_NOT_FOUND,
+    "user_session_not_found": status.HTTP_404_NOT_FOUND,
 }
 
 

@@ -23,6 +23,18 @@ from .task import (
     TaskWaitingServiceRead,
     UploadServiceCreate,
 )
+from .user import (
+    Actor,
+    ApiKeyServiceRead,
+    ClientInfo,
+    GrantServiceCreate,
+    GrantServiceRead,
+    TokenPair,
+    UserServiceCreate,
+    UserServiceRead,
+    UserServiceUpdate,
+    UserSessionServiceRead,
+)
 
 __all__ = [
     "AuthServiceRead",
@@ -50,4 +62,14 @@ __all__ = [
     "UploadServiceCreate",
     "caption_token",
     "telegram_link",
+    "Actor",
+    "ApiKeyServiceRead",
+    "ClientInfo",
+    "GrantServiceCreate",
+    "GrantServiceRead",
+    "TokenPair",
+    "UserServiceCreate",
+    "UserServiceRead",
+    "UserServiceUpdate",
+    "UserSessionServiceRead",
 ]

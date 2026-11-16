@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.application.exception import TaskNotFoundError
 from src.application.schemas import (
+    Actor,
     FileServiceRead,
     TaskListServiceRead,
     TaskServiceRead,
@@ -76,15 +77,25 @@ class TaskService:
             )
         return views
 
-    async def get(self, task_id: UUID) -> TaskServiceRead:
-        task = await self._store.get(task_id)
-        if not task:
-            raise TaskNotFoundError("task not found")
-        return (await self.render_many([task]))[0]
+    @staticmethod
+    def visible(task: dict, actor: Actor | None) -> bool:
+        return (
+            actor is None or actor.is_admin or task.get("user_id") == str(actor.user_id)
+        )
 
-    async def get_batch(self, batch_id: UUID) -> TaskListServiceRead:
+    async def get_raw(self, task_id: UUID, actor: Actor | None) -> dict:
+        task = await self._store.get(task_id)
+        if not task or not self.visible(task, actor):
+            raise TaskNotFoundError("task not found")
+        return task
+
+    async def get(self, task_id: UUID, actor: Actor | None) -> TaskServiceRead:
+        return (await self.render_many([await self.get_raw(task_id, actor)]))[0]
+
+    async def get_batch(self, actor: Actor, batch_id: UUID) -> TaskListServiceRead:
+        tasks = await self._store.get_many(await self._store.batch(batch_id))
         views = await self.render_many(
-            await self._store.get_many(await self._store.batch(batch_id))
+            [task for task in tasks if self.visible(task, actor)]
         )
         finished = sum(view.status in TaskStatus.finished() for view in views)
         summary = TaskSummaryServiceRead(

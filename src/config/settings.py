@@ -2,9 +2,11 @@ from src.config.models import (
     AntivirusSettings,
     AppSettings,
     DatabaseSettings,
+    JWTSettings,
     LoggingSettings,
     RabbitMQSettings,
     RedisSettings,
+    RootSettings,
     TelegramSettings,
     UploadSettings,
 )
@@ -19,6 +21,8 @@ class Settings:
     rabbitmq: RabbitMQSettings = RabbitMQSettings()
     redis: RedisSettings = RedisSettings()
     logging: LoggingSettings = LoggingSettings()
+    jwt: JWTSettings = JWTSettings()
+    root: RootSettings = RootSettings()
 
 
 settings = Settings()

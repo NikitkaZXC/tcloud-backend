@@ -14,6 +14,7 @@ class TaskWaitingServiceRead(BaseModel):
 class TaskServiceRead(BaseModel):
     id: UUID
     batch_id: UUID | None
+    user_id: UUID | None = None
     status: str
     stage: str
     priority: str

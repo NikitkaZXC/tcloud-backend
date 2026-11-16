@@ -2,9 +2,10 @@ import time
 
 from loguru import logger
 
-from src.application.services import AuthService
+from src.application.services import AuthService, UserAuthService, UserService
 from src.config import settings
 from src.infrastructure.background import AppRuntime
+from src.infrastructure.database.session import session_factory
 
 
 async def prepare(runtime: AppRuntime) -> None:
@@ -13,10 +14,12 @@ async def prepare(runtime: AppRuntime) -> None:
     for item in settings.upload.TMP_DIR.iterdir():
         if item.stat().st_mtime < stale:
             item.unlink(missing_ok=True)
+    async with session_factory() as session:
+        await UserService(session, UserAuthService(session, runtime)).ensure_root()
     if runtime.telegram.authorized:
         await AuthService(runtime).connect()
     else:
         logger.warning(
-            "Telegram is not logged in: open /docs and log in with /api/auth"
+            "Telegram is not logged in: open /docs and log in with /api/telegram"
         )
     logger.info("Startup done: stale temporary files cleaned")

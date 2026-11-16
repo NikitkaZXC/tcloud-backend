@@ -9,7 +9,7 @@ tcloud: a FastAPI service that stores media (photo, video, audio, GIF) and other
 ## Commands
 
 ```bash
-make install / make env / make up / make logs   # then log in to Telegram on /docs → Auth (docs/flows/auth.md)
+make install / make env / make up / make logs   # then sign in as root (/api/auth/signin) and log in to Telegram on /docs → Telegram (docs/flows/auth.md)
 make app                          # local uvicorn --reload (needs make dev-up: Postgres, RabbitMQ, Redis)
 make worker-download | worker-prepare | worker-telegram | flower   # local Celery workers and Flower
 make test | test-integration | test-api | test-all | test-cov
@@ -24,8 +24,8 @@ uv run alembic revision --autogenerate -m "msg"
 
 Layers: `api → application → infrastructure`; `utilities` are shared. `src/application` never imports `src/api`; `src/infrastructure` imports neither.
 
-- `src/api/`: routers (`routes/`), HTTP schemas, `exception/` (error code → HTTP status table, handlers, body `{"error": {"code", "message", ...}}`), `dependencies/verify_api_key`. All routes are under `/api`, aggregated in `endpoints.py` with the API key check.
-- `src/application/services/`: one class per domain (`AccountService`, `AuthService`, `HealthService`, `StorageService`, `FolderService`, `FileService`, `TaskService`, `UploadService`) plus `UploadPipeline` (stages run by Celery workers). Services take an `AsyncSession` and `AppRuntime`, build repositories in `__init__`, **own the commit**. Routes get services only via `src/application/factory/get_service_*`.
+- `src/api/`: routers (`routes/`), HTTP schemas, `exception/` (error code → HTTP status table, handlers, body `{"error": {"code", "message", ...}}`), `dependencies/get_actor` (access cookie or `X-API-Key` → `Actor`) and `get_root`. All routes are under `/api`, aggregated in `endpoints.py`; `/api/telegram` is root-only.
+- `src/application/services/`: one class per domain (`AccountService`, `AuthService`, `HealthService`, `StorageService`, `FolderService`, `FileService`, `TaskService`, `UploadService`, `UserAuthService`, `UserService`, `GrantService`, `ApiKeyService`) plus `UploadPipeline` (stages run by Celery workers). Services take an `AsyncSession` and `AppRuntime`, build repositories in `__init__`, **own the commit**. Routes get services only via `src/application/factory/get_service_*`.
 - `src/application/schemas/`: service DTOs; `src/application/exception/`: domain errors; `bootstrap/`: `startup`.
 - `src/infrastructure/`: `database/` (models end with `DB`, mixins give UUIDv7 `id`/`created_at`/`updated_at`, repositories only `flush()`, migrations), `integrations/` (`telegram`, `antivirus`, `web`), `media/` (type sniffing, Pillow/ffprobe, thumbnails), `background/` (Celery app with priority queues `uploads.download`/`uploads.prepare`/`uploads.telegram`, `enqueue`, `queue_sizes`, `DiskBudget`, `AppRuntime`, `WorkerRuntime`, `Heartbeat`), `cache/` (`TaskStore` in Redis with Lua `CLAIM`/`REQUEUE`/`CANCEL`), `enums/`, `logger/`, `limits.py` (all Telegram limits).
 - `src/utilities/`: `errors.TCloudError` (base error with `code`), `parsers/` (paths, Range), `formatters/` (constrained request types).
@@ -41,7 +41,8 @@ Layers: `api → application → infrastructure`; `utilities` are shared. `src/a
 - Tests: `tests/conftest.py` sets `TEST_ENV` (with `ENV_FILE=""`) before importing `src`; API tests patch `main.create_telegram`/`main.create_login`/`main.create_scanner` with `tests/fakes.py` (the `worker_session` fixture creates the worker session file uploads require) and run real Celery workers in threads on `memory://` (session-scoped), swapping `src.application.tasks.upload.runtime` per test.
 - Never run several embedded Celery workers on RabbitMQ in one process (shared kombu hub corrupts AMQP frames): API tests use `memory://`; ordering and crash tests spawn real `celery worker` processes (`tests/integration/test_workers_e2e.py`).
 - Only the API Telegram client has `receive_updates=True` (manual deletions in Telegram drop DB rows via `events.MessageDeleted`); register the handler before `catch_up()`. Workers create clients with `receive_updates=False`.
-- Telegram login is API-only (`/api/auth/{api|worker|download}/qr|code|sign-in|password|logout`); the app starts without sessions and Telegram calls answer `503 telegram_unauthorized`. Login state lives in API process memory (one uvicorn process). `TelegramLogin` writes `login-*.session` and atomically replaces the session file on success. Never add a session that accepts foreign QR tokens. Default paths are local `data/...`; compose sets `/data/...`.
+- Users: roles `root` (single, synced from `ROOT_LOGIN`/`ROOT_PASSWORD` on every API start), `admin`, `user`; no self sign-up, login + password only (no email). JWT RS256 in HttpOnly cookies (`access`/`refresh`, keys in `certs/`), refresh rotation with reuse detection, revoked access `jti` in Redis. Per-user API keys in `X-API-Key`. Rights are read from the DB on every request, never from the token. Every service method that touches storages/folders/files/tasks takes an `Actor`; checks live in `services/access.py` (grant `recursive` = folder and below, otherwise only files directly in it; `can_read/can_upload/can_delete`). Tasks carry `user_id`; users see only their own (docs/flows/users.md).
+- Telegram login is API-only and root-only (`/api/telegram/{api|worker|download}/qr|code|sign-in|password|logout`); the app starts without sessions and Telegram calls answer `503 telegram_unauthorized`. Login state lives in API process memory (one uvicorn process). `TelegramLogin` writes `login-*.session` and atomically replaces the session file on success. Never add a session that accepts foreign QR tokens. Default paths are local `data/...`; compose sets `/data/...`.
 - RabbitMQ `consumer_timeout` must stay raised (compose sets 24 h), otherwise long Telegram uploads lose their channel at 30 min.
 
 ## Rules

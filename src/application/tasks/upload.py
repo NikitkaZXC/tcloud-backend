@@ -19,7 +19,7 @@ from src.infrastructure.integrations import (
 def _telegram() -> TelegramClient:
     if not session_exists(TelegramSession.WORKER):
         raise TelegramUnauthorizedError(
-            "worker Telegram session is not authorized: log in with /api/auth/worker"
+            "worker Telegram session is not authorized: log in with /api/telegram/worker"
         )
     return create_telegram(TelegramSession.WORKER, receive_updates=False)
 

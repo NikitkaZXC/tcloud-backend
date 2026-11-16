@@ -9,6 +9,6 @@ class AppSettings(BaseSettings):
 
     TITLE: str = "tcloud"
     VERSION: str = "0.3.0"
-    API_KEY: SecretStr
+    SECRET_KEY: SecretStr
     HOST: str = "0.0.0.0"
     PORT: int = 8000

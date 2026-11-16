@@ -1,132 +1,186 @@
-from io import BytesIO
+from uuid import UUID
 
-import qrcode
-from fastapi import APIRouter, Depends, Response, status
+from fastapi import APIRouter, Cookie, Depends, Request, Response, status
 
-from src.api.schemas import (
-    AuthorizationResponse,
-    AuthResponse,
-    CodeSignIn,
-    CodeStart,
-    PasswordSignIn,
-    SessionStateResponse,
-)
-from src.application.factory import get_service_auth
-from src.application.services import AuthService
-from src.infrastructure.enums import TelegramSession
+from src.api.dependencies import get_actor
+from src.api.schemas import PasswordChange, SignIn, UserSessionResponse
+from src.application.exception import InvalidRefreshTokenError
+from src.application.factory import get_service_user_auth
+from src.application.schemas import Actor, ClientInfo, TokenPair
+from src.application.services import UserAuthService
+from src.config import settings
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
 
+USER_AGENT_MAX_LENGTH = 1024
 
-@router.get(
-    path="",
-    name="auth:status",
-    summary="Which Telegram sessions are logged in and how their logins go",
-    status_code=status.HTTP_200_OK,
-)
-async def auth_status(
-    auth_service: AuthService = Depends(get_service_auth),
-) -> AuthResponse:
-    return auth_service.status()
+
+def client_info(request: Request) -> ClientInfo:
+    user_agent = (request.headers.get("user-agent") or "").strip()
+    return ClientInfo(
+        user_agent=user_agent[:USER_AGENT_MAX_LENGTH] or None,
+        ip_address=request.client.host if request.client else None,
+    )
+
+
+def _set_cookie(response: Response, key: str, value: str, max_age: int) -> None:
+    response.set_cookie(
+        key=key,
+        value=value,
+        max_age=max_age,
+        path=settings.jwt.COOKIE_PATH,
+        domain=settings.jwt.COOKIE_DOMAIN,
+        secure=settings.jwt.SECURE,
+        httponly=True,
+        samesite=settings.jwt.SAME_SITE,
+    )
+
+
+def set_auth_cookies(response: Response, pair: TokenPair) -> None:
+    _set_cookie(
+        response,
+        settings.jwt.ACCESS_TOKEN_TYPE,
+        pair.access_token,
+        settings.jwt.ACCESS_TOKEN_EXPIRATION_MINUTES * 60,
+    )
+    _set_cookie(
+        response,
+        settings.jwt.REFRESH_TOKEN_TYPE,
+        pair.refresh_token,
+        settings.jwt.REFRESH_TOKEN_EXPIRATION_MINUTES * 60,
+    )
+
+
+def delete_auth_cookies(response: Response) -> None:
+    for key in (settings.jwt.ACCESS_TOKEN_TYPE, settings.jwt.REFRESH_TOKEN_TYPE):
+        response.delete_cookie(
+            key=key,
+            path=settings.jwt.COOKIE_PATH,
+            domain=settings.jwt.COOKIE_DOMAIN,
+            secure=settings.jwt.SECURE,
+            httponly=True,
+            samesite=settings.jwt.SAME_SITE,
+        )
 
 
 @router.post(
-    path="/{session}/qr",
-    name="auth:qr",
-    summary="Start a QR login: scan the image in Telegram → Settings → Devices",
-    status_code=status.HTTP_200_OK,
-    response_class=Response,
-    responses={200: {"content": {"image/png": {}}}},
+    path="/signin",
+    name="auth:signin",
+    summary="Sign in with login and password and get auth cookies",
+    status_code=status.HTTP_204_NO_CONTENT,
 )
-async def login_qr(
-    session: TelegramSession, auth_service: AuthService = Depends(get_service_auth)
-) -> Response:
-    qr = await auth_service.start_qr(session)
-    image = BytesIO()
-    qrcode.make(qr.url).save(image, format="PNG")
-    return Response(
-        image.getvalue(),
-        media_type="image/png",
-        headers={
-            "X-Expires-At": qr.expires_at.isoformat(),
-            "Cache-Control": "no-store",
-        },
+async def signin(
+    data: SignIn,
+    request: Request,
+    response: Response,
+    auth_service: UserAuthService = Depends(get_service_user_auth),
+) -> None:
+    pair = await auth_service.signin(
+        data.login, data.password.get_secret_value(), client_info(request)
+    )
+    set_auth_cookies(response, pair)
+
+
+@router.post(
+    path="/refresh",
+    name="auth:refresh",
+    summary="Rotate auth cookies with the refresh token",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def refresh(
+    request: Request,
+    response: Response,
+    refresh_token: str | None = Cookie(
+        default=None, alias=settings.jwt.REFRESH_TOKEN_TYPE
+    ),
+    auth_service: UserAuthService = Depends(get_service_user_auth),
+) -> None:
+    if not refresh_token:
+        raise InvalidRefreshTokenError("refresh token cookie is missing")
+    set_auth_cookies(
+        response, await auth_service.refresh(refresh_token, client_info(request))
     )
 
 
 @router.post(
-    path="/{session}/code",
-    name="auth:code",
-    summary="Start a login by phone: Telegram sends a code to your app",
-    status_code=status.HTTP_200_OK,
-)
-async def login_code(
-    session: TelegramSession,
-    data: CodeStart,
-    auth_service: AuthService = Depends(get_service_auth),
-) -> SessionStateResponse:
-    return await auth_service.send_code(session, data.phone)
-
-
-@router.post(
-    path="/{session}/sign-in",
-    name="auth:sign-in",
-    summary="Send the login code",
-    status_code=status.HTTP_200_OK,
-)
-async def sign_in(
-    session: TelegramSession,
-    data: CodeSignIn,
-    auth_service: AuthService = Depends(get_service_auth),
-) -> SessionStateResponse:
-    return await auth_service.sign_in(session, data.code)
-
-
-@router.post(
-    path="/{session}/password",
-    name="auth:password",
-    summary="Send the two-step verification password",
-    status_code=status.HTTP_200_OK,
-)
-async def password(
-    session: TelegramSession,
-    data: PasswordSignIn,
-    auth_service: AuthService = Depends(get_service_auth),
-) -> SessionStateResponse:
-    return await auth_service.password(session, data.password.get_secret_value())
-
-
-@router.post(
-    path="/{session}/logout",
+    path="/logout",
     name="auth:logout",
-    summary="Log out of a session and delete its file",
-    status_code=status.HTTP_200_OK,
+    summary="Log out of the current session",
+    status_code=status.HTTP_204_NO_CONTENT,
 )
 async def logout(
-    session: TelegramSession, auth_service: AuthService = Depends(get_service_auth)
-) -> SessionStateResponse:
-    return await auth_service.logout(session)
+    response: Response,
+    refresh_token: str | None = Cookie(
+        default=None, alias=settings.jwt.REFRESH_TOKEN_TYPE
+    ),
+    auth_service: UserAuthService = Depends(get_service_user_auth),
+) -> None:
+    delete_auth_cookies(response)
+    if refresh_token:
+        await auth_service.logout(refresh_token)
+
+
+@router.post(
+    path="/logout/all",
+    name="auth:logout-all",
+    summary="Log out of all sessions",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def logout_all(
+    response: Response,
+    actor: Actor = Depends(get_actor),
+    auth_service: UserAuthService = Depends(get_service_user_auth),
+) -> None:
+    await auth_service.logout_all(actor)
+    delete_auth_cookies(response)
 
 
 @router.get(
     path="/sessions",
     name="auth:sessions",
-    summary="tcloud sessions of the account in Telegram, old ones included",
+    summary="Own active sessions",
     status_code=status.HTTP_200_OK,
 )
 async def get_sessions(
-    auth_service: AuthService = Depends(get_service_auth),
-) -> list[AuthorizationResponse]:
-    return await auth_service.sessions()
+    actor: Actor = Depends(get_actor),
+    auth_service: UserAuthService = Depends(get_service_user_auth),
+) -> list[UserSessionResponse]:
+    return await auth_service.sessions(actor)
 
 
 @router.delete(
     path="/sessions/{session_id}",
-    name="auth:revoke",
-    summary="End an old tcloud session in Telegram",
+    name="auth:session-revoke",
+    summary="End one of own sessions",
     status_code=status.HTTP_204_NO_CONTENT,
 )
 async def revoke_session(
-    session_id: int, auth_service: AuthService = Depends(get_service_auth)
+    session_id: UUID,
+    response: Response,
+    actor: Actor = Depends(get_actor),
+    auth_service: UserAuthService = Depends(get_service_user_auth),
 ) -> None:
-    await auth_service.revoke(session_id)
+    if await auth_service.revoke_session(actor, session_id):
+        delete_auth_cookies(response)
+
+
+@router.post(
+    path="/password",
+    name="auth:password",
+    summary="Change own password: other sessions are logged out",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def change_password(
+    data: PasswordChange,
+    request: Request,
+    response: Response,
+    actor: Actor = Depends(get_actor),
+    auth_service: UserAuthService = Depends(get_service_user_auth),
+) -> None:
+    pair = await auth_service.change_password(
+        actor,
+        data.current_password.get_secret_value(),
+        data.new_password.get_secret_value(),
+        client_info(request),
+    )
+    set_auth_cookies(response, pair)

@@ -33,7 +33,7 @@ def sessions(status: dict) -> dict:
 
 
 async def state(client, session: str) -> dict:
-    return sessions((await client.get("/auth")).json())[session]
+    return sessions((await client.get("/telegram")).json())[session]
 
 
 async def until(check, timeout: float = 5) -> None:
@@ -55,7 +55,7 @@ async def test_starts_without_telegram_session(client):
 
 
 async def test_qr_login_with_two_step_password(client, telegram, logins):
-    response = await client.post("/auth/api/qr")
+    response = await client.post("/telegram/api/qr")
     assert response.status_code == 200
     assert response.headers["content-type"] == "image/png"
     assert response.content.startswith(b"\x89PNG")
@@ -70,10 +70,10 @@ async def test_qr_login_with_two_step_password(client, telegram, logins):
         return (await state(client, "api"))["login"]["step"] == "password"
 
     await until(asks_password)
-    wrong = await client.post("/auth/api/password", json={"password": "nope"})
+    wrong = await client.post("/telegram/api/password", json={"password": "nope"})
     assert wrong.status_code == 400
     assert wrong.json()["error"]["code"] == "invalid_password"
-    done = await client.post("/auth/api/password", json={"password": login.secret})
+    done = await client.post("/telegram/api/password", json={"password": login.secret})
     assert done.status_code == 200
     assert done.json() == {"session": "api", "authorized": True, "login": None}
     assert telegram.authorized and telegram.on_deleted is not None
@@ -81,7 +81,7 @@ async def test_qr_login_with_two_step_password(client, telegram, logins):
 
 
 async def test_qr_login_without_password(client, telegram, logins):
-    await client.post("/auth/api/qr")
+    await client.post("/telegram/api/qr")
     logins[TelegramSession.API].scanned.set()
 
     async def authorized():
@@ -92,7 +92,7 @@ async def test_qr_login_without_password(client, telegram, logins):
 
 
 async def test_expired_qr_reports_failure(client, logins):
-    await client.post("/auth/api/qr")
+    await client.post("/telegram/api/qr")
     login = logins[TelegramSession.API]
     login.expire = True
     login.scanned.set()
@@ -104,7 +104,7 @@ async def test_expired_qr_reports_failure(client, logins):
     current = await state(client, "api")
     assert current["login"]["error"]["code"] == "login_expired"
     assert not current["authorized"] and login.closed
-    retry = await client.post("/auth/api/qr")
+    retry = await client.post("/telegram/api/qr")
     assert retry.status_code == 200
 
 
@@ -118,14 +118,14 @@ async def test_code_login_for_worker(
     assert rejected.status_code == 503
     assert rejected.json()["error"]["code"] == "telegram_unauthorized"
 
-    sent = await client.post("/auth/worker/code", json={"phone": "+79991234567"})
+    sent = await client.post("/telegram/worker/code", json={"phone": "+79991234567"})
     assert sent.status_code == 200
     assert sent.json()["login"]["step"] == "code"
     assert logins[TelegramSession.WORKER].phone == "+79991234567"
-    wrong = await client.post("/auth/worker/sign-in", json={"code": "00000"})
+    wrong = await client.post("/telegram/worker/sign-in", json={"code": "00000"})
     assert wrong.status_code == 400 and wrong.json()["error"]["code"] == "invalid_code"
     assert (await state(client, "worker"))["login"]["step"] == "code"
-    done = await client.post("/auth/worker/sign-in", json={"code": "12345"})
+    done = await client.post("/telegram/worker/sign-in", json={"code": "12345"})
     assert done.json() == {"session": "worker", "authorized": True, "login": None}
     assert worker_session.exists()
     task = await upload(client, path(storage, "a.pdf"), PDF)
@@ -133,56 +133,56 @@ async def test_code_login_for_worker(
 
 
 async def test_code_login_with_two_step_password(client, logins):
-    await client.post("/auth/api/code", json={"phone": "+79991234567"})
+    await client.post("/telegram/api/code", json={"phone": "+79991234567"})
     logins[TelegramSession.API].two_step = True
-    asked = await client.post("/auth/api/sign-in", json={"code": "12345"})
+    asked = await client.post("/telegram/api/sign-in", json={"code": "12345"})
     assert asked.json()["login"]["step"] == "password"
     done = await client.post(
-        "/auth/api/password", json={"password": logins[TelegramSession.API].secret}
+        "/telegram/api/password", json={"password": logins[TelegramSession.API].secret}
     )
     assert done.json()["authorized"] is True
 
 
 async def test_login_steps_are_checked(logged_in, client):
-    already = await client.post("/auth/api/qr")
+    already = await client.post("/telegram/api/qr")
     assert already.status_code == 409
     assert already.json()["error"]["code"] == "already_authorized"
-    missing = await client.post("/auth/worker/sign-in", json={"code": "12345"})
+    missing = await client.post("/telegram/worker/sign-in", json={"code": "12345"})
     assert missing.status_code == 404
     assert missing.json()["error"]["code"] == "login_not_found"
 
 
 async def test_wrong_step_is_rejected(client):
-    await client.post("/auth/api/code", json={"phone": "+79991234567"})
-    response = await client.post("/auth/api/password", json={"password": "x"})
+    await client.post("/telegram/api/code", json={"phone": "+79991234567"})
+    response = await client.post("/telegram/api/password", json={"password": "x"})
     assert response.status_code == 409
     assert response.json()["error"]["code"] == "wrong_login_step"
 
 
 async def test_login_input_is_validated(client):
     assert (
-        await client.post("/auth/api/code", json={"phone": "call me"})
+        await client.post("/telegram/api/code", json={"phone": "call me"})
     ).status_code == 422
-    assert (await client.post("/auth/main/qr")).status_code == 422
-    await client.post("/auth/api/code", json={"phone": "+79991234567"})
+    assert (await client.post("/telegram/main/qr")).status_code == 422
+    await client.post("/telegram/api/code", json={"phone": "+79991234567"})
     assert (
-        await client.post("/auth/api/sign-in", json={"code": "abc"})
+        await client.post("/telegram/api/sign-in", json={"code": "abc"})
     ).status_code == 422
 
 
 async def test_too_many_wrong_codes_end_the_login(client, logins):
-    await client.post("/auth/api/code", json={"phone": "+79991234567"})
+    await client.post("/telegram/api/code", json={"phone": "+79991234567"})
     for _ in range(5):
-        response = await client.post("/auth/api/sign-in", json={"code": "00000"})
+        response = await client.post("/telegram/api/sign-in", json={"code": "00000"})
         assert response.json()["error"]["code"] == "invalid_code"
     assert (await state(client, "api"))["login"] is None
     assert logins[TelegramSession.API].closed
-    response = await client.post("/auth/api/sign-in", json={"code": "12345"})
+    response = await client.post("/telegram/api/sign-in", json={"code": "12345"})
     assert response.status_code == 404
 
 
 async def test_flood_wait_on_code_is_reported(client, logins):
-    response = await client.post("/auth/api/code", json={"phone": "+70000000000"})
+    response = await client.post("/telegram/api/code", json={"phone": "+70000000000"})
     assert response.status_code == 429
     assert response.json()["error"]["retry_after"] == 79200
     assert (await state(client, "api"))["login"] is None
@@ -191,17 +191,17 @@ async def test_flood_wait_on_code_is_reported(client, logins):
 
 async def test_login_expires(client, monkeypatch):
     monkeypatch.setattr(main.settings.telegram, "LOGIN_TTL", -1)
-    await client.post("/auth/api/code", json={"phone": "+79991234567"})
+    await client.post("/telegram/api/code", json={"phone": "+79991234567"})
     assert (await state(client, "api"))["login"]["step"] == "expired"
-    response = await client.post("/auth/api/sign-in", json={"code": "12345"})
+    response = await client.post("/telegram/api/sign-in", json={"code": "12345"})
     assert response.status_code == 404
 
 
 async def test_logout(logged_in, client, worker_session):
-    response = await client.post("/auth/worker/logout")
+    response = await client.post("/telegram/worker/logout")
     assert response.json() == {"session": "worker", "authorized": False, "login": None}
     assert not worker_session.exists()
-    response = await client.post("/auth/api/logout")
+    response = await client.post("/telegram/api/logout")
     assert response.json()["authorized"] is False
     assert not API_SESSION.exists()
 
@@ -210,14 +210,14 @@ async def test_sessions_list_only_tcloud(logged_in, client):
     current = logged_in.add_authorization("tcloud-api", 1, current=True)
     worker = logged_in.add_authorization("tcloud-worker", 2)
     logged_in.add_authorization("iPhone 15", 100)
-    listing = (await client.get("/auth/sessions")).json()
+    listing = (await client.get("/telegram/sessions")).json()
     assert {item["id"] for item in listing} == {str(current.hash), str(worker.hash)}
     assert {item["session"] for item in listing} == {"api", "worker"}
-    own = await client.delete(f"/auth/sessions/{current.hash}")
+    own = await client.delete(f"/telegram/sessions/{current.hash}")
     assert own.status_code == 409 and own.json()["error"]["code"] == "current_session"
     phone = logged_in.authorizations_list[2].hash
-    assert (await client.delete(f"/auth/sessions/{phone}")).status_code == 404
-    assert (await client.delete(f"/auth/sessions/{worker.hash}")).status_code == 204
+    assert (await client.delete(f"/telegram/sessions/{phone}")).status_code == 404
+    assert (await client.delete(f"/telegram/sessions/{worker.hash}")).status_code == 204
     assert len(logged_in.authorizations_list) == 2
 
 
@@ -284,7 +284,7 @@ async def test_download_needs_its_own_session(
     assert blocked.status_code == 503
     assert blocked.json()["error"]["code"] == "telegram_unauthorized"
 
-    await client.post("/auth/download/qr")
+    await client.post("/telegram/download/qr")
     logins[TelegramSession.DOWNLOAD].scanned.set()
 
     async def authorized():
@@ -295,6 +295,6 @@ async def test_download_needs_its_own_session(
     assert response.status_code == 200 and response.content == PDF
     assert download_telegram.authorized
 
-    out = await client.post("/auth/download/logout")
+    out = await client.post("/telegram/download/logout")
     assert out.json()["authorized"] is False and not download_session.exists()
     assert (await client.get(f"/files/{file_id}/download")).status_code == 503

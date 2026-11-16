@@ -6,10 +6,18 @@ from sqlalchemy.pool import NullPool
 
 from src.config import settings
 from src.infrastructure.database.base import Base
-from src.infrastructure.database.models import FileDB, FolderDB, StorageDB
+from src.infrastructure.database.models import (
+    ApiKeyDB,
+    FileDB,
+    FolderDB,
+    FolderGrantDB,
+    RefreshTokenDB,
+    StorageDB,
+    UserDB,
+)
 
 target_metadata = Base.metadata
-MODELS = (FileDB, FolderDB, StorageDB)
+MODELS = (ApiKeyDB, FileDB, FolderDB, FolderGrantDB, RefreshTokenDB, StorageDB, UserDB)
 
 
 def _run(connection) -> None:

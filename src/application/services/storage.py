@@ -6,15 +6,18 @@ from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.application.exception import (
+    ForbiddenError,
     StorageBusyError,
     StorageNotFoundError,
     StoragePhotoNotFoundError,
 )
 from src.application.schemas import (
+    Actor,
     StorageServiceCreate,
     StorageServiceRead,
     StorageServiceUpdate,
 )
+from src.application.services.access import can_see_storage, require_admin
 from src.application.services.temp import temp_path, write_body
 from src.infrastructure.background import AppRuntime
 from src.infrastructure.database.models import StorageDB
@@ -38,16 +41,20 @@ class StorageService:
             raise StorageNotFoundError("storage not found")
         return storage
 
-    async def create(self, data: StorageServiceCreate) -> StorageServiceRead:
+    async def create(
+        self, actor: Actor, data: StorageServiceCreate
+    ) -> StorageServiceRead:
+        require_admin(actor)
         chat_id = await self._runtime.telegram.create_channel(
             data.name, data.description or ""
         )
         storage = await self._repo.create(chat_id)
         await self._session.commit()
         logger.info("Storage {} created as channel {}", storage.id, chat_id)
-        return await self.get(storage.id)
+        return await self.get(actor, storage.id)
 
-    async def delete(self, storage_id: UUID, keep_channel: bool) -> None:
+    async def delete(self, actor: Actor, storage_id: UUID, keep_channel: bool) -> None:
+        require_admin(actor)
         storage = await self.get_db(storage_id)
         if await self._runtime.store.storage_busy(storage_id):
             raise StorageBusyError(
@@ -64,8 +71,12 @@ class StorageService:
             "kept" if keep_channel else "deleted",
         )
 
-    async def get_all(self) -> list[StorageServiceRead]:
-        storages = await self._repo.get_all()
+    async def get_all(self, actor: Actor) -> list[StorageServiceRead]:
+        storages = [
+            storage
+            for storage in await self._repo.get_all()
+            if can_see_storage(actor, storage.id)
+        ]
         infos = await self._runtime.telegram.channels(
             [storage.tg_chat_id for storage in storages]
         )
@@ -74,7 +85,12 @@ class StorageService:
             for storage in storages
         ]
 
-    async def get(self, storage_id: UUID) -> StorageServiceRead:
+    def check_visible(self, actor: Actor, storage_id: UUID) -> None:
+        if not can_see_storage(actor, storage_id):
+            raise ForbiddenError("no access to this storage")
+
+    async def get(self, actor: Actor, storage_id: UUID) -> StorageServiceRead:
+        self.check_visible(actor, storage_id)
         storage = await self.get_db(storage_id)
         files, total_size = await self._repo.get_stats(storage_id)
         info = (await self._runtime.telegram.channels([storage.tg_chat_id])).get(
@@ -85,8 +101,9 @@ class StorageService:
         )
 
     async def update(
-        self, storage_id: UUID, data: StorageServiceUpdate
+        self, actor: Actor, storage_id: UUID, data: StorageServiceUpdate
     ) -> StorageServiceRead:
+        require_admin(actor)
         storage = await self.get_db(storage_id)
         if data.name is not None:
             await self._runtime.telegram.edit_title(storage.tg_chat_id, data.name)
@@ -96,11 +113,12 @@ class StorageService:
             )
         await self._repo.touch(storage_id)
         await self._session.commit()
-        return await self.get(storage_id)
+        return await self.get(actor, storage_id)
 
     async def set_photo(
-        self, storage_id: UUID, body: AsyncIterator[bytes]
+        self, actor: Actor, storage_id: UUID, body: AsyncIterator[bytes]
     ) -> StorageServiceRead:
+        require_admin(actor)
         storage = await self.get_db(storage_id)
         path = temp_path()
         try:
@@ -119,16 +137,18 @@ class StorageService:
             path.unlink(missing_ok=True)
         await self._repo.touch(storage_id)
         await self._session.commit()
-        return await self.get(storage_id)
+        return await self.get(actor, storage_id)
 
-    async def delete_photo(self, storage_id: UUID) -> StorageServiceRead:
+    async def delete_photo(self, actor: Actor, storage_id: UUID) -> StorageServiceRead:
+        require_admin(actor)
         storage = await self.get_db(storage_id)
         await self._runtime.telegram.delete_photo(storage.tg_chat_id)
         await self._repo.touch(storage_id)
         await self._session.commit()
-        return await self.get(storage_id)
+        return await self.get(actor, storage_id)
 
-    async def get_photo(self, storage_id: UUID) -> bytes:
+    async def get_photo(self, actor: Actor, storage_id: UUID) -> bytes:
+        self.check_visible(actor, storage_id)
         storage = await self.get_db(storage_id)
         data = await self._runtime.telegram.photo(storage.tg_chat_id)
         if not data:

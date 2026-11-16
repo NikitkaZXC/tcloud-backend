@@ -12,7 +12,7 @@ from src.application.bootstrap.startup import prepare
 from src.application.services import AuthService, TaskSweeper
 from src.config import settings
 from src.infrastructure.background import AppRuntime
-from src.infrastructure.cache import TaskStore, create_redis
+from src.infrastructure.cache import TaskStore, TokenBlacklist, create_redis
 from src.infrastructure.database.engine import create_engine
 from src.infrastructure.database.session import session_factory
 from src.infrastructure.enums import TelegramSession
@@ -41,6 +41,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         download=download,
         scanner=create_scanner(),
         store=TaskStore(redis),
+        blacklist=TokenBlacklist(redis),
         make_telegram=create_telegram,
         make_login=create_login,
     )

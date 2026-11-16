@@ -60,6 +60,8 @@ services:
       TELEGRAM_SESSION: /data/session/tcloud
       TELEGRAM_WORKER_SESSION: /data/session/tcloud-worker
       TELEGRAM_DOWNLOAD_SESSION: /data/session/tcloud-download
+      JWT_PRIVATE_KEY_PATH: /certs/jwt-private.pem
+      JWT_PUBLIC_KEY_PATH: /certs/jwt-public.pem
       UPLOAD_TMP_DIR: /data/tmp
       REDIS_PASSWORD: ""
     ports:
@@ -67,6 +69,7 @@ services:
     volumes:
       - session:/data/session
       - tmp:/data/tmp
+      - ./certs:/certs:ro
     depends_on:
       postgres: {condition: service_healthy}
       rabbitmq: {condition: service_healthy}

@@ -8,17 +8,6 @@ from tests.api.conftest import path, upload
 from tests.factories import EXE, PDF, make_image
 
 
-async def test_wrong_api_key(client):
-    response = await client.get("/storages", headers={"X-API-Key": "wrong"})
-    assert response.status_code == 401
-    assert response.json()["error"]["code"] == "unauthorized"
-
-
-async def test_missing_api_key(client):
-    client.headers.pop("X-API-Key")
-    assert (await client.get("/health")).status_code == 401
-
-
 async def healthy(client) -> dict:
     for _ in range(50):
         health = (await client.get("/health")).json()

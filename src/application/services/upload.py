@@ -18,11 +18,13 @@ from src.application.exception import (
     UploadInProgressError,
 )
 from src.application.schemas import (
+    Actor,
     BatchItemServiceRead,
     BatchServiceRead,
     TaskServiceRead,
     UploadServiceCreate,
 )
+from src.application.services.access import require
 from src.application.services.account import AccountService
 from src.application.services.storage import StorageService
 from src.application.services.task import TaskService
@@ -33,6 +35,7 @@ from src.infrastructure.background import AppRuntime, enqueue
 from src.infrastructure.database.repositories import FileRepository
 from src.infrastructure.database.session import session_factory
 from src.infrastructure.enums import (
+    Permission,
     TaskPriority,
     TaskSource,
     TaskStage,
@@ -85,10 +88,18 @@ class UploadService:
                 f"{active} uploads are already in progress, try later", retry_after=30
             )
 
+    @staticmethod
+    def _check_access(actor: Actor, path: str, on_conflict: str) -> None:
+        storage_id, folder, _ = split_file(path)
+        require(actor, storage_id, folder, Permission.UPLOAD)
+        if on_conflict == "replace":
+            require(actor, storage_id, folder, Permission.DELETE)
+
     async def _new_task(
-        self, data: UploadServiceCreate, batch_id: UUID | None
+        self, actor: Actor, data: UploadServiceCreate, batch_id: UUID | None
     ) -> tuple[dict, bool]:
         storage_id, folder, name = split_file(data.path)
+        self._check_access(actor, data.path, data.on_conflict)
         check_name(name)
         if data.callback_url:
             check_scheme(data.callback_url)
@@ -96,7 +107,7 @@ class UploadService:
             check_scheme(data.url)
         if not session_exists(TelegramSession.WORKER):
             raise SessionNotAuthorizedError(
-                "the worker Telegram session is not logged in, use /api/auth/worker"
+                "the worker Telegram session is not logged in, use /api/telegram/worker"
             )
         limit = await self._account.file_limit()
         if data.size is not None and data.size > limit:
@@ -123,6 +134,7 @@ class UploadService:
         task = {
             "id": uuid7(),
             "batch_id": batch_id,
+            "user_id": actor.user_id,
             "status": TaskStatus.QUEUED,
             "stage": TaskStage.DOWNLOADING if data.url else TaskStage.SCANNING,
             "priority": priority,
@@ -179,13 +191,13 @@ class UploadService:
             raise
 
     async def upload(
-        self, data: UploadServiceCreate, body: AsyncIterator[bytes]
+        self, actor: Actor, data: UploadServiceCreate, body: AsyncIterator[bytes]
     ) -> TaskServiceRead:
         if data.size is None:
             raise LengthRequiredError("Content-Length header is required")
-        task, queued = await self._new_task(data, None)
+        task, queued = await self._new_task(actor, data, None)
         if not queued:
-            return await self._tasks.get(task["id"])
+            return await self._tasks.get(task["id"], actor)
         path = Path(task["params"]["file"])
         reservation = self._runtime.disk.reserve(data.size)
         try:
@@ -209,31 +221,26 @@ class UploadService:
             raise
         finally:
             reservation.release()
-        return await self._tasks.get(task["id"])
+        return await self._tasks.get(task["id"], actor)
 
     async def upload_url(
-        self, data: UploadServiceCreate, batch_id: UUID | None = None
+        self, actor: Actor, data: UploadServiceCreate, batch_id: UUID | None = None
     ) -> TaskServiceRead:
-        task, queued = await self._new_task(data, batch_id)
+        task, queued = await self._new_task(actor, data, batch_id)
         if queued:
             await self._store.create(task)
             await self._enqueue(task, UploadQueue.DOWNLOAD, 0)
-        return await self._tasks.get(task["id"])
+        return await self._tasks.get(task["id"], actor)
 
-    async def _get_raw(self, task_id: UUID) -> dict:
-        task = await self._store.get(task_id)
-        if not task:
-            raise TaskNotFoundError("task not found")
-        return task
-
-    async def cancel(self, task_id: UUID) -> TaskServiceRead:
+    async def cancel(self, actor: Actor, task_id: UUID) -> TaskServiceRead:
+        await self._tasks.get_raw(task_id, actor)
         result = await self._store.cancel(task_id)
         if result == "missing":
             raise TaskNotFoundError("task not found")
         if result == "finished":
             raise TaskFinishedError("task is already finished")
         if result == "cancelled":
-            task = await self._get_raw(task_id)
+            task = await self._tasks.get_raw(task_id, actor)
             await self._store.release(task_id, task["path"])
             remove_task_files(task)
             if task["params"].get("callback_url"):
@@ -245,10 +252,12 @@ class UploadService:
                         task["params"]["callback_url"],
                     )
                 )
-        return await self._tasks.get(task_id)
+        return await self._tasks.get(task_id, actor)
 
-    async def set_priority(self, task_id: UUID, priority: str) -> TaskServiceRead:
-        await self._get_raw(task_id)
+    async def set_priority(
+        self, actor: Actor, task_id: UUID, priority: str
+    ) -> TaskServiceRead:
+        await self._tasks.get_raw(task_id, actor)
         level = TaskPriority(priority).level
         requeued = await self._store.requeue(task_id, priority, level)
         if not requeued:
@@ -259,10 +268,11 @@ class UploadService:
             await enqueue(
                 UploadQueue(queue), level, task_id=str(task_id), generation=generation
             )
-        return await self._tasks.get(task_id)
+        return await self._tasks.get(task_id, actor)
 
-    async def retry(self, task_id: UUID) -> TaskServiceRead:
-        task = await self._get_raw(task_id)
+    async def retry(self, actor: Actor, task_id: UUID) -> TaskServiceRead:
+        task = await self._tasks.get_raw(task_id, actor)
+        self._check_access(actor, task["path"], task["params"]["on_conflict"])
         if task["status"] not in (TaskStatus.FAILED, TaskStatus.CANCELLED):
             raise TaskNotRetryableError("only failed or cancelled tasks can be retried")
         if task["params"]["source"] != TaskSource.URL:
@@ -291,14 +301,16 @@ class UploadService:
             committed=False,
         )
         await self._enqueue(task, UploadQueue.DOWNLOAD, generation)
-        return await self._tasks.get(task_id)
+        return await self._tasks.get(task_id, actor)
 
-    async def create_batch(self, items: list[UploadServiceCreate]) -> BatchServiceRead:
+    async def create_batch(
+        self, actor: Actor, items: list[UploadServiceCreate]
+    ) -> BatchServiceRead:
         batch_id = uuid7()
         results = []
         for item in items:
             try:
-                task = await self.upload_url(item, batch_id)
+                task = await self.upload_url(actor, item, batch_id)
                 results.append(
                     BatchItemServiceRead(path=item.path, task=task, error=None)
                 )

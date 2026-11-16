@@ -5,7 +5,7 @@ Python 3.14, зависимости — `uv` (`pyproject.toml`, `uv.lock`). Гр
 
 ```bash
 make install        # uv sync
-make env            # .env из .env.exemple + сгенерированные APP_API_KEY и пароли Postgres, RabbitMQ, Redis
+make env            # .env из .env.exemple + сгенерированные APP_SECRET_KEY, ROOT_PASSWORD, пароли Postgres, RabbitMQ, Redis и ключи JWT в certs/
 make dev-up         # Postgres, RabbitMQ (панель :15672), Redis на localhost; ClamAV — docker-compose.dev.yml
 make app            # uvicorn с --reload на 127.0.0.1:8000 (в .env: POSTGRES_HOST, CLAMAV_HOST, RABBITMQ_HOST, REDIS_HOST=127.0.0.1)
 make worker-download  # Celery-воркер очереди uploads.download
@@ -27,7 +27,7 @@ uv run alembic revision --autogenerate -m "msg"
 | Править код с автоперезагрузкой | `make dev-up`, затем `make app` и воркеры `make worker-*` | локально, в Docker только Postgres, RabbitMQ, Redis |
 | Всё в Docker из исходников | `make dev-up-all` | `docker-compose.dev.yml`, профиль `app` |
 
-После любого варианта — вход в Telegram на `/docs`, раздел **Auth** (flows/auth.md). Локально сессии и временные
+После любого варианта — вход как root (`POST /api/auth/signin`, flows/users.md) и вход в Telegram на `/docs`, раздел **Telegram** (flows/auth.md). Локально сессии и временные
 файлы лежат в `./data/` (пути по умолчанию `data/session/...`, `data/tmp`; в Docker compose задаёт `/data/...`).
 Для `make app` хосты в `.env` должны быть `127.0.0.1` (`POSTGRES_HOST`, `CLAMAV_HOST`, `RABBITMQ_HOST`, `REDIS_HOST`),
 compose подставляет свои сам.

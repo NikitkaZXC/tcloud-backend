@@ -19,7 +19,6 @@ from src.infrastructure.enums import MediaKind, UploadQueue
 from src.infrastructure.media import Media
 from src.utilities.parsers import split_file
 from tests.api.conftest import (
-    KEY,
     TELEGRAM_CONCURRENCY,
     Remote,
     path,
@@ -315,7 +314,7 @@ async def test_cancel_in_queue_sends_webhook(client, telegram, storage, remote):
         await asyncio.sleep(0.02)
     assert "cancelled" in statuses
     headers, body = Remote.hooks[-1]
-    expected = "sha256=" + hmac.new(KEY.encode(), body, hashlib.sha256).hexdigest()
+    expected = "sha256=" + hmac.new(b"test", body, hashlib.sha256).hexdigest()
     assert headers["X-Tcloud-Signature"] == expected
     for task_id in ids:
         await wait_task(client, task_id)

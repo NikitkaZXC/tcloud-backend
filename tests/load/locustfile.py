@@ -8,7 +8,8 @@ from locust.env import Environment
 from loguru import logger
 from PIL import Image
 
-API_KEY = os.environ.get("LOAD_API_KEY", "load")
+ROOT_LOGIN = os.environ.get("LOAD_ROOT_LOGIN", "load")
+ROOT_PASSWORD = os.environ.get("LOAD_ROOT_PASSWORD", "load-password")
 MAX_P95_MS = int(os.environ.get("LOAD_MAX_P95_MS", "500"))
 MAX_FAIL_RATIO = float(os.environ.get("LOAD_MAX_FAIL_RATIO", "0.01"))
 TASK_TIMEOUT = float(os.environ.get("LOAD_TASK_TIMEOUT", "120"))
@@ -27,7 +28,9 @@ class Uploader(HttpUser):
     wait_time = between(0.1, 0.5)
 
     def on_start(self) -> None:
-        self.client.headers["X-API-Key"] = API_KEY
+        self.client.post(
+            "/api/auth/signin", json={"login": ROOT_LOGIN, "password": ROOT_PASSWORD}
+        ).raise_for_status()
         storage = self.client.post(
             "/api/storages", json={"name": f"load-{uuid4().hex[:6]}"}
         ).json()

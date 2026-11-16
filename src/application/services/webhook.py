@@ -20,10 +20,10 @@ async def send_hook(
     store: TaskStore, sessions: async_sessionmaker, task_id: UUID | str, url: str
 ) -> None:
     async with sessions() as session:
-        view = await TaskService(session, store).get(UUID(str(task_id)))
+        view = await TaskService(session, store).get(UUID(str(task_id)), None)
     body = json.dumps(jsonable_encoder(view)).encode()
     signature = hmac.new(
-        settings.app.API_KEY.get_secret_value().encode(), body, hashlib.sha256
+        settings.app.SECRET_KEY.get_secret_value().encode(), body, hashlib.sha256
     ).hexdigest()
     headers = {
         "Content-Type": "application/json",

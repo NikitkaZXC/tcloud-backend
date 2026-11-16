@@ -8,13 +8,13 @@ tcloud работает от пользовательского аккаунта
 | `worker` | `TELEGRAM_WORKER_SESSION` | `worker-telegram`: отправка файлов | `tcloud-worker` |
 | `download` | `TELEGRAM_DOWNLOAD_SESSION` | API, отдельный клиент: скачивание файлов (`/files/{id}/download`) | `tcloud-download` |
 
-В каждую сессию входят отдельно, через API (Swagger `/docs`, раздел **Auth**). Все эндпоинты за `X-API-Key`.
+В каждую сессию входят отдельно, через API (Swagger `/docs`, раздел **Telegram**). Все эндпоинты только для root (flows/users.md).
 Сессия, которая подтверждала бы вход других устройств, не хранится: такая сессия могла бы подключить к аккаунту
 чужое устройство, поэтому её нет.
 
 ## Без сессий
 
-Приложение стартует и без входа: `/docs`, `/api/auth` и `/api/health` работают, `health.telegram` / `health.telegram_worker` /
+Приложение стартует и без входа: `/docs`, `/api/telegram` и `/api/health` работают, `health.telegram` / `health.telegram_worker` /
 `health.telegram_download` равны `false`. Всё, что ходит в Telegram через API-сессию, отвечает `503 telegram_unauthorized`; загрузки без сессии
 воркера отклоняются сразу тем же кодом, скачивания без сессии `download` — тоже. Вход в `download` подменяет клиент
 скачиваний на лету. После входа в `api` каналы из `TELEGRAM_CHATS` подключаются и запускается
@@ -22,23 +22,23 @@ tcloud работает от пользовательского аккаунта
 
 ## Шаги
 
-`{session}` — `api`, `worker` или `download`. Текущее состояние — `GET /api/auth`: для каждой сессии `authorized` и незавершённый
+`{session}` — `api`, `worker` или `download`. Текущее состояние — `GET /api/telegram`: для каждой сессии `authorized` и незавершённый
 вход `login` (`step`: `qr`, `code`, `password`, `expired`, `failed`; `expires_at`; `error`).
 
-**По QR.** `POST /api/auth/{session}/qr` отдаёт PNG (Swagger показывает картинку), срок — в заголовке `X-Expires-At`
+**По QR.** `POST /api/telegram/{session}/qr` отдаёт PNG (Swagger показывает картинку), срок — в заголовке `X-Expires-At`
 (около 30 с). Отсканировать в приложении Telegram: Настройки → Устройства → Подключить устройство. Дальше
-`GET /api/auth`: `authorized: true`, либо `step: password`, если включена двухэтапная проверка. Истёк — `step: failed`
+`GET /api/telegram`: `authorized: true`, либо `step: password`, если включена двухэтапная проверка. Истёк — `step: failed`
 с `login_expired`, запросить QR заново. QR не использует отправку кода (`auth.sendCode`), поэтому обычно работает и тогда,
 когда Telegram временно запретил присылать коды на номер.
 
-**По коду.** `POST /api/auth/{session}/code` `{"phone": "+79991234567"}` — Telegram присылает код в приложение
-(служебный чат «Telegram»), не по SMS. `POST /api/auth/{session}/sign-in` `{"code": "12345"}` — вход или `step: password`.
+**По коду.** `POST /api/telegram/{session}/code` `{"phone": "+79991234567"}` — Telegram присылает код в приложение
+(служебный чат «Telegram»), не по SMS. `POST /api/telegram/{session}/sign-in` `{"code": "12345"}` — вход или `step: password`.
 
-**Двухэтапная проверка.** `POST /api/auth/{session}/password` `{"password": "..."}`.
+**Двухэтапная проверка.** `POST /api/telegram/{session}/password` `{"password": "..."}`.
 
 Незавершённый вход живёт `TELEGRAM_LOGIN_TTL` (300 с) и только один на сессию: новый `qr`/`code` отменяет прежний.
 Неверный код или пароль можно повторить 4 раза, на пятой ошибке вход сбрасывается. Вход в уже авторизованную
-сессию — `409 already_authorized`: сначала `POST /api/auth/{session}/logout`.
+сессию — `409 already_authorized`: сначала `POST /api/telegram/{session}/logout`.
 
 | Ошибка | Статус | Когда |
 |---|---|---|
@@ -51,7 +51,7 @@ tcloud работает от пользовательского аккаунта
 
 ## Выход и старые сессии
 
-`POST /api/auth/{session}/logout` завершает сессию в Telegram и удаляет файл. Отозванную (например, в приложении
+`POST /api/telegram/{session}/logout` завершает сессию в Telegram и удаляет файл. Отозванную (например, в приложении
 Telegram) сессию воркер замечает на первом же запросе: задача падает с `telegram_unauthorized`, клиент сбрасывается,
 после нового входа следующая задача идёт уже на новой сессии.
 
@@ -61,8 +61,8 @@ Telegram) сессию воркер замечает на первом же за
 сессии завершать другие только через 24 ч после её входа (`session_too_fresh`) — до этого чистка ждёт и повторяется.
 Другие устройства аккаунта (телефон, Desktop) не трогаются никогда.
 
-- `GET /api/auth/sessions` — устройства `tcloud-*` аккаунта: `id`, `session`, даты, IP, страна, `current`.
-- `DELETE /api/auth/sessions/{id}` — завершить одно из них; своё текущее — `409 current_session` (для него `logout`),
+- `GET /api/telegram/sessions` — устройства `tcloud-*` аккаунта: `id`, `session`, даты, IP, страна, `current`.
+- `DELETE /api/telegram/sessions/{id}` — завершить одно из них; своё текущее — `409 current_session` (для него `logout`),
   не-tcloud устройство — `404 session_not_found`.
 
 ## Безопасность
@@ -73,7 +73,7 @@ Telegram) сессию воркер замечает на первом же за
   брошенный или неудачный вход файл удаляет.
 - Ни один эндпоинт не принимает чужой QR-токен: подключить к аккаунту постороннее устройство через API нельзя.
 - Любой файл сессии даёт полный доступ к аккаунту — права отдельной сессии Telegram ограничить не даёт. Защита:
-  volume `session` не выносить, порт 8000 не открывать наружу без reverse proxy с TLS, длинный `APP_API_KEY`,
+  volume `session` не выносить, порт 8000 не открывать наружу без reverse proxy с TLS, длинный `ROOT_PASSWORD`,
   включённая 2FA (с украденной сессией её не сменить без текущего пароля), время от времени смотреть
   Настройки → Устройства.
 - Состояние входа держится в памяти процесса API: API запускается одним процессом uvicorn.

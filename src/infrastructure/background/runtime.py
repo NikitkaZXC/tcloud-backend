@@ -3,7 +3,7 @@ from collections.abc import Coroutine
 
 from src.config import settings
 from src.infrastructure.background.disk import DiskBudget, MiB
-from src.infrastructure.cache import TaskStore
+from src.infrastructure.cache import TaskStore, TokenBlacklist
 
 
 class AppRuntime:
@@ -13,6 +13,7 @@ class AppRuntime:
         download,
         scanner,
         store: TaskStore,
+        blacklist: TokenBlacklist,
         make_telegram,
         make_login,
     ) -> None:
@@ -24,6 +25,7 @@ class AppRuntime:
         self.auth_lock = asyncio.Lock()
         self.scanner = scanner
         self.store = store
+        self.blacklist = blacklist
         self.disk = DiskBudget(
             settings.upload.TMP_DIR, settings.upload.MIN_FREE_DISK_MB * MiB
         )

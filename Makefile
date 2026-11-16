@@ -85,6 +85,7 @@ LOAD_DURATION ?= 1m
 load-up:
 	$(LOAD_COMPOSE) up -d --wait
 	mkdir -p logs/load/tmp
+	[ -f logs/load/jwt-private.pem ] || (openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out logs/load/jwt-private.pem && openssl rsa -in logs/load/jwt-private.pem -pubout -out logs/load/jwt-public.pem)
 	uv run --env-file $(LOAD_ENV) alembic upgrade head
 
 load-app:

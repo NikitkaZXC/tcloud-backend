@@ -71,7 +71,7 @@ class WorkerRuntime:
                         await client.forget()
                         raise TelegramUnauthorizedError(
                             "worker Telegram session is not authorized: "
-                            "log in with /api/auth/worker"
+                            "log in with /api/telegram/worker"
                         )
                     self._telegram = client
         return self._telegram

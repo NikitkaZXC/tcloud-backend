@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, status
 
+from src.api.dependencies import get_actor
 from src.api.schemas import (
     FolderCreate,
     FolderDeleteResponse,
@@ -7,6 +8,7 @@ from src.api.schemas import (
     FolderResponse,
 )
 from src.application.factory import get_service_folder
+from src.application.schemas import Actor
 from src.application.services import FolderService
 
 router = APIRouter(prefix="/folders", tags=["Folders"])
@@ -19,9 +21,11 @@ router = APIRouter(prefix="/folders", tags=["Folders"])
     status_code=status.HTTP_201_CREATED,
 )
 async def create_folder(
-    data: FolderCreate, folder_service: FolderService = Depends(get_service_folder)
+    data: FolderCreate,
+    actor: Actor = Depends(get_actor),
+    folder_service: FolderService = Depends(get_service_folder),
 ) -> FolderResponse:
-    return await folder_service.create(data.path)
+    return await folder_service.create(actor, data.path)
 
 
 @router.get(
@@ -31,9 +35,11 @@ async def create_folder(
     status_code=status.HTTP_200_OK,
 )
 async def get_folder(
-    path: str, folder_service: FolderService = Depends(get_service_folder)
+    path: str,
+    actor: Actor = Depends(get_actor),
+    folder_service: FolderService = Depends(get_service_folder),
 ) -> FolderListingResponse:
-    return await folder_service.get_listing(path)
+    return await folder_service.get_listing(actor, path)
 
 
 @router.delete(
@@ -43,6 +49,8 @@ async def get_folder(
     status_code=status.HTTP_200_OK,
 )
 async def delete_folder(
-    path: str, folder_service: FolderService = Depends(get_service_folder)
+    path: str,
+    actor: Actor = Depends(get_actor),
+    folder_service: FolderService = Depends(get_service_folder),
 ) -> FolderDeleteResponse:
-    return await folder_service.delete(path)
+    return await folder_service.delete(actor, path)
