@@ -39,6 +39,7 @@ Layers: `api → application → infrastructure`; `utilities` are shared. `src/a
 - `media/analyze.py` is not called `probe.py` on purpose: the package exports a `probe` function.
 - ClamAV image must be `*-debian` (alpine tags are amd64 only); stream limits are raised in `docker/clamd.conf`.
 - Tests: `tests/conftest.py` sets `TEST_ENV` (with `ENV_FILE=""`) before importing `src`; API tests patch `main.create_telegram`/`main.create_scanner` with `tests/fakes.py` and run real Celery workers in threads on `memory://` (session-scoped), swapping `src.application.tasks.upload.runtime` per test.
+- Never run several embedded Celery workers on RabbitMQ in one process (shared kombu hub corrupts AMQP frames): API tests use `memory://`; ordering and crash tests spawn real `celery worker` processes (`tests/integration/test_workers_e2e.py`).
 - RabbitMQ `consumer_timeout` must stay raised (compose sets 24 h), otherwise long Telegram uploads lose their channel at 30 min.
 
 ## Rules
