@@ -1,4 +1,18 @@
-from .exception import TokenExpiredError, TokenInvalidError
+from .encryption import (
+    HEADER,
+    check_available,
+    cipher_size,
+    cipher_span,
+    decrypt,
+    encrypt_file,
+    plain_limit,
+)
+from .exception import (
+    DecryptionError,
+    EncryptionUnavailableError,
+    TokenExpiredError,
+    TokenInvalidError,
+)
 from .hashing import DUMMY_HASH, hash_password, hash_secret, verify_password
 from .jwt import (
     JWTPayload,
@@ -9,6 +23,15 @@ from .jwt import (
 )
 
 __all__ = [
+    "HEADER",
+    "DecryptionError",
+    "EncryptionUnavailableError",
+    "check_available",
+    "cipher_size",
+    "cipher_span",
+    "decrypt",
+    "encrypt_file",
+    "plain_limit",
     "DUMMY_HASH",
     "JWTPayload",
     "TokenExpiredError",
