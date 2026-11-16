@@ -29,10 +29,22 @@ class Uploader(HttpUser):
 
     def on_start(self) -> None:
         self.client.post(
-            "/api/auth/signin", json={"login": ROOT_LOGIN, "password": ROOT_PASSWORD}
+            "/api/auth/signin",
+            json={"login": ROOT_LOGIN, "password": ROOT_PASSWORD},
+            name="setup: sign in",
         ).raise_for_status()
+        me = self.client.get("/api/users/me", name="setup: me").json()
+        key = self.client.post(
+            f"/api/users/{me['id']}/api-keys",
+            json={"name": "locust"},
+            name="setup: api key",
+        ).json()["key"]
+        self.client.cookies.clear()
+        self.client.headers["X-API-Key"] = key
         storage = self.client.post(
-            "/api/storages", json={"name": f"load-{uuid4().hex[:6]}"}
+            "/api/storages",
+            json={"name": f"load-{uuid4().hex[:6]}"},
+            name="setup: storage",
         ).json()
         self.root = f"tcloud/{storage['id']}"
 
@@ -94,7 +106,7 @@ def check_thresholds(environment: Environment, **_: object) -> None:
     if total.fail_ratio > MAX_FAIL_RATIO:
         problems.append(f"fail ratio {total.fail_ratio:.2%} > {MAX_FAIL_RATIO:.2%}")
     for (name, method), entry in environment.stats.entries.items():
-        if method == "TASK":
+        if method == "TASK" or name.startswith("setup: "):
             continue
         p95 = entry.get_response_time_percentile(0.95) or 0
         if p95 > MAX_P95_MS:
