@@ -8,6 +8,7 @@ from src.api.schemas import FileResponse
 from src.application.factory import get_runtime, get_service_file
 from src.application.services import FileService
 from src.infrastructure.background import AppRuntime
+from src.infrastructure.enums import MediaKind
 from src.utilities.parsers import parse_range
 
 router = APIRouter(prefix="/files", tags=["Files"])
@@ -54,10 +55,12 @@ async def download_file(
     start, end = (
         parse_range(range_header, file.size) if range_header else (0, file.size - 1)
     )
+    document = file.kind == MediaKind.DOCUMENT
     headers = {
         "Accept-Ranges": "bytes",
         "Content-Length": str(end - start + 1),
-        "Content-Disposition": f"inline; filename*=UTF-8''{quote(file.name)}",
+        "Content-Disposition": f"{'attachment' if document else 'inline'}; filename*=UTF-8''{quote(file.name)}",
+        "X-Content-Type-Options": "nosniff",
     }
     if range_header:
         headers["Content-Range"] = f"bytes {start}-{end}/{file.size}"
@@ -66,7 +69,7 @@ async def download_file(
         status_code=(
             status.HTTP_206_PARTIAL_CONTENT if range_header else status.HTTP_200_OK
         ),
-        media_type=file.mime,
+        media_type="application/octet-stream" if document else file.mime,
         headers=headers,
     )
 

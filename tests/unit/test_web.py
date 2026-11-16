@@ -11,8 +11,8 @@ from src.infrastructure.integrations.web import (
     UnsafeUrlError,
 )
 from src.infrastructure.integrations.web import client as web
-from src.infrastructure.media import UnsupportedMediaError
-from tests.factories import EXE, make_image
+from src.infrastructure.media import BlockedFileError
+from tests.factories import EXE, PDF, make_image
 
 
 @pytest.mark.parametrize(
@@ -127,11 +127,18 @@ async def test_download_ok(server, allow_local, tmp_path):
     assert seen[-1] == (len(data), len(data))
 
 
-async def test_download_rejects_non_media_early(server, allow_local, tmp_path):
+async def test_download_rejects_executable_early(server, allow_local, tmp_path):
     base, routes = server
-    routes["/a.jpg"] = (200, {}, EXE + b"\0" * 20000)
-    with pytest.raises(UnsupportedMediaError):
-        await web.download(f"{base}/a.jpg", tmp_path / "x", 10**7, lambda *a: None)
+    routes["/a.pdf"] = (200, {}, EXE + b"\0" * 20000)
+    with pytest.raises(BlockedFileError):
+        await web.download(f"{base}/a.pdf", tmp_path / "x", 10**7, lambda *a: None)
+
+
+async def test_download_document(server, allow_local, tmp_path):
+    base, routes = server
+    routes["/a.pdf"] = (200, {}, PDF)
+    await web.download(f"{base}/a.pdf", tmp_path / "x", 10**7, lambda *a: None)
+    assert (tmp_path / "x").read_bytes() == PDF
 
 
 async def test_download_rejects_by_content_length(server, allow_local, tmp_path):

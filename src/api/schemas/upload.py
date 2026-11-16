@@ -15,6 +15,7 @@ class UploadParams(BaseModel):
     send_as: SendAs = "file"
     on_conflict: OnConflict = "error"
     priority: Priority = "normal"
+    allow_unscannable: bool = False
     callback_url: str | None = None
 
 

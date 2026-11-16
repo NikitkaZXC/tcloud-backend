@@ -30,7 +30,22 @@
 ## ClamAV
 
 Контейнер `clamav/clamav:*-debian` (alpine-теги собраны только под amd64). `docker/clamd.conf` поднимает лимиты
-потока до 4000 МБ — по умолчанию clamd режет на 100 МБ. Первый старт качает базы несколько минут.
+потока до 4000 МБ (по умолчанию clamd режет на 100 МБ) и включает строгие проверки, см. security.md.
+Первый старт качает базы несколько минут.
+
+Ответы `clamd` делятся на два класса:
+
+| Ответ | Код | Что значит |
+|---|---|---|
+| `Heuristics.Encrypted.*` | `unscannable` | зашифрованный архив, PDF или документ: внутрь не заглянуть |
+| `Heuristics.Limits.Exceeded.*` | `unscannable` | упёрлись в лимит (размер, число файлов, вложенность, время) — проверено не всё |
+| `Heuristics.OLE2.ContainsMacros*` | `unscannable` | Office с макросами |
+| любой другой `FOUND` (сигнатуры, `PUA.*`, `Heuristics.Broken.*`, фишинг) | `infected` | отклоняется всегда |
+
+`HeuristicScanPrecedence no`: эвристика сообщается только в конце, а найденная сигнатура важнее. Поэтому
+`allow_unscannable` не пропустит вирус, лежащий рядом с зашифрованным архивом: проверено на `clamav 1.5.4` —
+zip с EICAR и зашифрованным zip внутри даёт `Eicar-Test-Signature`, а не `Heuristics.Encrypted.Zip`.
+Опции `AllMatchScan` в `clamd.conf` нет (это флаг `clamscan`).
 
 ## Исходящий HTTP
 

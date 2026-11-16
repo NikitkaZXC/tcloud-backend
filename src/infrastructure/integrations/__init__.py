@@ -2,6 +2,7 @@ from .antivirus import (
     ClamAVClient,
     InfectedFileError,
     ScannerUnavailableError,
+    UnscannableFileError,
     create_scanner,
 )
 from .telegram import (
@@ -27,6 +28,7 @@ __all__ = [
     "DownloadTooLargeError",
     "InfectedFileError",
     "ScannerUnavailableError",
+    "UnscannableFileError",
     "SentFile",
     "TelegramClient",
     "TelegramError",

@@ -5,9 +5,15 @@ from pathlib import Path
 from src.infrastructure.integrations.antivirus.exception import (
     InfectedFileError,
     ScannerUnavailableError,
+    UnscannableFileError,
 )
 
 CHUNK = 1024 * 1024
+UNSCANNABLE = (
+    "Heuristics.Encrypted.",
+    "Heuristics.Limits.Exceeded",
+    "Heuristics.OLE2.ContainsMacros",
+)
 UNAVAILABLE = "antivirus is not available, upload rejected"
 
 
@@ -48,6 +54,10 @@ class ClamAVClient:
         reply = await self._command(b"zINSTREAM\0", path)
         if reply.endswith("FOUND"):
             virus = reply.removeprefix("stream:").removesuffix("FOUND").strip()
+            if virus.startswith(UNSCANNABLE):
+                raise UnscannableFileError(
+                    f"antivirus cannot check this file fully ({virus})", reason=virus
+                )
             raise InfectedFileError(f"antivirus found {virus}, file rejected")
         if not reply.endswith("OK"):
             raise ScannerUnavailableError(UNAVAILABLE)

@@ -3,7 +3,7 @@ import uuid
 import pytest
 
 from tests.api.conftest import path, upload
-from tests.factories import make_image
+from tests.factories import PDF, make_image
 
 
 @pytest.fixture
@@ -41,6 +41,26 @@ async def test_download_full(client, photo):
         and response.headers["accept-ranges"] == "bytes"
     )
     assert "photo.jpg" in response.headers["content-disposition"]
+
+
+async def test_download_document_as_attachment(client, storage):
+    file = (await upload(client, path(storage, "<b>.html"), b"<script>x</script>"))[
+        "file"
+    ]
+    assert file["kind"] == "document"
+    response = await client.get(f"/files/{file['uuid']}/download")
+    assert response.content == b"<script>x</script>"
+    assert response.headers["content-type"] == "application/octet-stream"
+    assert response.headers["content-disposition"].startswith("attachment;")
+    assert response.headers["x-content-type-options"] == "nosniff"
+
+
+async def test_download_pdf_range(client, storage):
+    file = (await upload(client, path(storage, "a.pdf"), PDF))["file"]
+    response = await client.get(
+        f"/files/{file['uuid']}/download", headers={"Range": "bytes=0-7"}
+    )
+    assert response.status_code == 206 and response.content == PDF[:8]
 
 
 async def test_download_range(client, photo):

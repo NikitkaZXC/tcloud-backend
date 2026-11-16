@@ -4,7 +4,7 @@ This file provides guidance to Claude Code when working with code in this reposi
 
 ## Project
 
-tcloud: a FastAPI service that stores media (photo, video, audio, GIF) in private Telegram channels ("storages") through a Telegram **user** account (Telethon). Every file has a UUID and a path `tcloud/{storage uuid}/{folders}/{name}`; PostgreSQL keeps the index. Python 3.14, managed with `uv`. Structure and rules mirror `~/Desktop/nextgate/nextgate-backend`. The original spec is `docs/TZ.md`; detailed docs (Russian) are in `docs/` (index `docs/README.md`).
+tcloud: a FastAPI service that stores media (photo, video, audio, GIF) and other files (documents; executables are blocked) in private Telegram channels ("storages") through a Telegram **user** account (Telethon). Every file has a UUID and a path `tcloud/{storage uuid}/{folders}/{name}`; PostgreSQL keeps the index. Python 3.14, managed with `uv`. Structure and rules mirror `~/Desktop/nextgate/nextgate-backend`. The original spec is `docs/TZ.md`; detailed docs (Russian) are in `docs/` (index `docs/README.md`).
 
 ## Commands
 
@@ -37,7 +37,7 @@ Layers: `api → application → infrastructure`; `utilities` are shared. `src/a
 - Telethon picks photo vs document by file extension: temp files keep the extension of the target name.
 - Reads after ORM `UPDATE` with `onupdate=func.now()` need `populate_existing=True`, otherwise async lazy load raises `MissingGreenlet`.
 - `media/analyze.py` is not called `probe.py` on purpose: the package exports a `probe` function.
-- ClamAV image must be `*-debian` (alpine tags are amd64 only); stream limits are raised in `docker/clamd.conf`.
+- ClamAV image must be `*-debian` (alpine tags are amd64 only); stream limits are raised and alerts made strict in `docker/clamd.conf` (`test_clamd_config_is_strict` guards it). `Heuristics.Encrypted|Limits.Exceeded|OLE2.ContainsMacros` mean `unscannable`, every other hit is `infected`.
 - Tests: `tests/conftest.py` sets `TEST_ENV` (with `ENV_FILE=""`) before importing `src`; API tests patch `main.create_telegram`/`main.create_scanner` with `tests/fakes.py` and run real Celery workers in threads on `memory://` (session-scoped), swapping `src.application.tasks.upload.runtime` per test.
 - Never run several embedded Celery workers on RabbitMQ in one process (shared kombu hub corrupts AMQP frames): API tests use `memory://`; ordering and crash tests spawn real `celery worker` processes (`tests/integration/test_workers_e2e.py`).
 - RabbitMQ `consumer_timeout` must stay raised (compose sets 24 h), otherwise long Telegram uploads lose their channel at 30 min.

@@ -10,7 +10,15 @@ from src.config import settings
 from src.infrastructure import limits
 from src.infrastructure.media import analyze as probe_module
 from tests.api.conftest import KEY, Remote, path, start_upload, upload, wait_task
-from tests.factories import EXE, make_audio, make_gif_animated, make_image, make_video
+from tests.factories import (
+    EXE,
+    PDF,
+    make_audio,
+    make_gif_animated,
+    make_image,
+    make_video,
+    make_zip,
+)
 
 
 async def test_upload_photo_as_file(client, telegram, storage):
@@ -140,20 +148,84 @@ async def post_file(client, target: str, data: bytes = b"x" * 10, **options):
     )
 
 
-async def test_non_media_extension_rejected_before_upload(client, storage):
-    response = await post_file(client, path(storage, "doc.pdf"))
+@pytest.mark.parametrize("name", ["setup.exe", "photo.jpg.exe", "run.sh", "a.apk"])
+async def test_executable_name_rejected_before_upload(client, telegram, storage, name):
+    response = await post_file(client, path(storage, name))
     assert (
         response.status_code == 415
-        and response.json()["error"]["code"] == "unsupported_media_type"
-    )
-
-
-async def test_spoofed_content_rejected(client, telegram, storage):
-    task = await upload(client, path(storage, "virus.jpg"), EXE)
-    assert (
-        task["status"] == "failed" and task["error"]["code"] == "unsupported_media_type"
+        and response.json()["error"]["code"] == "blocked_file_type"
     )
     assert telegram.messages() == []
+
+
+@pytest.mark.parametrize("name", ["virus.jpg", "report.pdf", "noext"])
+async def test_executable_content_rejected(client, telegram, storage, name):
+    task = await upload(client, path(storage, name), EXE)
+    assert task["status"] == "failed" and task["error"]["code"] == "blocked_file_type"
+    assert telegram.messages() == []
+
+
+async def test_upload_document(client, telegram, storage):
+    task = await upload(client, path(storage, "docs/report.pdf"), PDF)
+    assert task["status"] == "done" and task["warnings"] == [], task
+    file = task["file"]
+    assert (file["kind"], file["mime"], file["sent_as"], file["size"]) == (
+        "document",
+        "application/pdf",
+        "file",
+        len(PDF),
+    )
+    message = telegram.messages()[0]
+    assert message["as_file"] is True and message["name"] == "report.pdf"
+    assert message["data"] == PDF and message["thumb"] is None
+
+
+async def test_document_as_media_is_sent_as_file(client, telegram, storage):
+    task = await upload(client, path(storage, "notes.txt"), b"hello", send_as="media")
+    assert task["file"]["sent_as"] == "file" and task["file"]["kind"] == "document"
+    assert task["warnings"] == ["file is not media, sent as file"]
+    assert telegram.messages()[0]["as_file"] is True
+
+
+async def test_document_named_as_photo_mismatch(client, telegram, storage):
+    task = await upload(client, path(storage, "a.jpg"), PDF)
+    assert task["error"]["code"] == "extension_mismatch" and telegram.messages() == []
+
+
+async def test_archive_with_executable_rejected(client, telegram, storage):
+    data = make_zip({"readme.txt": b"x", "bin/setup.exe": b"MZ"})
+    task = await upload(client, path(storage, "a.zip"), data)
+    assert task["error"]["code"] == "blocked_file_type" and telegram.messages() == []
+
+
+async def test_infected_document_rejected(client, telegram, storage):
+    task = await upload(client, path(storage, "a.zip"), make_zip({"e.txt": b"EICAR"}))
+    assert task["error"]["code"] == "infected" and telegram.messages() == []
+
+
+async def test_unscannable_rejected(client, telegram, storage):
+    task = await upload(client, path(storage, "secret.zip"), b"PK ENCRYPTED")
+    assert task["status"] == "failed" and task["error"]["code"] == "unscannable"
+    assert telegram.messages() == []
+
+
+async def test_unscannable_allowed_with_flag(client, telegram, storage):
+    task = await upload(
+        client, path(storage, "secret.7z"), b"ENCRYPTED", allow_unscannable="true"
+    )
+    assert task["status"] == "done", task
+    assert task["warnings"] == [
+        "antivirus cannot check this file fully (Heuristics.Encrypted.Zip),"
+        " accepted by allow_unscannable"
+    ]
+    assert len(telegram.messages()) == 1
+
+
+async def test_allow_unscannable_does_not_pass_viruses(client, telegram, storage):
+    task = await upload(
+        client, path(storage, "a.zip"), b"ENCRYPTED EICAR", allow_unscannable="true"
+    )
+    assert task["error"]["code"] == "infected" and telegram.messages() == []
 
 
 async def test_extension_mismatch(client, storage):
@@ -373,16 +445,25 @@ async def test_upload_from_url_with_own_name(client, telegram, storage, remote):
     assert telegram.messages()[0]["data"] == make_image()
 
 
-async def test_upload_from_url_non_media(client, telegram, storage, remote):
+async def test_upload_from_url_executable(client, telegram, storage, remote):
     Remote.files["/x.jpg"] = EXE + b"\0" * 10000
     response = await client.post(
         "/uploads/from-url",
         json={"url": f"{remote}/x.jpg", "path": path(storage, "x.jpg")},
     )
     task = await wait_task(client, response.json()["id"])
-    assert (
-        task["error"]["code"] == "unsupported_media_type" and telegram.messages() == []
+    assert task["error"]["code"] == "blocked_file_type" and telegram.messages() == []
+
+
+async def test_upload_document_from_url(client, telegram, storage, remote):
+    Remote.files["/doc"] = PDF
+    response = await client.post(
+        "/uploads/from-url",
+        json={"url": f"{remote}/doc", "path": path(storage, "doc.pdf")},
     )
+    task = await wait_task(client, response.json()["id"])
+    assert task["status"] == "done" and task["file"]["kind"] == "document"
+    assert telegram.messages()[0]["data"] == PDF
 
 
 async def test_upload_from_url_private_address_blocked(client, storage):
@@ -423,13 +504,13 @@ async def test_batch_from_urls(client, storage, remote):
             "path": path(storage, "b/2.jpg"),
             "priority": "high",
         },
-        {"url": f"{remote}/x.pdf", "path": path(storage, "b/doc.pdf")},
+        {"url": f"{remote}/x.exe", "path": path(storage, "b/setup.exe")},
     ]
     response = await client.post("/uploads/batch", json={"items": items})
     assert response.status_code == 202
     body = response.json()
     assert [item["error"] is None for item in body["items"]] == [True, True, False]
-    assert body["items"][2]["error"]["code"] == "unsupported_media_type"
+    assert body["items"][2]["error"]["code"] == "blocked_file_type"
     assert body["items"][1]["task"]["priority"] == "high"
     for item in body["items"][:2]:
         assert item["task"]["batch_id"] == body["batch_id"]

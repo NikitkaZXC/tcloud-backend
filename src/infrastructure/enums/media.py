@@ -6,3 +6,4 @@ class MediaKind(StrEnum):
     VIDEO = "video"
     AUDIO = "audio"
     ANIMATION = "animation"
+    DOCUMENT = "document"

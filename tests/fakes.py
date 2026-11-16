@@ -11,6 +11,7 @@ from src.infrastructure.integrations import (
     TelegramFloodWaitError,
     TelegramMessageGoneError,
     TelegramUnavailableError,
+    UnscannableFileError,
 )
 
 
@@ -165,5 +166,10 @@ class FakeScanner:
     async def scan(self, path: Path) -> None:
         if not self.available:
             raise ScannerUnavailableError("antivirus is not available, upload rejected")
-        if b"EICAR" in Path(path).read_bytes():
+        data = Path(path).read_bytes()
+        if b"EICAR" in data:
             raise InfectedFileError("antivirus found Eicar-Signature, file rejected")
+        if b"ENCRYPTED" in data:
+            raise UnscannableFileError(
+                "antivirus cannot check this file fully (Heuristics.Encrypted.Zip)"
+            )

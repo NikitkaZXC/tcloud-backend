@@ -1,6 +1,7 @@
 import io
 import subprocess
 import tempfile
+import zipfile
 from pathlib import Path
 
 from PIL import Image
@@ -70,3 +71,12 @@ def make_gif_animated() -> bytes:
 
 
 EXE = b"MZ" + b"\0" * 5000
+PDF = b"%PDF-1.7\n1 0 obj << /Type /Catalog >> endobj\n%%EOF\n"
+
+
+def make_zip(members: dict[str, bytes]) -> bytes:
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        for name, data in members.items():
+            archive.writestr(name, data)
+    return buffer.getvalue()

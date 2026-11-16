@@ -7,7 +7,7 @@ PostgreSQL 18, SQLAlchemy 2 async (asyncpg), миграции Alembic в `src/in
 |---|---|---|
 | `storages` | `id`, `tg_chat_id`, даты. Название, описание, фото — только в Telegram | `UNIQUE(tg_chat_id)` — канал подключается один раз |
 | `folders` | `storage_id`, `path` (`a/b/c`, без корня) | `UNIQUE(storage_id, path)`; `(storage_id, path text_pattern_ops)` — `LIKE 'a/%'` для дочерних папок и рекурсивного удаления |
-| `files` | путь (`folder_path` + `name`), размер, MIME, тип, `sent_as`, размеры, длительность, `sha256`, `tg_message_id` | `UNIQUE(storage_id, folder_path, name)` — один файл на путь; `(storage_id, folder_path text_pattern_ops)` — листинг и удаление поддерева; `UNIQUE(storage_id, tg_message_id)`; `sha256` |
+| `files` | путь (`folder_path` + `name`), размер, MIME, тип (`photo/video/audio/animation/document`), `sent_as`, размеры, длительность, `sha256`, `tg_message_id` | `UNIQUE(storage_id, folder_path, name)` — один файл на путь; `(storage_id, folder_path text_pattern_ops)` — листинг и удаление поддерева; `UNIQUE(storage_id, tg_message_id)`; `sha256` |
 
 `_` и `%` в именах папок экранируются перед `LIKE` (`\` в путях запрещён, им и экранируем).
 Задачи загрузки в БД не хранятся: очередь — RabbitMQ, статус и прогресс — Redis (см. background-tasks.md).

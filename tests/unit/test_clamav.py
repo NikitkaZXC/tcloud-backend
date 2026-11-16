@@ -1,5 +1,6 @@
 import asyncio
 import struct
+from pathlib import Path
 
 import pytest
 
@@ -7,8 +8,22 @@ from src.infrastructure.integrations.antivirus import (
     ClamAVClient,
     InfectedFileError,
     ScannerUnavailableError,
+    UnscannableFileError,
 )
 from src.infrastructure.integrations.antivirus.clamav import CHUNK
+
+ROOT = Path(__file__).parents[2]
+
+
+REPLIES = {
+    b"EICAR": b"Eicar-Signature FOUND",
+    b"ENCRYPTED": b"Heuristics.Encrypted.Zip FOUND",
+    b"PDFLOCK": b"Heuristics.Encrypted.PDF FOUND",
+    b"MANY": b"Heuristics.Limits.Exceeded.MaxFiles FOUND",
+    b"MACRO": b"Heuristics.OLE2.ContainsMacros.VBA FOUND",
+    b"PUA": b"PUA.Win.Tool.Agent FOUND",
+    b"BROKEN": b"Heuristics.Broken.Executable FOUND",
+}
 
 
 async def _fake_clamd(reader, writer):
@@ -19,9 +34,10 @@ async def _fake_clamd(reader, writer):
         data = b""
         while size := struct.unpack(">I", await reader.readexactly(4))[0]:
             data += await reader.readexactly(size)
-        writer.write(
-            b"stream: Eicar-Signature FOUND\0" if b"EICAR" in data else b"stream: OK\0"
+        reply = next(
+            (reply for marker, reply in REPLIES.items() if marker in data), b"OK"
         )
+        writer.write(b"stream: " + reply + b"\0")
     await writer.drain()
     writer.close()
 
@@ -57,3 +73,39 @@ async def test_unavailable_fails_closed(tmp_path):
     with pytest.raises(ScannerUnavailableError):
         await scanner.scan(target)
     assert await scanner.ping() is False
+
+
+@pytest.mark.parametrize("marker", [b"ENCRYPTED", b"PDFLOCK", b"MANY", b"MACRO"])
+async def test_unscannable(clamav, tmp_path, marker):
+    target = tmp_path / "f"
+    target.write_bytes(marker)
+    with pytest.raises(UnscannableFileError) as error:
+        await clamav.scan(target)
+    assert error.value.extra["reason"].startswith("Heuristics.")
+
+
+@pytest.mark.parametrize("marker", [b"PUA", b"BROKEN"])
+async def test_heuristic_detections_are_infected(clamav, tmp_path, marker):
+    target = tmp_path / "f"
+    target.write_bytes(marker)
+    with pytest.raises(InfectedFileError):
+        await clamav.scan(target)
+
+
+def test_clamd_config_is_strict():
+    config = dict(
+        line.split(maxsplit=1)
+        for line in (ROOT / "docker" / "clamd.conf").read_text().splitlines()
+        if line and not line.startswith("#")
+    )
+    for option in (
+        "AlertExceedsMax",
+        "AlertEncrypted",
+        "AlertOLE2Macros",
+        "AlertBrokenExecutables",
+        "DetectPUA",
+        "HeuristicAlerts",
+    ):
+        assert config[option] == "yes", option
+    assert config["HeuristicScanPrecedence"] == "no"
+    assert int(config["MaxScanTime"]) >= int(config["ReadTimeout"]) * 1000

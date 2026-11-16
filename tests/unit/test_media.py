@@ -7,17 +7,25 @@ from PIL import Image
 from src.infrastructure import limits
 from src.infrastructure.enums import MediaKind
 from src.infrastructure.media import (
+    BlockedFileError,
     ExtensionMismatchError,
     InvalidMediaError,
     Media,
-    UnsupportedMediaError,
     check_name,
     photo_fits,
     probe,
     thumbnail,
     to_jpeg,
 )
-from tests.factories import EXE, make_audio, make_gif_animated, make_image, make_video
+from tests.factories import (
+    EXE,
+    PDF,
+    make_audio,
+    make_gif_animated,
+    make_image,
+    make_video,
+    make_zip,
+)
 
 
 def _file(tmp_path: Path, data: bytes, name: str = "f") -> Path:
@@ -108,17 +116,58 @@ def test_audio(tmp_path, fmt, mime):
 @pytest.mark.parametrize(
     "data",
     [
-        b"%PDF-1.7 fake pdf",
         EXE,
         b"\x7fELF linux binary",
-        b"PK\x03\x04 zip archive",
         b"#!/bin/sh\nrm -rf /",
-        b"",
+        b"\xcf\xfa\xed\xfe mach-o",
+        b"\xca\xfe\xba\xbe java class",
+        b"dex\n035 android",
     ],
 )
-def test_non_media_rejected(tmp_path, data):
-    with pytest.raises(UnsupportedMediaError):
+@pytest.mark.parametrize("name", ["a.jpg", "report.pdf", "noext"])
+def test_executable_content_blocked(tmp_path, data, name):
+    with pytest.raises(BlockedFileError):
+        probe(_file(tmp_path, data), name)
+
+
+@pytest.mark.parametrize(
+    "data,name,mime",
+    [
+        (PDF, "report.pdf", "application/pdf"),
+        (b"just text", "notes.txt", "application/octet-stream"),
+        (b"", "empty", "application/octet-stream"),
+        (make_zip({"a.txt": b"x", "dir/b.csv": b"y"}), "a.zip", "application/zip"),
+    ],
+)
+def test_documents(tmp_path, data, name, mime):
+    media = probe(_file(tmp_path, data), name)
+    assert (media.kind, media.mime, media.width) == (MediaKind.DOCUMENT, mime, None)
+
+
+@pytest.mark.parametrize("data", [PDF, b"", make_zip({"a.txt": b"x"})])
+def test_document_named_as_media_mismatch(tmp_path, data):
+    with pytest.raises(ExtensionMismatchError):
         probe(_file(tmp_path, data), "a.jpg")
+
+
+def test_media_named_as_document_mismatch(tmp_path):
+    with pytest.raises(ExtensionMismatchError):
+        probe(_file(tmp_path, make_image("JPEG")), "a.txt")
+
+
+@pytest.mark.parametrize(
+    "member",
+    ["setup.exe", "dir/run.BAT", "Evil.app/Contents/MacOS/Evil", "lib\\x.dll"],
+)
+def test_archive_with_executable_blocked(tmp_path, member):
+    data = make_zip({"readme.txt": b"x", member: b"payload"})
+    with pytest.raises(BlockedFileError, match="archive contains"):
+        probe(_file(tmp_path, data), "a.zip")
+
+
+def test_office_document_is_checked_as_archive(tmp_path):
+    data = make_zip({"[Content_Types].xml": b"<Types/>", "word/document.xml": b"<w/>"})
+    assert probe(_file(tmp_path, data), "a.docx").kind == MediaKind.DOCUMENT
 
 
 def test_extension_mismatch(tmp_path):
@@ -145,9 +194,10 @@ def test_decompression_bomb(tmp_path, monkeypatch):
 
 
 def test_check_name():
-    check_name("a.MP4")
-    for bad in ("a.exe", "a.pdf", "noext", "a.jpg.exe"):
-        with pytest.raises(UnsupportedMediaError):
+    for good in ("a.MP4", "a.pdf", "noext", "archive.tar.gz", "a.exe.txt"):
+        check_name(good)
+    for bad in ("a.exe", "a.jpg.exe", "a.EXE", "a.exe.", "a.exe ", "run.sh", "x.apk"):
+        with pytest.raises(BlockedFileError):
             check_name(bad)
 
 

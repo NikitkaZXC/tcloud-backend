@@ -132,6 +132,7 @@ class UploadService:
                 "source": source,
                 "send_as": data.send_as,
                 "on_conflict": data.on_conflict,
+                "allow_unscannable": data.allow_unscannable,
                 "callback_url": data.callback_url,
                 "url": data.url,
                 "limit": limit,

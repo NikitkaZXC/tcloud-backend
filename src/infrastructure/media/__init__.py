@@ -9,9 +9,15 @@ from .analyze import (
     thumbnail,
     to_jpeg,
 )
-from .exception import ExtensionMismatchError, InvalidMediaError, UnsupportedMediaError
+from .exception import (
+    BlockedFileError,
+    ExtensionMismatchError,
+    InvalidMediaError,
+    UnsupportedMediaError,
+)
 
 __all__ = [
+    "BlockedFileError",
     "SNIFF_BYTES",
     "ExtensionMismatchError",
     "InvalidMediaError",

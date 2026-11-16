@@ -32,6 +32,7 @@ from src.infrastructure.integrations import (
     SentFile,
     TelegramFloodWaitError,
     TelegramUnavailableError,
+    UnscannableFileError,
 )
 from src.infrastructure.integrations.web import download
 from src.infrastructure.media import Media, photo_fits, probe, thumbnail, to_jpeg
@@ -179,11 +180,19 @@ class UploadPipeline:
         _, _, name = split_file(task["path"])
         media = await asyncio.to_thread(probe, path, name)
         sha256 = await asyncio.to_thread(sha256_of, path)
-        await self._retry(
-            task, lambda: self._runtime.scanner.scan(path), ScannerUnavailableError
-        )
-        as_file = task["params"]["send_as"] == "file"
         warnings: list[str] = []
+        try:
+            await self._retry(
+                task, lambda: self._runtime.scanner.scan(path), ScannerUnavailableError
+            )
+        except UnscannableFileError as error:
+            if not task["params"].get("allow_unscannable"):
+                raise
+            warnings.append(f"{error.message}, accepted by allow_unscannable")
+        as_file = task["params"]["send_as"] == "file"
+        if media.kind == MediaKind.DOCUMENT and not as_file:
+            as_file = True
+            warnings.append("file is not media, sent as file")
         prepared = {"send_path": str(path), "thumb": None}
         if not as_file and media.kind == MediaKind.PHOTO:
             if not photo_fits(media, path.stat().st_size):

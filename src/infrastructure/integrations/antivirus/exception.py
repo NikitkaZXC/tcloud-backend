@@ -7,6 +7,12 @@ class InfectedFileError(TCloudError):
     code = "infected"
 
 
+class UnscannableFileError(TCloudError):
+    """Raised when the antivirus cannot look inside a file: encryption, macros or scan limits."""
+
+    code = "unscannable"
+
+
 class ScannerUnavailableError(TCloudError):
     """Raised when the antivirus cannot be reached; uploads are rejected until it is back."""
 
