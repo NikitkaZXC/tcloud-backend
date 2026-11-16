@@ -74,7 +74,9 @@ class UploadService:
 
     async def _free_name(self, storage_id: UUID, folder: str, name: str) -> str:
         stem, dot, suffix = name.rpartition(".")
-        for index in range(1, 10_000):
+        if not stem:
+            stem, dot, suffix = name, "", ""
+        for index in range(2, 10_000):
             candidate = f"{stem} ({index}){dot}{suffix}"
             if not await self._taken(storage_id, folder, candidate):
                 check_segment(candidate)
@@ -122,7 +124,8 @@ class UploadService:
         existing = await self._files.get_by_path(storage_id, folder, name)
         if existing and data.on_conflict == "error":
             raise PathConflictError(
-                f"{join_path(storage_id, folder, name)} already exists"
+                f"{join_path(storage_id, folder, name)} already exists",
+                suggested_name=await self._free_name(storage_id, folder, name),
             )
         if data.on_conflict == "keep_both" and await self._taken(
             storage_id, folder, name
