@@ -1,6 +1,7 @@
 import asyncio
 import shutil
 import time
+import uuid
 from collections import namedtuple
 
 import main
@@ -8,6 +9,7 @@ from src.config import settings
 from src.infrastructure.background import MiB
 from tests.api.conftest import (
     TELEGRAM_CONCURRENCY,
+    Remote,
     path,
     start_upload,
     upload,
@@ -153,3 +155,44 @@ async def test_disk_full_rejects_upload(client, storage, monkeypatch):
     )
     response = await post_file(client, path(storage, "b.jpg"))
     assert response.status_code == 202
+
+
+async def test_files_on_disk_limit_rejects_device_upload(client, storage, monkeypatch):
+    monkeypatch.setattr(settings.upload, "MAX_FILES_ON_DISK", 1)
+    store = main.app.state.runtime.store
+    holder = uuid.uuid4()
+    assert await store.take_disk_slot(holder)
+    response = await post_file(client, path(storage, "a.jpg"))
+    assert response.status_code == 429
+    assert response.json()["error"]["code"] == "too_many_tasks"
+    await store.release(holder, "x")
+    response = await post_file(client, path(storage, "a.jpg"))
+    assert response.status_code == 202
+    assert (await wait_task(client, response.json()["id"]))["status"] == "done"
+
+
+async def test_url_upload_waits_for_a_disk_slot(
+    client, telegram, storage, remote, monkeypatch
+):
+    monkeypatch.setattr(settings.upload, "MAX_FILES_ON_DISK", 1)
+    store = main.app.state.runtime.store
+    holder = uuid.uuid4()
+    assert await store.take_disk_slot(holder)
+    Remote.files["/a.jpg"] = make_image()
+    response = await client.post(
+        "/uploads/from-url",
+        json={"url": f"{remote}/a.jpg", "path": path(storage, "a.jpg")},
+    )
+    task_id = response.json()["id"]
+    for _ in range(100):
+        task = (await client.get(f"/tasks/{task_id}")).json()
+        if (task["waiting"] or {}).get("reason") == "disk_slots":
+            break
+        await asyncio.sleep(0.05)
+    assert task["waiting"]["reason"] == "disk_slots" and task["status"] == "running"
+    await store.release(holder, "x")
+    task = await wait_task(client, task_id)
+    assert task["status"] == "done"
+    probe = uuid.uuid4()
+    assert await store.take_disk_slot(probe)
+    await store.release(probe, "x")

@@ -72,6 +72,15 @@ return 'running'
 """
 
 
+DISK_SLOT = """
+if redis.call('ZSCORE', KEYS[1], ARGV[1]) then return 1 end
+redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', ARGV[3])
+if redis.call('ZCARD', KEYS[1]) >= tonumber(ARGV[2]) then return 0 end
+redis.call('ZADD', KEYS[1], ARGV[4], ARGV[1])
+return 1
+"""
+
+
 def encode(value) -> str:
     return json.dumps(value, default=str, ensure_ascii=False)
 
@@ -185,7 +194,22 @@ class TaskStore:
     async def touch(self, task_id: UUID) -> None:
         await self._redis.hset(self._key("task", task_id), "beat_at", time.time())
 
+    async def take_disk_slot(self, task_id: UUID) -> bool:
+        now = time.time()
+        return bool(
+            await self._redis.eval(
+                DISK_SLOT,
+                1,
+                self._key("disk"),
+                str(task_id),
+                settings.upload.MAX_FILES_ON_DISK,
+                now - settings.upload.LOCK_TTL,
+                now,
+            )
+        )
+
     async def release(self, task_id: UUID, path: str) -> None:
+        await self._redis.zrem(self._key("disk"), str(task_id))
         await self.deactivate(task_id)
         await self.unlock_path(path, task_id)
         await self.leave_queues(task_id)

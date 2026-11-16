@@ -189,6 +189,12 @@ class UploadService:
         path = Path(task["params"]["file"])
         reservation = self._runtime.disk.reserve(data.size)
         try:
+            if not await self._store.take_disk_slot(task["id"]):
+                raise TooManyTasksError(
+                    f"{settings.upload.MAX_FILES_ON_DISK} files are already on the "
+                    "server waiting for Telegram, try later",
+                    retry_after=30,
+                )
             limit = min(data.size, task["params"]["limit"])
             received = await write_body(body, path, limit, reservation.update)
             if received != data.size:

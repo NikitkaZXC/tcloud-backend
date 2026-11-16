@@ -119,6 +119,7 @@ RabbitMQ позицию не сообщает, поэтому её считае�
 | `tcloud:batch:{id}` | список id задач пачки по порядку | `UPLOAD_TASK_TTL` |
 | `tcloud:path:{path}` | блокировка пути, значение — id задачи. Снимается только владельцем (Lua) | `UPLOAD_LOCK_TTL` (24 ч, страховка) |
 | `tcloud:active` | sorted set активных задач, score — время старта | — |
+| `tcloud:disk` | sorted set задач, чей файл сейчас в `tmp` (`UPLOAD_MAX_FILES_ON_DISK`), score — время захвата | — |
 | `tcloud:waiting:{queue}` | sorted set задач, ждущих в очереди, для `queue_position` | — |
 | `tcloud:worker:{queue}:{host}` | heartbeat воркера | 3 × `UPLOAD_HEARTBEAT_INTERVAL` |
 
@@ -141,6 +142,12 @@ RabbitMQ позицию не сообщает, поэтому её считае�
 - **Диск.** `DiskBudget` резервирует место до приёма тела в API и при скачивании по ссылке в воркере. Если после
   загрузки останется меньше `UPLOAD_MIN_FREE_DISK_MB`, ответ `507 insufficient_storage`.
 - **Число задач.** Если активных больше `UPLOAD_MAX_ACTIVE_TASKS`, ответ `429 too_many_tasks` с `retry_after`.
+- **Файлов на сервере.** Не больше `UPLOAD_MAX_FILES_ON_DISK` (10) файлов одновременно в `tmp`: слот берётся до записи
+  первого байта и освобождается вместе с задачей (готово, ошибка, отмена, потеря). Загрузка с устройства без свободного
+  слота — `429 too_many_tasks` с `retry_after`. Ссылка не отклоняется: `worker-download` ждёт слот
+  (`waiting.reason = disk_slots`, отмена работает), остальные ссылки ждут в очереди. Слоты — sorted set
+  `tcloud:disk` (Lua: проверка и захват атомарно), повторная доставка той же задачи слот не удваивает, зависшие
+  старше `UPLOAD_LOCK_TTL` выбрасываются.
 - **Один путь — одна загрузка.** `SET NX` по пути: вторая загрузка в тот же путь сразу получает `409 upload_in_progress`.
   `keep_both` ищет свободное имя (`a (1).jpg`) среди файлов и занятых путей.
 

@@ -41,6 +41,7 @@ from src.utilities.errors import TCloudError
 from src.utilities.parsers import split_file
 
 TELEGRAM_PHOTO_MIMES = ("image/jpeg", "image/png")
+DISK_SLOT_POLL = 1.0
 
 
 def describe(error: BaseException) -> dict:
@@ -122,6 +123,7 @@ class UploadPipeline:
     async def _download(self, task: dict) -> None:
         params = task["params"]
         await self.stage(task, TaskStage.DOWNLOADING, None)
+        await self._disk_slot(task)
         reservation = self._runtime.disk.reserve(0)
 
         def progress(done: int, total: int | None) -> None:
@@ -135,6 +137,16 @@ class UploadPipeline:
         finally:
             reservation.release()
         await self._handoff(task, UploadQueue.PREPARE, TaskStage.SCANNING, None)
+
+    async def _disk_slot(self, task: dict) -> None:
+        if await self._store.take_disk_slot(task["id"]):
+            return
+        await self._store.update(task["id"], waiting={"reason": "disk_slots"})
+        self.hook(task)
+        while not await self._store.take_disk_slot(task["id"]):
+            await self._checkpoint(task)
+            await asyncio.sleep(DISK_SLOT_POLL)
+        await self._store.update(task["id"], waiting=None)
 
     async def _prepare(self, task: dict) -> None:
         await self.stage(task, TaskStage.SCANNING, task.get("bytes_total"))
