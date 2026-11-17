@@ -1,9 +1,12 @@
 import time
 
+from loguru import logger
+
 from src.application.schemas import AccountServiceRead
 from src.config import settings
 from src.infrastructure.background import AppRuntime
-from src.infrastructure.limits import file_limit
+from src.infrastructure.limits import CHANNELS_MAX, CHANNELS_MAX_PREMIUM, file_limit
+from src.utilities.errors import TCloudError
 
 
 class AccountService:
@@ -26,6 +29,23 @@ class AccountService:
     async def file_limit(self) -> int:
         return file_limit(await self.is_premium())
 
+    async def channels_used(self) -> int | None:
+        cached = self._runtime.channels
+        if cached and time.monotonic() - cached[0] <= settings.upload.CHANNELS_TTL:
+            return cached[1]
+        try:
+            used = await self._runtime.telegram.channels_used()
+        except TCloudError as error:
+            logger.warning("Telegram channels count is unavailable: {}", error.message)
+            return None
+        self._runtime.channels = (time.monotonic(), used)
+        return used
+
     async def get_account(self) -> AccountServiceRead:
         premium = await self.is_premium(fresh=True)
-        return AccountServiceRead(premium=premium, file_limit=file_limit(premium))
+        return AccountServiceRead(
+            premium=premium,
+            file_limit=file_limit(premium),
+            channels_used=await self.channels_used(),
+            channels_limit=CHANNELS_MAX_PREMIUM if premium else CHANNELS_MAX,
+        )

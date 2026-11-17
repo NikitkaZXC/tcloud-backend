@@ -47,16 +47,50 @@ async def test_health_sees_dead_worker(client, monkeypatch):
     assert health["ok"] is False and health["workers"]["uploads.telegram"] is False
 
 
-async def test_account_limit(client, telegram):
+async def test_account_limit(client, telegram, monkeypatch):
+    monkeypatch.setattr(settings.upload, "CHANNELS_TTL", 0)
+    telegram.other_channels = 3
     assert (await client.get("/account")).json() == {
         "premium": False,
         "file_limit": limits.FILE_MAX,
+        "channels_used": 3,
+        "channels_limit": limits.CHANNELS_MAX,
     }
     telegram.premium = True
     assert (await client.get("/account")).json() == {
         "premium": True,
         "file_limit": limits.FILE_MAX_PREMIUM,
+        "channels_used": 3,
+        "channels_limit": limits.CHANNELS_MAX_PREMIUM,
     }
+
+
+async def test_account_channels_count_storages_and_other_chats(
+    client, telegram, storage, monkeypatch
+):
+    monkeypatch.setattr(settings.upload, "CHANNELS_TTL", 0)
+    telegram.other_channels = 10
+    assert (await client.get("/account")).json()["channels_used"] == 11
+
+
+async def test_account_channels_are_cached(client, telegram, monkeypatch):
+    monkeypatch.setattr(settings.upload, "CHANNELS_TTL", 3600)
+    telegram.other_channels = 5
+    assert (await client.get("/account")).json()["channels_used"] == 5
+    telegram.other_channels = 9
+    assert (await client.get("/account")).json()["channels_used"] == 5
+    assert telegram.dialogs_read == 1
+    monkeypatch.setattr(settings.upload, "CHANNELS_TTL", 0)
+    assert (await client.get("/account")).json()["channels_used"] == 9
+
+
+async def test_account_without_channels_count(client, telegram, monkeypatch):
+    monkeypatch.setattr(settings.upload, "CHANNELS_TTL", 0)
+    telegram.dialogs_flood = True
+    response = await client.get("/account")
+    assert response.status_code == 200
+    assert response.json()["channels_used"] is None
+    assert response.json()["channels_limit"] == limits.CHANNELS_MAX
 
 
 async def test_create_storage(storage, telegram):

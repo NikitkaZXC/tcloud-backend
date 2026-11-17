@@ -228,6 +228,12 @@ class TelegramClient:
     async def is_premium(self) -> bool:
         return bool((await self._client.get_me()).premium)
 
+    @translate_errors
+    async def channels_used(self) -> int:
+        return sum(
+            [1 async for dialog in self._client.iter_dialogs() if dialog.is_channel]
+        )
+
     async def _entity(self, chat_id: int):
         try:
             return await self._client.get_entity(chat_id)

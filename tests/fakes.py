@@ -66,6 +66,9 @@ class FakeTelegram:
         self.sending = 0
         self.max_sending = 0
         self.on_deleted = None
+        self.other_channels = 0
+        self.dialogs_read = 0
+        self.dialogs_flood = False
 
     async def start(self) -> bool:
         if self.session:
@@ -124,6 +127,13 @@ class FakeTelegram:
     async def is_premium(self) -> bool:
         self._check()
         return self.premium
+
+    async def channels_used(self) -> int:
+        self._check()
+        if self.dialogs_flood:
+            raise TelegramFloodWaitError(30)
+        self.dialogs_read += 1
+        return len(self.chats) + self.other_channels
 
     def add_channel(
         self, title: str = "chat", public: bool = False, admin: bool = True

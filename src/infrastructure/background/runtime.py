@@ -32,6 +32,7 @@ class AppRuntime:
             settings.upload.TMP_DIR, settings.upload.MIN_FREE_DISK_MB * MiB
         )
         self.premium: tuple[float, bool] | None = None
+        self.channels: tuple[float, int] | None = None
         self._tasks: set[asyncio.Task] = set()
         self.handoff_lock = asyncio.Lock()
 

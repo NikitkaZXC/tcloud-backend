@@ -164,3 +164,17 @@ async def test_send_records_the_downloaded_photo_size(tmp_path, monkeypatch):
         progress=lambda done, total: None,
     )
     assert (result.message_id, result.size) == (11, 12522)
+
+
+async def test_channels_used_counts_channels_and_supergroups():
+    fake = FakeTelethon(b"")
+
+    def iter_dialogs():
+        async def dialogs():
+            for is_channel in (True, False, True, True, False):
+                yield SimpleNamespace(is_channel=is_channel)
+
+        return dialogs()
+
+    fake.iter_dialogs = iter_dialogs
+    assert await _client(fake).channels_used() == 3
