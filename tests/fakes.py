@@ -157,6 +157,7 @@ class FakeTelegram:
         self.chats[chat_id]["about"] = about
 
     async def set_photo(self, chat_id: int, path: Path) -> None:
+        assert Path(path).suffix in (".jpg", ".png")
         self.chats[chat_id]["photo"] = Path(path).read_bytes()
 
     async def delete_photo(self, chat_id: int) -> None:

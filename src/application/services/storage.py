@@ -26,7 +26,7 @@ from src.infrastructure.enums import MediaKind
 from src.infrastructure.limits import PHOTO_MAX
 from src.infrastructure.media import UnsupportedMediaError, probe, to_jpeg
 
-TELEGRAM_PHOTO_MIMES = ("image/jpeg", "image/png")
+TELEGRAM_PHOTO_SUFFIXES = {"image/jpeg": ".jpg", "image/png": ".png"}
 
 
 class StorageService:
@@ -138,7 +138,9 @@ class StorageService:
             if media.kind != MediaKind.PHOTO:
                 raise UnsupportedMediaError("storage photo must be a still image")
             await self._runtime.scanner.scan(path)
-            if media.mime not in TELEGRAM_PHOTO_MIMES:
+            if suffix := TELEGRAM_PHOTO_SUFFIXES.get(media.mime):
+                path = path.rename(path.with_suffix(suffix))
+            else:
                 jpeg = temp_path("photo.jpg")
                 await asyncio.to_thread(to_jpeg, path, jpeg)
                 path.unlink()
