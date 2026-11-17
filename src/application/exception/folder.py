@@ -11,3 +11,21 @@ class StorageRootError(TCloudError):
     """Raised when creating or deleting the storage root as a folder."""
 
     code = "invalid_path"
+
+
+class EmptySelectionError(TCloudError):
+    """Raised when an archive selection has no files and no folders."""
+
+    code = "empty_selection"
+
+
+class TooManyItemsError(TCloudError):
+    """Raised when an archive selection has more items than allowed."""
+
+    code = "too_many_items"
+
+
+class StorageMismatchError(TCloudError):
+    """Raised when selected files and folders belong to different storages."""
+
+    code = "storage_mismatch"

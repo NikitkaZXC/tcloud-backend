@@ -6,6 +6,7 @@ from src.api.schemas import (
     FolderDeleteResponse,
     FolderListingResponse,
     FolderResponse,
+    SelectionArchiveCreate,
     TaskResponse,
 )
 from src.application.factory import get_service_folder
@@ -58,6 +59,22 @@ async def create_archive(
     folder_service: FolderService = Depends(get_service_folder),
 ) -> TaskResponse:
     return await folder_service.create_archive(actor, path, archive_format, priority)
+
+
+@router.post(
+    path="/archive/selection",
+    name="folders:archive-selection",
+    summary="Build one archive of selected files and folders of one storage in the background",
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def create_selection_archive(
+    data: SelectionArchiveCreate,
+    actor: Actor = Depends(get_actor),
+    folder_service: FolderService = Depends(get_service_folder),
+) -> TaskResponse:
+    return await folder_service.create_selection_archive(
+        actor, data.files, data.folders, data.format, data.priority, data.name
+    )
 
 
 @router.delete(

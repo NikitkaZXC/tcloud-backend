@@ -24,3 +24,4 @@ class UploadSettings(BaseSettings):
     WEBHOOK_INTERVAL: float = 2.0
     PREMIUM_TTL: float = 60.0
     ARCHIVE_TTL: int = 24 * 3600
+    ARCHIVE_MAX_ITEMS: int = 1000

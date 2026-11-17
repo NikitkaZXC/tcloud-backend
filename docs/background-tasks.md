@@ -22,7 +22,7 @@ API ──(файл в общий том /data/tmp)──► uploads.prepare ◄
 | `uploads.telegram` | `worker-telegram` | `TELEGRAM_CONCURRENCY` (2) | **одна**: общая пауза FloodWait и одна сессия |
 | `archives.build` | `worker-telegram` | те же потоки | та же реплика: архив читает файлы из Telegram сессией `upload` |
 
-Сборка архива (`POST /api/folders/archive`, flows/folders-and-files.md) — задача того же вида, что и загрузка (статус,
+Сборка архива (`POST /api/folders/archive` и `POST /api/folders/archive/selection`, flows/folders-and-files.md) — задача того же вида, что и загрузка (статус,
 приоритет, отмена, место в очереди, heartbeat, `TaskSweeper`), со стадией `archiving` и `params.source = archive`.
 Она занимает поток `worker-telegram`: при двух потоках два больших архива задержат выгрузку в Telegram, поднимите
 `TELEGRAM_CONCURRENCY`, если это мешает. Готовый архив лежит в `tmp` `UPLOAD_ARCHIVE_TTL` (24 ч): путь и срок — в

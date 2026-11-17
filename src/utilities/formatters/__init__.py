@@ -1,9 +1,10 @@
 from .auth import LoginCode, Password, PhoneNumber
 from .storage import StorageDescription, StorageName
-from .upload import FileSize, OnConflict, Priority, SendAs, TcloudPath
+from .upload import ArchiveName, FileSize, OnConflict, Priority, SendAs, TcloudPath
 from .user import ApiKeyName, ManagedRole, UserLogin, UserPassword
 
 __all__ = [
+    "ArchiveName",
     "LoginCode",
     "Password",
     "PhoneNumber",

@@ -12,7 +12,13 @@ from .file import (
     StoredFileNotFoundError,
     ThumbnailNotFoundError,
 )
-from .folder import FolderNotFoundError, StorageRootError
+from .folder import (
+    EmptySelectionError,
+    FolderNotFoundError,
+    StorageMismatchError,
+    StorageRootError,
+    TooManyItemsError,
+)
 from .storage import (
     StorageBusyError,
     StorageNotFoundError,
@@ -57,7 +63,10 @@ __all__ = [
     "SessionNotFoundError",
     "FileChangedError",
     "FileTooLargeError",
+    "EmptySelectionError",
     "FolderNotFoundError",
+    "StorageMismatchError",
+    "TooManyItemsError",
     "PathConflictError",
     "SizeMismatchError",
     "StorageBusyError",
