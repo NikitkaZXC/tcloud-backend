@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import hashlib
 import hmac
 import json
@@ -17,6 +18,7 @@ from src.config import settings
 from src.infrastructure.database.models import FileDB
 from src.infrastructure.enums import MediaKind, UploadQueue
 from src.infrastructure.media import Media
+from src.infrastructure.security import encrypt_file
 from src.utilities.parsers import split_file
 from tests.api.conftest import (
     TELEGRAM_CONCURRENCY,
@@ -344,3 +346,41 @@ async def test_waiting_tasks_show_queue_position(client, telegram, storage):
     for task_id in ids:
         done = await wait_task(client, task_id)
         assert done["status"] == "done" and done["queue_position"] is None
+
+
+async def test_prepare_redelivered_after_encryption_reuses_the_cipher(
+    client, telegram, storage, worker
+):
+    task = await telegram_ready(client, storage, telegram, claimed=False)
+    store = main.app.state.runtime.store
+    current = await store.get(task["id"])
+    cipher = temp_path("file.bin")
+    header = encrypt_file(task["file"], cipher)
+    plain = task["file"].read_bytes()
+    task["file"].unlink()
+    await store.update(
+        task["id"],
+        status="running",
+        waiting={"reason": "queue:uploads.telegram"},
+        params={**current["params"], "encrypt": True},
+        prepared={
+            **current["prepared"],
+            "send_path": str(cipher),
+            "plain_size": len(plain),
+            "encryption_header": base64.b64encode(header).decode(),
+        },
+    )
+    await asyncio.to_thread(
+        worker.run,
+        UploadPipeline(worker).run(UploadQueue.PREPARE, task["id"], 0, True),
+    )
+    for _ in range(100):
+        done = (await client.get(f"/tasks/{task['id']}")).json()
+        if done["status"] != "running":
+            break
+        await asyncio.sleep(0.05)
+    assert done["status"] == "done", done
+    assert done["file"]["encrypted"] is True
+    response = await client.get(f"/files/{done['file']['uuid']}/download")
+    assert response.content == plain
+    assert not cipher.exists()

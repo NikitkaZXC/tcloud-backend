@@ -154,11 +154,16 @@ class UploadPipeline:
         await self._store.update(task["id"], waiting=None)
 
     async def _prepare(self, task: dict) -> None:
-        await self.stage(task, TaskStage.SCANNING, task.get("bytes_total"))
-        prepared = await self._scan(task, Path(task["params"]["file"]))
-        if task["params"].get("encrypt"):
-            prepared = await self._encrypt(task, prepared)
-        await self._store.update(task["id"], prepared=prepared)
+        prepared = task.get("prepared") or {}
+        encrypted = (
+            prepared.get("encryption_header") and Path(prepared["send_path"]).exists()
+        )
+        if not encrypted:
+            await self.stage(task, TaskStage.SCANNING, task.get("bytes_total"))
+            prepared = await self._scan(task, Path(task["params"]["file"]))
+            if task["params"].get("encrypt"):
+                prepared = await self._encrypt(task, prepared)
+            await self._store.update(task["id"], prepared=prepared)
         await self._handoff(
             task,
             UploadQueue.TELEGRAM,
