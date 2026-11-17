@@ -211,6 +211,11 @@ class FakeTelegram:
             raise TelegramMessageGoneError("gone")
         return message, len(message["data"])
 
+    async def thumbnail(self, media: dict) -> bytes | None:
+        if media["media"].kind == MediaKind.PHOTO:
+            return media["data"]
+        return media["thumb"]
+
     async def iter_media(self, media: dict, offset: int, length: int):
         data = media["data"][offset : offset + length]
         for start in range(0, len(data), 7):

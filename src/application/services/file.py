@@ -8,6 +8,7 @@ from src.application.exception import (
     FileChangedError,
     SessionNotAuthorizedError,
     StoredFileNotFoundError,
+    ThumbnailNotFoundError,
 )
 from src.application.schemas import Actor, FileServiceRead
 from src.application.services.access import require
@@ -85,6 +86,23 @@ class FileService:
 
     async def open_download(self, actor: Actor, file_id: UUID) -> tuple[FileDB, object]:
         file, chat_id = await self.get_db(actor, file_id, Permission.READ)
+        return file, await self._media(file, chat_id)
+
+    async def get_thumbnail(
+        self, actor: Actor, file_id: UUID, if_none_match: str | None
+    ) -> tuple[str, bytes | None]:
+        file, chat_id = await self.get_db(actor, file_id, Permission.READ)
+        if file.encryption_header:
+            raise ThumbnailNotFoundError("encrypted files have no thumbnail")
+        tag = f'"{file.tg_message_id}"'
+        if if_none_match == tag:
+            return tag, None
+        data = await self._runtime.download.thumbnail(await self._media(file, chat_id))
+        if not data:
+            raise ThumbnailNotFoundError("Telegram has no thumbnail for this file")
+        return tag, data
+
+    async def _media(self, file: FileDB, chat_id: int) -> object:
         if not self._runtime.download.authorized:
             raise SessionNotAuthorizedError(
                 "the download session is not logged in, log in with /api/telegram/download"
@@ -94,21 +112,21 @@ class FileService:
                 chat_id, file.tg_message_id
             )
         except TelegramMessageGoneError:
-            await self._repo.delete_by_ids([file_id])
+            await self._repo.delete_by_ids([file.id])
             await self._session.commit()
-            logger.info("File {} is gone from Telegram, record removed", file_id)
+            logger.info("File {} is gone from Telegram, record removed", file.id)
             raise
         if size != stored_size(file):
             logger.warning(
                 "File {} changed in Telegram: {} bytes recorded, {} now",
-                file_id,
+                file.id,
                 stored_size(file),
                 size,
             )
             raise FileChangedError(
                 "the file in Telegram was replaced, its size no longer matches"
             )
-        return file, media
+        return media
 
     async def forget_messages(self, chat_id: int, message_ids: list[int]) -> None:
         storage = await self._storages.get_by_chat_id(chat_id)

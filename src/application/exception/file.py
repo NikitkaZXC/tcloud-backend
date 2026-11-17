@@ -17,3 +17,9 @@ class FileChangedError(TCloudError):
     """Raised when the file in Telegram no longer matches the recorded size."""
 
     code = "file_changed"
+
+
+class ThumbnailNotFoundError(TCloudError):
+    """Raised when Telegram has no thumbnail for the file or the file is encrypted."""
+
+    code = "thumbnail_not_found"

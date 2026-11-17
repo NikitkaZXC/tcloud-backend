@@ -35,6 +35,7 @@ from src.infrastructure.limits import (
     CHANNELS_MAX_PREMIUM,
     CHUNK,
     FLOOD_SLEEP_THRESHOLD,
+    THUMB_SIDE,
 )
 from src.infrastructure.media import Media
 
@@ -408,6 +409,35 @@ class TelegramClient:
         if not message or not message.media:
             raise TelegramMessageGoneError("telegram message with this file is gone")
         return message.media, message.file.size
+
+    @translate_errors
+    async def thumbnail(self, media) -> bytes | None:
+        if isinstance(media, types.MessageMediaPhoto):
+            sizes = media.photo.sizes if isinstance(media.photo, types.Photo) else []
+        elif isinstance(media, types.MessageMediaDocument):
+            sizes = getattr(media.document, "thumbs", None) or []
+        else:
+            sizes = []
+        sizes = sorted(
+            (
+                size
+                for size in sizes
+                if isinstance(
+                    size,
+                    (
+                        types.PhotoSize,
+                        types.PhotoCachedSize,
+                        types.PhotoSizeProgressive,
+                    ),
+                )
+            ),
+            key=lambda size: size.w * size.h,
+        )
+        if not sizes:
+            return None
+        fitting = [size for size in sizes if max(size.w, size.h) <= THUMB_SIDE]
+        best = fitting[-1] if fitting else sizes[0]
+        return await self._client.download_media(media, file=bytes, thumb=best.type)
 
     async def iter_media(self, media, offset: int, length: int) -> AsyncIterator[bytes]:
         start = offset - offset % CHUNK

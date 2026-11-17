@@ -6,7 +6,12 @@ from .auth import (
     SessionNotAuthorizedError,
     SessionNotFoundError,
 )
-from .file import FileChangedError, PathConflictError, StoredFileNotFoundError
+from .file import (
+    FileChangedError,
+    PathConflictError,
+    StoredFileNotFoundError,
+    ThumbnailNotFoundError,
+)
 from .folder import FolderNotFoundError, StorageRootError
 from .storage import (
     StorageBusyError,
@@ -60,6 +65,7 @@ __all__ = [
     "StoragePhotoNotFoundError",
     "StorageRootError",
     "StoredFileNotFoundError",
+    "ThumbnailNotFoundError",
     "ArchiveExpiredError",
     "ArchiveNotReadyError",
     "EncryptRequiresFileError",

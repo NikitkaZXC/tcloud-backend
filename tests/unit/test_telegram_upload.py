@@ -106,3 +106,68 @@ async def test_errors_translated(raised, expected):
         assert (
             caught.value.seconds == 42 and caught.value.to_dict()["retry_after"] == 42
         )
+
+
+class ThumbTelethon:
+    def __init__(self) -> None:
+        self.thumbs = []
+
+    async def download_media(self, media, file, thumb):
+        assert file is bytes
+        self.thumbs.append(thumb)
+        return b"jpeg"
+
+
+def _thumb_client() -> tuple[telegram.TelegramClient, ThumbTelethon]:
+    client = telegram.TelegramClient.__new__(telegram.TelegramClient)
+    client._client = ThumbTelethon()
+    return client, client._client
+
+
+def _photo(sizes) -> types.MessageMediaPhoto:
+    return types.MessageMediaPhoto(
+        photo=types.Photo(
+            id=1,
+            access_hash=1,
+            file_reference=b"",
+            date=None,
+            sizes=sizes,
+            dc_id=2,
+        )
+    )
+
+
+async def test_thumbnail_picks_largest_size_within_limit():
+    client, fake = _thumb_client()
+    media = _photo(
+        [
+            types.PhotoStrippedSize(type="i", bytes=b"\x01\x10\x10"),
+            types.PhotoSize(type="s", w=90, h=67, size=1000),
+            types.PhotoSize(type="m", w=320, h=240, size=9000),
+            types.PhotoSizeProgressive(type="y", w=1280, h=960, sizes=[1, 2]),
+        ]
+    )
+    assert await client.thumbnail(media) == b"jpeg"
+    assert fake.thumbs == ["m"]
+
+
+async def test_thumbnail_falls_back_to_smallest_and_skips_stripped():
+    client, fake = _thumb_client()
+    big = _photo([types.PhotoSizeProgressive(type="y", w=1280, h=960, sizes=[1])])
+    assert await client.thumbnail(big) == b"jpeg" and fake.thumbs == ["y"]
+    stripped = _photo([types.PhotoStrippedSize(type="i", bytes=b"\x01")])
+    assert await client.thumbnail(stripped) is None
+    document = types.MessageMediaDocument(
+        document=types.Document(
+            id=1,
+            access_hash=1,
+            file_reference=b"",
+            date=None,
+            mime_type="application/pdf",
+            size=10,
+            dc_id=2,
+            attributes=[],
+        )
+    )
+    assert await client.thumbnail(document) is None
+    assert fake.thumbs == ["y"]

@@ -24,6 +24,7 @@ STATUS_BY_CODE = {
     "photo_not_found": status.HTTP_404_NOT_FOUND,
     "folder_not_found": status.HTTP_404_NOT_FOUND,
     "file_not_found": status.HTTP_404_NOT_FOUND,
+    "thumbnail_not_found": status.HTTP_404_NOT_FOUND,
     "file_changed": status.HTTP_409_CONFLICT,
     "decryption_failed": status.HTTP_409_CONFLICT,
     "encrypt_requires_file": status.HTTP_422_UNPROCESSABLE_CONTENT,

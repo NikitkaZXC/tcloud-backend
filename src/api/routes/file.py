@@ -2,7 +2,7 @@ from urllib.parse import quote
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, status
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 
 from src.api.dependencies import get_actor
 from src.api.schemas import FileResponse
@@ -13,6 +13,8 @@ from src.application.services.file import file_body
 from src.infrastructure.background import AppRuntime
 from src.infrastructure.enums import MediaKind
 from src.utilities.parsers import parse_range
+
+THUMB_MAX_AGE = 24 * 3600
 
 router = APIRouter(prefix="/files", tags=["Files"])
 
@@ -81,6 +83,31 @@ async def download_file(
         media_type="application/octet-stream" if document else file.mime,
         headers=headers,
     )
+
+
+@router.get(
+    path="/{file_id}/thumb",
+    name="files:thumb",
+    summary="Small JPEG preview made by Telegram (none for encrypted files)",
+    status_code=status.HTTP_200_OK,
+    response_class=Response,
+    responses={200: {"content": {"image/jpeg": {}}}, 304: {}},
+)
+async def get_thumbnail(
+    file_id: UUID,
+    if_none_match: str | None = Header(None, alias="if-none-match"),
+    actor: Actor = Depends(get_actor),
+    file_service: FileService = Depends(get_service_file),
+) -> Response:
+    tag, data = await file_service.get_thumbnail(actor, file_id, if_none_match)
+    headers = {
+        "ETag": tag,
+        "Cache-Control": f"private, max-age={THUMB_MAX_AGE}",
+        "X-Content-Type-Options": "nosniff",
+    }
+    if data is None:
+        return Response(status_code=status.HTTP_304_NOT_MODIFIED, headers=headers)
+    return Response(data, media_type="image/jpeg", headers=headers)
 
 
 @router.delete(
