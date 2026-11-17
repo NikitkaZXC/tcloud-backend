@@ -8,6 +8,7 @@ secret() {
 }
 
 fill() {
+    grep -q "^$1=" .env || printf '\n%s=\n' "$1" >> .env
     if grep -q "^$1=$" .env; then
         sed -i.bak "s|^$1=$|$1=$2|" .env && rm -f .env.bak
         echo "generated $1"
