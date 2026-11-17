@@ -188,7 +188,11 @@ async def test_like_wildcards_in_names_are_literal(client, storage):
 async def test_delete_folder_recursive(client, telegram, storage):
     await upload(client, path(storage, "a/1.jpg"), make_image())
     await upload(client, path(storage, "a/b/2.jpg"), make_image())
-    keep = (await upload(client, path(storage, "other/3.jpg"), make_image()))["file"]
+    keep = (
+        await upload(
+            client, path(storage, "other/3.jpg"), make_image(), encrypt="false"
+        )
+    )["file"]
     response = await client.delete("/folders", params={"path": path(storage, "a")})
     assert response.json() == {"path": path(storage, "a"), "deleted_files": 2}
     assert [message["name"] for message in telegram.messages()] == ["3.jpg"]

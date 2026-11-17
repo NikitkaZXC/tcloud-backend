@@ -10,7 +10,7 @@
 - Проверка типа по содержимому, запрет исполняемых файлов (и внутри zip), строгий ClamAV, защита от SSRF.
 - Архивы папки или выбранных файлов и папок (zip, 7z, tar.gz/bz2/xz) фоновой задачей.
 - Превью фото и видео из Telegram (`GET /api/files/{id}/thumb`, JPEG ≤ 320 px, с `ETag`).
-- Шифрование файлов по флагу `encrypt=true` (AES-256-GCM, ключ сервера `APP_ENCRYPTION_KEY`): в Telegram только шифротекст.
+- Шифрование по умолчанию (AES-256-GCM, ключ сервера `APP_ENCRYPTION_KEY`) для всех файлов, кроме `send_as=media`; `encrypt=false` выключает. В Telegram только шифротекст.
 - Вход в Telegram через API: QR или код, двухэтапная проверка, старые сессии tcloud отзываются сами.
 - Удалили файл руками в Telegram — запись в БД пропадает сама (события Telethon, плюс проверка при скачивании).
 - FastAPI, PostgreSQL, RabbitMQ, Redis, Celery, Python 3.14 (uv), всё в Docker.

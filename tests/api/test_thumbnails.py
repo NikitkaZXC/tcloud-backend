@@ -18,7 +18,11 @@ def message(telegram, file: dict) -> dict:
 
 @pytest.fixture
 async def photo(client, storage):
-    return (await upload(client, path(storage, "a/photo.jpg"), make_image()))["file"]
+    return (
+        await upload(
+            client, path(storage, "a/photo.jpg"), make_image(), encrypt="false"
+        )
+    )["file"]
 
 
 async def test_photo_thumbnail(client, telegram, photo):
@@ -47,20 +51,30 @@ async def test_thumbnail_not_modified_skips_telegram(client, download_telegram, 
 
 async def test_photo_sent_as_file_has_thumbnail(client, storage):
     file = (
-        await upload(client, path(storage, "b.png"), make_image("PNG"), send_as="file")
+        await upload(
+            client,
+            path(storage, "b.png"),
+            make_image("PNG"),
+            send_as="file",
+            encrypt="false",
+        )
     )["file"]
     response = await client.get(f"/files/{file['uuid']}/thumb")
     assert response.status_code == 200 and response.content
 
 
 async def test_document_without_thumbnail(client, storage):
-    file = (await upload(client, path(storage, "doc.pdf"), PDF))["file"]
+    file = (await upload(client, path(storage, "doc.pdf"), PDF, encrypt="false"))[
+        "file"
+    ]
     response = await client.get(f"/files/{file['uuid']}/thumb")
     assert response.status_code == 404 and code(response) == "thumbnail_not_found"
 
 
 async def test_document_with_telegram_thumbnail(client, telegram, storage):
-    file = (await upload(client, path(storage, "doc.pdf"), PDF))["file"]
+    file = (await upload(client, path(storage, "doc.pdf"), PDF, encrypt="false"))[
+        "file"
+    ]
     message(telegram, file)["thumb"] = b"\xff\xd8jpeg"
     response = await client.get(f"/files/{file['uuid']}/thumb")
     assert response.status_code == 200 and response.content == b"\xff\xd8jpeg"
@@ -90,8 +104,16 @@ async def test_thumbnail_of_gone_message_removes_record(client, telegram, photo)
 
 
 async def test_thumbnail_needs_read_access(client, storage, make_user):
-    hidden = (await upload(client, path(storage, "secret/x.jpg"), make_image()))["file"]
-    shared = (await upload(client, path(storage, "shared/y.jpg"), make_image()))["file"]
+    hidden = (
+        await upload(
+            client, path(storage, "secret/x.jpg"), make_image(), encrypt="false"
+        )
+    )["file"]
+    shared = (
+        await upload(
+            client, path(storage, "shared/y.jpg"), make_image(), encrypt="false"
+        )
+    )["file"]
     reader = await make_user("reader", "user", {"path": path(storage, "shared")})
     assert (await reader.get(f"/files/{shared['uuid']}/thumb")).status_code == 200
     response = await reader.get(f"/files/{hidden['uuid']}/thumb")

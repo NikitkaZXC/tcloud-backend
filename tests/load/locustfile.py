@@ -76,7 +76,7 @@ class Uploader(HttpUser):
     def _start(self, target: str) -> str | None:
         with self.client.post(
             "/api/uploads",
-            params={"path": target},
+            params={"path": target, "encrypt": "false"},
             data=IMAGE,
             name="/api/uploads",
             catch_response=True,

@@ -11,7 +11,7 @@ from pydantic import SecretStr
 from src.config import settings
 from src.infrastructure.security import HEADER, cipher_size
 from src.infrastructure.security.encryption import BLOCK
-from tests.api.conftest import build_archive, path, upload
+from tests.api.conftest import Remote, build_archive, path, upload, wait_task
 from tests.factories import make_image
 
 TEXT = "".join(random.choices(string.ascii_letters, k=3 * BLOCK + 123)).encode()
@@ -47,9 +47,62 @@ async def test_encrypted_upload_round_trip(client, telegram, storage):
 
 
 async def test_plain_upload_is_not_encrypted(client, telegram, storage):
-    file = (await upload(client, path(storage, "a.txt"), TEXT))["file"]
+    file = (await upload(client, path(storage, "a.txt"), TEXT, encrypt="false"))["file"]
     assert file["encrypted"] is False
     assert telegram.messages()[0]["data"] == TEXT
+
+
+async def test_upload_is_encrypted_by_default(client, telegram, storage):
+    file = (await upload(client, path(storage, "a.txt"), TEXT))["file"]
+    assert file["encrypted"] is True and file["sent_as"] == "file"
+    assert file["size"] == len(TEXT)
+    assert len(telegram.messages()[0]["data"]) == cipher_size(len(TEXT))
+    assert TEXT[:32] not in telegram.messages()[0]["data"]
+    assert telegram.messages()[0]["name"].endswith(".bin")
+    response = await client.get(f"/files/{file['uuid']}/download")
+    assert response.content == TEXT
+
+
+async def test_media_upload_is_plain_by_default(client, telegram, storage):
+    file = (
+        await upload(client, path(storage, "a.jpg"), make_image(), send_as="media")
+    )["file"]
+    assert file["encrypted"] is False and file["sent_as"] == "media"
+    assert telegram.messages()[0]["data"] == make_image()
+
+
+async def test_url_uploads_are_encrypted_by_default(client, telegram, storage, remote):
+    Remote.files["/a.txt"] = TEXT
+    Remote.files["/b.jpg"] = make_image()
+    single = await client.post(
+        "/uploads/from-url",
+        json={"path": path(storage, "a.txt"), "url": f"{remote}/a.txt"},
+    )
+    assert single.status_code == 202, single.text
+    batch = await client.post(
+        "/uploads/batch",
+        json={
+            "items": [
+                {"path": path(storage, "b.jpg"), "url": f"{remote}/b.jpg"},
+                {
+                    "path": path(storage, "m.jpg"),
+                    "url": f"{remote}/b.jpg",
+                    "send_as": "media",
+                },
+                {
+                    "path": path(storage, "p.txt"),
+                    "url": f"{remote}/a.txt",
+                    "encrypt": False,
+                },
+            ]
+        },
+    )
+    assert batch.status_code == 202, batch.text
+    tasks = [await wait_task(client, single.json()["id"])] + [
+        await wait_task(client, item["task"]["id"]) for item in batch.json()["items"]
+    ]
+    assert [task["status"] for task in tasks] == ["done"] * 4, tasks
+    assert [task["file"]["encrypted"] for task in tasks] == [True, True, False, False]
 
 
 async def test_media_cannot_be_encrypted(client, storage):
@@ -91,15 +144,17 @@ async def test_wrong_server_key_refuses_download(client, storage, monkeypatch):
 
 async def test_replace_switches_between_encrypted_and_plain(client, storage):
     target = path(storage, "a.txt")
-    first = (await upload(client, target, b"plain text"))["file"]
+    first = (await upload(client, target, b"plain text", encrypt="false"))["file"]
     second = (
         await upload(client, target, TEXT, encrypt="true", on_conflict="replace")
     )["file"]
     assert second["uuid"] == first["uuid"] and second["encrypted"]
     assert (await client.get(f"/files/{first['uuid']}/download")).content == TEXT
-    third = (await upload(client, target, b"plain again", on_conflict="replace"))[
-        "file"
-    ]
+    third = (
+        await upload(
+            client, target, b"plain again", encrypt="false", on_conflict="replace"
+        )
+    )["file"]
     assert third["encrypted"] is False and third["size"] == len(b"plain again")
     response = await client.get(f"/files/{first['uuid']}/download")
     assert response.content == b"plain again"
@@ -108,7 +163,7 @@ async def test_replace_switches_between_encrypted_and_plain(client, storage):
 async def test_archive_decrypts_files_and_skips_damaged(client, telegram, storage):
     await upload(client, path(storage, "box/secret.txt"), TEXT, encrypt="true")
     await upload(client, path(storage, "box/broken.txt"), TEXT, encrypt="true")
-    await upload(client, path(storage, "box/plain.txt"), b"open")
+    await upload(client, path(storage, "box/plain.txt"), b"open", encrypt="false")
     broken = [m for m in telegram.messages() if m["name"].endswith(".bin")][-1]
     data = bytearray(broken["data"])
     data[HEADER + 10] ^= 1

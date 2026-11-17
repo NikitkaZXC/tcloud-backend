@@ -9,6 +9,7 @@ import pytest
 from src.config import settings
 from src.infrastructure import limits
 from src.infrastructure.media import analyze as probe_module
+from src.infrastructure.security import plain_limit
 from tests.api.conftest import Remote, path, start_upload, upload, wait_task
 from tests.factories import (
     EXE,
@@ -23,7 +24,9 @@ from tests.factories import (
 
 async def test_upload_photo_as_file(client, telegram, storage):
     data = make_image()
-    task = await upload(client, path(storage, "отпуск/2026/photo.jpg"), data)
+    task = await upload(
+        client, path(storage, "отпуск/2026/photo.jpg"), data, encrypt="false"
+    )
     assert task["status"] == "done" and task["progress"] == 100.0, task
     file = task["file"]
     assert file["path"] == path(storage, "отпуск/2026/photo.jpg")
@@ -175,7 +178,7 @@ async def test_executable_content_rejected(client, telegram, storage, name):
 
 
 async def test_upload_document(client, telegram, storage):
-    task = await upload(client, path(storage, "docs/report.pdf"), PDF)
+    task = await upload(client, path(storage, "docs/report.pdf"), PDF, encrypt="false")
     assert task["status"] == "done" and task["warnings"] == [], task
     file = task["file"]
     assert (file["kind"], file["mime"], file["sent_as"], file["size"]) == (
@@ -263,17 +266,21 @@ def declared(size: int) -> dict:
 
 async def test_size_over_limit(client, telegram, storage):
     target = path(storage, "a.mp4")
-    response = await post_file(client, target, **declared(limits.FILE_MAX + 1))
+    plain = {"encrypt": "false"}
+    response = await post_file(client, target, **plain, **declared(limits.FILE_MAX + 1))
     assert (
         response.status_code == 413
         and response.json()["error"]["limit"] == limits.FILE_MAX
     )
+    encrypted = await post_file(client, target, **declared(limits.FILE_MAX))
+    assert encrypted.status_code == 413
+    assert encrypted.json()["error"]["limit"] == plain_limit(limits.FILE_MAX)
     telegram.premium = True
     await client.get("/account")
-    response = await post_file(client, target, **declared(limits.FILE_MAX + 1))
+    response = await post_file(client, target, **plain, **declared(limits.FILE_MAX + 1))
     assert response.json()["error"]["code"] == "size_mismatch"
     big = declared(limits.FILE_MAX_PREMIUM + 1)
-    assert (await post_file(client, target, **big)).status_code == 413
+    assert (await post_file(client, target, **plain, **big)).status_code == 413
 
 
 async def test_body_bigger_than_declared(client, storage):
@@ -456,7 +463,11 @@ async def test_tasks_survive_api_restart(make_client, telegram, storage):
 
 async def test_upload_from_url_with_own_name(client, telegram, storage, remote):
     Remote.files["/IMG_0001.JPG"] = make_image()
-    body = {"url": f"{remote}/IMG_0001.JPG", "path": path(storage, "море.jpg")}
+    body = {
+        "url": f"{remote}/IMG_0001.JPG",
+        "path": path(storage, "море.jpg"),
+        "encrypt": False,
+    }
     response = await client.post("/uploads/from-url", json=body)
     assert response.status_code == 202
     task = await wait_task(client, response.json()["id"])
@@ -478,7 +489,11 @@ async def test_upload_document_from_url(client, telegram, storage, remote):
     Remote.files["/doc"] = PDF
     response = await client.post(
         "/uploads/from-url",
-        json={"url": f"{remote}/doc", "path": path(storage, "doc.pdf")},
+        json={
+            "url": f"{remote}/doc",
+            "path": path(storage, "doc.pdf"),
+            "encrypt": False,
+        },
     )
     task = await wait_task(client, response.json()["id"])
     assert task["status"] == "done" and task["file"]["kind"] == "document"

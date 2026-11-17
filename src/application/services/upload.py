@@ -135,14 +135,15 @@ class UploadService:
             raise SessionNotAuthorizedError(
                 "the upload Telegram session is not logged in, use /api/telegram/upload"
             )
-        if data.encrypt:
+        encrypt = data.send_as == "file" if data.encrypt is None else data.encrypt
+        if encrypt:
             if data.send_as != "file":
                 raise EncryptRequiresFileError(
                     "only files sent with send_as=file can be encrypted"
                 )
             check_available()
         limit = await self._account.file_limit()
-        if data.encrypt:
+        if encrypt:
             limit = plain_limit(limit)
         if data.size is not None and data.size > limit:
             raise FileTooLargeError(
@@ -187,7 +188,7 @@ class UploadService:
                 "send_as": data.send_as,
                 "on_conflict": data.on_conflict,
                 "allow_unscannable": data.allow_unscannable,
-                "encrypt": data.encrypt,
+                "encrypt": encrypt,
                 "callback_url": data.callback_url,
                 "url": data.url,
                 "limit": limit,
