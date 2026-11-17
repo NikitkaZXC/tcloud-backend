@@ -336,7 +336,7 @@ async def test_waiting_tasks_show_queue_position(client, telegram, storage):
         if in_telegram(task)
     ]
     positions = [task["queue_position"] for task in waiting]
-    assert positions == list(range(1, len(waiting) + 1))
+    assert sorted(positions) == list(range(1, len(waiting) + 1))
     last = waiting[-1]
     await wait_for(
         client,

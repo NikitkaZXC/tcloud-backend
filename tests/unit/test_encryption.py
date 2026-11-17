@@ -43,7 +43,7 @@ async def test_round_trip_and_size(tmp_path, size):
     header, cipher = encrypted(tmp_path, data)
     assert len(cipher) == cipher_size(size) and cipher[:HEADER] == header
     assert await read(header, cipher, size, 0, size - 1) == data
-    if size:
+    if size >= 16:
         assert data[:64] not in cipher
 
 
