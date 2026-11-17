@@ -137,7 +137,13 @@ async def test_create_and_list_folder(client, storage):
     nested = (
         await client.get("/folders", params={"path": path(storage, "Отпуск/2026")})
     ).json()
-    assert nested == {"path": path(storage, "Отпуск/2026"), "folders": [], "files": []}
+    assert nested == {
+        "path": path(storage, "Отпуск/2026"),
+        "size": 0,
+        "total_files": 0,
+        "folders": [],
+        "files": [],
+    }
 
 
 async def test_create_folder_twice_merges(client, storage):

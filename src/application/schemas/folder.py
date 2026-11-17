@@ -26,9 +26,16 @@ class FolderServiceRead(BaseModel):
         )
 
 
+class FolderSizeServiceRead(FolderServiceRead):
+    size: int
+    files: int
+
+
 class FolderListingServiceRead(BaseModel):
     path: str
-    folders: list[FolderServiceRead]
+    size: int
+    total_files: int
+    folders: list[FolderSizeServiceRead]
     files: list[FileServiceRead]
 
 

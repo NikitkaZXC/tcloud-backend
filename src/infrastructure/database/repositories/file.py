@@ -1,10 +1,10 @@
 from uuid import UUID
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import case, delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.infrastructure.database.models import FileDB, StorageDB
-from src.infrastructure.database.repositories.like import folder_and_below
+from src.infrastructure.database.repositories.like import folder_and_below, readable
 
 
 class FileRepository:
@@ -62,6 +62,32 @@ class FileRepository:
         if folder:
             statement = statement.where(folder_and_below(FileDB.folder_path, folder))
         return list((await self._session.scalars(statement)).all())
+
+    async def sizes_below(
+        self,
+        storage_id: UUID,
+        folder: str,
+        scopes: list[tuple[UUID, str, bool]] | None,
+    ) -> dict[str | None, tuple[int, int]]:
+        rest = func.substr(FileDB.folder_path, len(folder) + 2 if folder else 1)
+        child = case(
+            (FileDB.folder_path == folder, None),
+            else_=func.split_part(rest, "/", 1),
+        ).label("child")
+        statement = (
+            select(child, func.count(), func.coalesce(func.sum(FileDB.size), 0))
+            .where(
+                FileDB.storage_id == storage_id,
+                readable(FileDB.storage_id, FileDB.folder_path, scopes),
+            )
+            .group_by(child)
+        )
+        if folder:
+            statement = statement.where(folder_and_below(FileDB.folder_path, folder))
+        return {
+            row[0]: (row[1], row[2])
+            for row in (await self._session.execute(statement)).all()
+        }
 
     async def get_messages_below(
         self, storage_id: UUID, folder: str

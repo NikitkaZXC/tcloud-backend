@@ -19,9 +19,15 @@ from src.application.schemas import (
     FolderDeleteServiceRead,
     FolderListingServiceRead,
     FolderServiceRead,
+    FolderSizeServiceRead,
     TaskServiceRead,
 )
-from src.application.services.access import allowed, leads_to_grant, require
+from src.application.services.access import (
+    allowed,
+    leads_to_grant,
+    read_scopes,
+    require,
+)
 from src.application.services.storage import StorageService
 from src.application.services.task import TaskService
 from src.application.services.temp import temp_path
@@ -95,9 +101,22 @@ class FolderService:
             or leads_to_grant(actor, storage_id, folder.path)
         ]
         files = await self._files.get_in_folder(storage_id, path) if readable else []
+        sizes = await self._files.sizes_below(
+            storage_id, path, read_scopes(actor, storage_id)
+        )
         return FolderListingServiceRead(
             path=join_path(storage_id, path),
-            folders=[FolderServiceRead.from_db(folder) for folder in folders],
+            size=sum(size for _, size in sizes.values()),
+            total_files=sum(count for count, _ in sizes.values()),
+            folders=[
+                FolderSizeServiceRead(
+                    **FolderServiceRead.from_db(folder).model_dump(),
+                    files=sizes.get(name, (0, 0))[0],
+                    size=sizes.get(name, (0, 0))[1],
+                )
+                for folder in folders
+                for name in [folder.path.rpartition("/")[2]]
+            ],
             files=[FileServiceRead.from_db(file, storage.tg_chat_id) for file in files],
         )
 

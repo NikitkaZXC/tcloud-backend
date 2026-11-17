@@ -33,6 +33,18 @@ def allowed(
     )
 
 
+def read_scopes(
+    actor: Actor, storage_id: UUID | None = None
+) -> list[tuple[UUID, str, bool]] | None:
+    if actor.is_admin:
+        return None
+    return [
+        (grant.storage_id, grant.folder, grant.recursive)
+        for grant in actor.grants
+        if grant.can_read and storage_id in (None, grant.storage_id)
+    ]
+
+
 def leads_to_grant(actor: Actor, storage_id: UUID, folder: str) -> bool:
     return any(
         grant.storage_id == storage_id

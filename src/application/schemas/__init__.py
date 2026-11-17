@@ -6,7 +6,12 @@ from .auth import (
     SessionStateServiceRead,
 )
 from .file import FileServiceRead, TelegramFileServiceRead, caption_token, telegram_link
-from .folder import FolderDeleteServiceRead, FolderListingServiceRead, FolderServiceRead
+from .folder import (
+    FolderDeleteServiceRead,
+    FolderListingServiceRead,
+    FolderServiceRead,
+    FolderSizeServiceRead,
+)
 from .storage import (
     StorageServiceCreate,
     StorageServiceRead,
@@ -49,6 +54,7 @@ __all__ = [
     "FolderDeleteServiceRead",
     "FolderListingServiceRead",
     "FolderServiceRead",
+    "FolderSizeServiceRead",
     "HealthServiceRead",
     "StorageServiceCreate",
     "StorageServiceRead",
