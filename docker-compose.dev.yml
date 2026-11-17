@@ -58,7 +58,7 @@ services:
       RABBITMQ_HOST: rabbitmq
       REDIS_HOST: redis
       TELEGRAM_SESSION: /data/session/tcloud
-      TELEGRAM_WORKER_SESSION: /data/session/tcloud-worker
+      TELEGRAM_UPLOAD_SESSION: /data/session/tcloud-upload
       TELEGRAM_DOWNLOAD_SESSION: /data/session/tcloud-download
       JWT_PRIVATE_KEY_PATH: /certs/jwt-private.pem
       JWT_PUBLIC_KEY_PATH: /certs/jwt-public.pem

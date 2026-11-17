@@ -7,8 +7,8 @@ from src.infrastructure.integrations.telegram.login import TelegramLogin, sessio
 
 
 def session_path(target: TelegramSession) -> Path:
-    if target == TelegramSession.WORKER:
-        return settings.telegram.WORKER_SESSION
+    if target == TelegramSession.UPLOAD:
+        return settings.telegram.UPLOAD_SESSION
     if target == TelegramSession.DOWNLOAD:
         return settings.telegram.DOWNLOAD_SESSION
     return settings.telegram.SESSION

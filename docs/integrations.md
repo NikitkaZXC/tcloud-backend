@@ -4,10 +4,10 @@
 
 Пользовательский аккаунт, а не бот: бот не может создавать каналы и не имеет Premium.
 Три сессии одного аккаунта в volume `session`: `TELEGRAM_SESSION` (API: каналы, удаление, события),
-`TELEGRAM_WORKER_SESSION` (worker-telegram: выгрузка) и `TELEGRAM_DOWNLOAD_SESSION` (API: отдача файлов). Один
+`TELEGRAM_UPLOAD_SESSION` (worker-telegram: выгрузка) и `TELEGRAM_DOWNLOAD_SESSION` (API: отдача файлов). Один
 SQLite-файл сессии нельзя открывать из двух процессов — будут блокировки и риск `AUTH_KEY_DUPLICATED`; скачивания
 вынесены в свою сессию, чтобы их трафик и FloodWait не задевали управление каналами. В каждую входят отдельно через
-`/api/telegram` (только root; в Telegram это три устройства, `tcloud-api`, `tcloud-worker`, `tcloud-download`; flows/auth.md).
+`/api/telegram` (только root; в Telegram это три устройства, `tcloud-api`, `tcloud-upload`, `tcloud-download`; flows/auth.md).
 Обновления получает только API-сессия — ради событий об удалённых сообщениях (flows/folders-and-files.md).
 
 | Лимит | Значение | Как учитываем |

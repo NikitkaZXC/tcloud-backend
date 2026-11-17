@@ -5,7 +5,7 @@ tcloud работает от пользовательского аккаунта
 | Сессия | Файл | Кто использует | Устройство в Telegram |
 |---|---|---|---|
 | `api` | `TELEGRAM_SESSION` | API: каналы, скачивание, удаление, события об удалениях | `tcloud-api` |
-| `worker` | `TELEGRAM_WORKER_SESSION` | `worker-telegram`: отправка файлов | `tcloud-worker` |
+| `upload` | `TELEGRAM_UPLOAD_SESSION` | `worker-telegram`: отправка файлов | `tcloud-upload` |
 | `download` | `TELEGRAM_DOWNLOAD_SESSION` | API, отдельный клиент: скачивание файлов (`/files/{id}/download`) | `tcloud-download` |
 
 В каждую сессию входят отдельно, через API (Swagger `/docs`, раздел **Telegram**). Все эндпоинты только для root (flows/users.md).
@@ -14,7 +14,7 @@ tcloud работает от пользовательского аккаунта
 
 ## Без сессий
 
-Приложение стартует и без входа: `/docs`, `/api/telegram` и `/api/health` работают, `health.telegram` / `health.telegram_worker` /
+Приложение стартует и без входа: `/docs`, `/api/telegram` и `/api/health` работают, `health.telegram` / `health.telegram_upload` /
 `health.telegram_download` равны `false`. Всё, что ходит в Telegram через API-сессию, отвечает `503 telegram_unauthorized`; загрузки без сессии
 воркера отклоняются сразу тем же кодом, скачивания без сессии `download` — тоже. Вход в `download` подменяет клиент
 скачиваний на лету. После входа в `api` каналы из `TELEGRAM_CHATS` подключаются и запускается
@@ -22,7 +22,7 @@ tcloud работает от пользовательского аккаунта
 
 ## Шаги
 
-`{session}` — `api`, `worker` или `download`. Текущее состояние — `GET /api/telegram`: для каждой сессии `authorized` и незавершённый
+`{session}` — `api`, `upload` или `download`. Текущее состояние — `GET /api/telegram`: для каждой сессии `authorized` и незавершённый
 вход `login` (`step`: `qr`, `code`, `password`, `expired`, `failed`; `expires_at`; `error`).
 
 **По QR.** `POST /api/telegram/{session}/qr` отдаёт `{"url": "tg://login?token=…", "expires_at": "…"}` (около 30 с,
@@ -57,7 +57,7 @@ tcloud работает от пользовательского аккаунта
 Telegram) сессию воркер замечает на первом же запросе: задача падает с `telegram_unauthorized`, клиент сбрасывается,
 после нового входа следующая задача идёт уже на новой сессии.
 
-После повторного входа прежние устройства `tcloud-api` / `tcloud-worker` остаются в списке устройств Telegram с рабочими
+После повторного входа прежние устройства `tcloud-api` / `tcloud-upload` остаются в списке устройств Telegram с рабочими
 ключами. tcloud отзывает их сам: после каждого входа и раз в `TELEGRAM_SESSION_SWEEP_INTERVAL` (1 ч) API-сессия
 оставляет самое новое устройство каждого вида (своё текущее всегда) и завершает остальные. Telegram разрешает
 сессии завершать другие только через 24 ч после её входа (`session_too_fresh`) — до этого чистка ждёт и повторяется.

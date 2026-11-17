@@ -21,7 +21,7 @@ class HealthService:
         telegram = (
             self._runtime.telegram.connected() and self._runtime.telegram.authorized
         )
-        telegram_worker = session_exists(TelegramSession.WORKER)
+        telegram_upload = session_exists(TelegramSession.UPLOAD)
         telegram_download = (
             self._runtime.download.connected() and self._runtime.download.authorized
         )
@@ -33,7 +33,7 @@ class HealthService:
         return HealthServiceRead(
             ok=db
             and telegram
-            and telegram_worker
+            and telegram_upload
             and telegram_download
             and antivirus
             and redis
@@ -41,7 +41,7 @@ class HealthService:
             and all(workers.values()),
             db=db,
             telegram=telegram,
-            telegram_worker=telegram_worker,
+            telegram_upload=telegram_upload,
             telegram_download=telegram_download,
             antivirus=antivirus,
             redis=redis,

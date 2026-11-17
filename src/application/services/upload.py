@@ -131,9 +131,9 @@ class UploadService:
             check_scheme(data.callback_url)
         if data.url:
             check_scheme(data.url)
-        if not session_exists(TelegramSession.WORKER):
+        if not session_exists(TelegramSession.UPLOAD):
             raise SessionNotAuthorizedError(
-                "the worker Telegram session is not logged in, use /api/telegram/worker"
+                "the upload Telegram session is not logged in, use /api/telegram/upload"
             )
         if data.encrypt:
             if data.send_as != "file":

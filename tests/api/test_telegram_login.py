@@ -109,25 +109,25 @@ async def test_expired_qr_reports_failure(client, logins):
 
 
 async def test_code_login_for_worker(
-    logged_in, client, worker_session, logins, storage
+    logged_in, client, upload_session, logins, storage
 ):
-    worker_session.unlink()
+    upload_session.unlink()
     rejected = await client.post(
         "/uploads", params={"path": path(storage, "a.pdf")}, content=PDF
     )
     assert rejected.status_code == 503
     assert rejected.json()["error"]["code"] == "telegram_unauthorized"
 
-    sent = await client.post("/telegram/worker/code", json={"phone": "+79991234567"})
+    sent = await client.post("/telegram/upload/code", json={"phone": "+79991234567"})
     assert sent.status_code == 200
     assert sent.json()["login"]["step"] == "code"
-    assert logins[TelegramSession.WORKER].phone == "+79991234567"
-    wrong = await client.post("/telegram/worker/sign-in", json={"code": "00000"})
+    assert logins[TelegramSession.UPLOAD].phone == "+79991234567"
+    wrong = await client.post("/telegram/upload/sign-in", json={"code": "00000"})
     assert wrong.status_code == 400 and wrong.json()["error"]["code"] == "invalid_code"
-    assert (await state(client, "worker"))["login"]["step"] == "code"
-    done = await client.post("/telegram/worker/sign-in", json={"code": "12345"})
-    assert done.json() == {"session": "worker", "authorized": True, "login": None}
-    assert worker_session.exists()
+    assert (await state(client, "upload"))["login"]["step"] == "code"
+    done = await client.post("/telegram/upload/sign-in", json={"code": "12345"})
+    assert done.json() == {"session": "upload", "authorized": True, "login": None}
+    assert upload_session.exists()
     task = await upload(client, path(storage, "a.pdf"), PDF)
     assert task["status"] == "done", task
 
@@ -147,7 +147,7 @@ async def test_login_steps_are_checked(logged_in, client):
     already = await client.post("/telegram/api/qr")
     assert already.status_code == 409
     assert already.json()["error"]["code"] == "already_authorized"
-    missing = await client.post("/telegram/worker/sign-in", json={"code": "12345"})
+    missing = await client.post("/telegram/upload/sign-in", json={"code": "12345"})
     assert missing.status_code == 404
     assert missing.json()["error"]["code"] == "login_not_found"
 
@@ -197,10 +197,10 @@ async def test_login_expires(client, monkeypatch):
     assert response.status_code == 404
 
 
-async def test_logout(logged_in, client, worker_session):
-    response = await client.post("/telegram/worker/logout")
-    assert response.json() == {"session": "worker", "authorized": False, "login": None}
-    assert not worker_session.exists()
+async def test_logout(logged_in, client, upload_session):
+    response = await client.post("/telegram/upload/logout")
+    assert response.json() == {"session": "upload", "authorized": False, "login": None}
+    assert not upload_session.exists()
     response = await client.post("/telegram/api/logout")
     assert response.json()["authorized"] is False
     assert not API_SESSION.exists()
@@ -208,11 +208,11 @@ async def test_logout(logged_in, client, worker_session):
 
 async def test_sessions_list_only_tcloud(logged_in, client):
     current = logged_in.add_authorization("tcloud-api", 1, current=True)
-    worker = logged_in.add_authorization("tcloud-worker", 2)
+    worker = logged_in.add_authorization("tcloud-upload", 2)
     logged_in.add_authorization("iPhone 15", 100)
     listing = (await client.get("/telegram/sessions")).json()
     assert {item["id"] for item in listing} == {str(current.hash), str(worker.hash)}
-    assert {item["session"] for item in listing} == {"api", "worker"}
+    assert {item["session"] for item in listing} == {"api", "upload"}
     own = await client.delete(f"/telegram/sessions/{current.hash}")
     assert own.status_code == 409 and own.json()["error"]["code"] == "current_session"
     phone = logged_in.authorizations_list[2].hash
@@ -226,8 +226,8 @@ async def test_sweep_keeps_newest_tcloud_sessions(logged_in, client):
 
     old_api = logged_in.add_authorization("tcloud-api", 300)
     current = logged_in.add_authorization("tcloud-api", 30, current=True)
-    old_worker = logged_in.add_authorization("tcloud-worker", 200)
-    worker = logged_in.add_authorization("tcloud-worker", 20)
+    old_worker = logged_in.add_authorization("tcloud-upload", 200)
+    worker = logged_in.add_authorization("tcloud-upload", 20)
     phone = logged_in.add_authorization("Telegram Desktop", 500)
     auth = AuthService(main.app.state.runtime)
     assert await auth.sweep() == 2
@@ -239,8 +239,8 @@ async def test_sweep_keeps_newest_tcloud_sessions(logged_in, client):
 async def test_sweep_waits_while_session_is_fresh(logged_in, client):
     from src.application.services import AuthService
 
-    logged_in.add_authorization("tcloud-worker", 200)
-    logged_in.add_authorization("tcloud-worker", 1)
+    logged_in.add_authorization("tcloud-upload", 200)
+    logged_in.add_authorization("tcloud-upload", 1)
     logged_in.too_fresh = True
     await AuthService(main.app.state.runtime).sweep_quietly()
     assert len(logged_in.authorizations_list) == 2
@@ -271,7 +271,7 @@ async def test_revoked_worker_session_fails_task_and_reconnects(
 
 
 async def test_download_needs_its_own_session(
-    logged_in, worker_session, download_session, download_telegram, make_client, logins
+    logged_in, upload_session, download_session, download_telegram, make_client, logins
 ):
     download_session.unlink()
     client = await make_client()

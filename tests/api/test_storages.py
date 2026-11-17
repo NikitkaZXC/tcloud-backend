@@ -22,7 +22,7 @@ async def test_health(client, scanner, redis):
         "ok": True,
         "db": True,
         "telegram": True,
-        "telegram_worker": True,
+        "telegram_upload": True,
         "telegram_download": True,
         "antivirus": True,
         "redis": True,

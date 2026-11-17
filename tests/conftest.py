@@ -39,7 +39,7 @@ TEST_ENV = {
     "TELEGRAM_API_HASH": "test",
     "TELEGRAM_CHATS": "",
     "TELEGRAM_SESSION": os.path.join(SESSIONS, "session"),
-    "TELEGRAM_WORKER_SESSION": os.path.join(SESSIONS, "worker"),
+    "TELEGRAM_UPLOAD_SESSION": os.path.join(SESSIONS, "upload"),
     "TELEGRAM_DOWNLOAD_SESSION": os.path.join(SESSIONS, "download"),
     "UPLOAD_TMP_DIR": tempfile.mkdtemp(prefix="tcloud-tmp-"),
     "UPLOAD_MIN_FREE_DISK_MB": "0",

@@ -20,7 +20,7 @@ API ──(файл в общий том /data/tmp)──► uploads.prepare ◄
 | `uploads.download` | `worker-download` | `UPLOAD_DOWNLOAD_CONCURRENCY` (4) | сколько угодно |
 | `uploads.prepare` | `worker-prepare` | `UPLOAD_PREPARE_CONCURRENCY` (4) | сколько угодно |
 | `uploads.telegram` | `worker-telegram` | `TELEGRAM_CONCURRENCY` (2) | **одна**: общая пауза FloodWait и одна сессия |
-| `archives.build` | `worker-telegram` | те же потоки | та же реплика: архив читает файлы из Telegram worker-сессией |
+| `archives.build` | `worker-telegram` | те же потоки | та же реплика: архив читает файлы из Telegram сессией `upload` |
 
 Сборка архива (`POST /api/folders/archive`, flows/folders-and-files.md) — задача того же вида, что и загрузка (статус,
 приоритет, отмена, место в очереди, heartbeat, `TaskSweeper`), со стадией `archiving` и `params.source = archive`.

@@ -97,9 +97,9 @@ class FolderService:
         await self._storage_service.get_db(storage_id)
         if not await self._repo.exists(storage_id, path):
             raise FolderNotFoundError("folder not found")
-        if not session_exists(TelegramSession.WORKER):
+        if not session_exists(TelegramSession.UPLOAD):
             raise SessionNotAuthorizedError(
-                "the worker Telegram session is not logged in, use /api/telegram/worker"
+                "the upload Telegram session is not logged in, use /api/telegram/upload"
             )
         files = [
             file

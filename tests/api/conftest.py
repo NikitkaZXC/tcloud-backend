@@ -63,8 +63,8 @@ def scanner() -> FakeScanner:
 
 
 @pytest.fixture
-def worker_session() -> Iterator[Path]:
-    path = session_file(session_path(TelegramSession.WORKER))
+def upload_session() -> Iterator[Path]:
+    path = session_file(session_path(TelegramSession.UPLOAD))
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(b"session")
     yield path
@@ -72,8 +72,8 @@ def worker_session() -> Iterator[Path]:
 
 
 @pytest.fixture
-def worker_telegram(worker_session: Path) -> FakeTelegram:
-    return FakeTelegram(session_path(TelegramSession.WORKER))
+def upload_telegram(upload_session: Path) -> FakeTelegram:
+    return FakeTelegram(session_path(TelegramSession.UPLOAD))
 
 
 @pytest.fixture
@@ -113,7 +113,7 @@ async def make_client(
     redis,
     worker: WorkerRuntime,
     telegram: FakeTelegram,
-    worker_telegram: FakeTelegram,
+    upload_telegram: FakeTelegram,
     download_telegram: FakeTelegram,
     logins: dict[TelegramSession, FakeLogin],
     scanner: FakeScanner,
@@ -123,7 +123,7 @@ async def make_client(
     def create_telegram(session=TelegramSession.API, receive_updates=True):
         return {
             TelegramSession.API: telegram,
-            TelegramSession.WORKER: worker_telegram,
+            TelegramSession.UPLOAD: upload_telegram,
             TelegramSession.DOWNLOAD: download_telegram,
         }[session]
 

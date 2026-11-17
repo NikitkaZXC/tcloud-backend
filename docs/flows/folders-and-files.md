@@ -38,7 +38,7 @@ RAR не поддерживается: его создаёт только про
 медиа почти не меньше самих файлов.
 
 Как работает (`services/folder.py`, `services/pipeline.py`, `services/archive.py`, `infrastructure/archive.py`):
-- до постановки в очередь проверяются права, папка, вход сессии `worker` и место на диске: `DiskBudget` должен
+- до постановки в очередь проверяются права, папка, вход сессии `upload` и место на диске: `DiskBudget` должен
   вместить сумму размеров плюс самый большой файл, иначе `507 insufficient_storage`;
 - собирает `worker-telegram` (очередь `archives.build`, та же сессия Telethon и общая пауза FloodWait, см.
   background-tasks.md): файлы по одному качаются из Telegram во временный файл в `UPLOAD_TMP_DIR` и дописываются в

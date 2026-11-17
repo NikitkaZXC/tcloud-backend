@@ -10,7 +10,7 @@ class HealthServiceRead(BaseModel):
     ok: bool
     db: bool
     telegram: bool
-    telegram_worker: bool
+    telegram_upload: bool
     telegram_download: bool
     antivirus: bool
     redis: bool

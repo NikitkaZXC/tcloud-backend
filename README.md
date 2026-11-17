@@ -21,8 +21,8 @@ make up           # API на 127.0.0.1:8000, Swagger — /docs
 ```
 
 Сначала войдите как root (`ROOT_LOGIN` / `ROOT_PASSWORD` из `.env`): `POST /api/auth/signin`, токены придут в HttpOnly-куках.
-Потом войдите в Telegram (Swagger, раздел **Telegram**, по QR или по коду с 2FA) отдельно для сессий `api`, `worker` и `download`:
-`POST /api/telegram/api/qr`, `POST /api/telegram/worker/qr`, `POST /api/telegram/download/qr` ([docs/flows/auth.md](docs/flows/auth.md)).
+Потом войдите в Telegram (Swagger, раздел **Telegram**, по QR или по коду с 2FA) отдельно для сессий `api`, `upload` и `download`:
+`POST /api/telegram/api/qr`, `POST /api/telegram/upload/qr`, `POST /api/telegram/download/qr` ([docs/flows/auth.md](docs/flows/auth.md)).
 
 Пользователи, роли и гранты на папки описаны в [docs/flows/users.md](docs/flows/users.md). Для скриптов удобнее API-ключ:
 `POST /api/users/{id}/api-keys`.

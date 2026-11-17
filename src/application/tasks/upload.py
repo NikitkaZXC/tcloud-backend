@@ -17,11 +17,11 @@ from src.infrastructure.integrations import (
 
 
 def _telegram() -> TelegramClient:
-    if not session_exists(TelegramSession.WORKER):
+    if not session_exists(TelegramSession.UPLOAD):
         raise TelegramUnauthorizedError(
-            "worker Telegram session is not authorized: log in with /api/telegram/worker"
+            "upload Telegram session is not authorized: log in with /api/telegram/upload"
         )
-    return create_telegram(TelegramSession.WORKER, receive_updates=False)
+    return create_telegram(TelegramSession.UPLOAD, receive_updates=False)
 
 
 runtime = WorkerRuntime(telegram=_telegram, scanner=create_scanner)
