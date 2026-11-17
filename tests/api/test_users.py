@@ -360,6 +360,23 @@ async def test_storage_stats_count_only_readable_files(client, storage, make_use
     assert seen["total_size"] == 3 * len(PDF) + 3
     full = (await client.get(f"/storages/{storage['id']}")).json()
     assert full["files"] == 5
+    other = (await client.post("/storages", json={"name": "other"})).json()
+    await upload(client, path(other, "x.pdf"), PDF)
+    listed = {item["id"]: item for item in (await user.get("/storages")).json()}
+    assert list(listed) == [storage["id"]]
+    assert (listed[storage["id"]]["files"], listed[storage["id"]]["total_size"]) == (
+        3,
+        3 * len(PDF) + 3,
+    )
+    everything = {item["id"]: item for item in (await client.get("/storages")).json()}
+    assert everything[storage["id"]]["files"] == 5
+    assert (
+        everything[other["id"]]["files"],
+        everything[other["id"]]["total_size"],
+    ) == (
+        1,
+        len(PDF),
+    )
 
 
 async def test_signin_is_rate_limited_by_ip(anonymous, monkeypatch):

@@ -1,10 +1,10 @@
 from uuid import UUID
 
-from sqlalchemy import false, func, or_, select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.infrastructure.database.models import FileDB, StorageDB
-from src.infrastructure.database.repositories.like import folder_and_below
+from src.infrastructure.database.repositories.like import readable
 
 
 class StorageRepository:
@@ -50,28 +50,25 @@ class StorageRepository:
         )
 
     async def get_stats(
-        self, storage_id: UUID, folders: list[tuple[str, bool]] | None = None
-    ) -> tuple[int, int]:
-        statement = select(func.count(), func.coalesce(func.sum(FileDB.size), 0)).where(
-            FileDB.storage_id == storage_id
-        )
-        if folders is not None:
-            statement = statement.where(
-                or_(
-                    false(),
-                    *(
-                        (
-                            (
-                                folder_and_below(FileDB.folder_path, folder)
-                                if folder
-                                else FileDB.storage_id == storage_id
-                            )
-                            if recursive
-                            else FileDB.folder_path == folder
-                        )
-                        for folder, recursive in folders
-                    ),
-                )
+        self,
+        storage_ids: list[UUID],
+        scopes: list[tuple[UUID, str, bool]] | None,
+    ) -> dict[UUID, tuple[int, int]]:
+        if not storage_ids:
+            return {}
+        statement = (
+            select(
+                FileDB.storage_id,
+                func.count(),
+                func.coalesce(func.sum(FileDB.size), 0),
             )
-        count, total = (await self._session.execute(statement)).one()
-        return count, total
+            .where(
+                FileDB.storage_id.in_(storage_ids),
+                readable(FileDB.storage_id, FileDB.folder_path, scopes),
+            )
+            .group_by(FileDB.storage_id)
+        )
+        return {
+            row[0]: (row[1], row[2])
+            for row in (await self._session.execute(statement)).all()
+        }

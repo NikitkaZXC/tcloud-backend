@@ -120,6 +120,24 @@ async def test_list_storages(client):
     listed = (await client.get("/storages")).json()
     assert [item["id"] for item in listed] == [first["id"], second["id"]]
     assert [item["name"] for item in listed] == ["A", "B"]
+    assert [(item["files"], item["total_size"]) for item in listed] == [(0, 0), (0, 0)]
+
+
+async def test_list_storages_counts_files(client):
+    first = (await client.post("/storages", json={"name": "A"})).json()
+    second = (await client.post("/storages", json={"name": "B"})).json()
+    await upload(client, path(first, "a/1.pdf"), PDF)
+    await upload(client, path(first, "2.jpg"), make_image())
+    await upload(client, path(second, "deep/er/3.pdf"), PDF + b"x")
+    listed = {item["id"]: item for item in (await client.get("/storages")).json()}
+    assert (listed[first["id"]]["files"], listed[first["id"]]["total_size"]) == (
+        2,
+        len(PDF) + len(make_image()),
+    )
+    assert (listed[second["id"]]["files"], listed[second["id"]]["total_size"]) == (
+        1,
+        len(PDF) + 1,
+    )
 
 
 async def test_name_lives_in_telegram(client, telegram, storage):

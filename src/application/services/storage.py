@@ -17,7 +17,11 @@ from src.application.schemas import (
     StorageServiceRead,
     StorageServiceUpdate,
 )
-from src.application.services.access import can_see_storage, require_admin
+from src.application.services.access import (
+    can_see_storage,
+    read_scopes,
+    require_admin,
+)
 from src.application.services.temp import temp_path, write_body
 from src.infrastructure.background import AppRuntime
 from src.infrastructure.database.models import StorageDB
@@ -80,8 +84,16 @@ class StorageService:
         infos = await self._runtime.telegram.channels(
             [storage.tg_chat_id for storage in storages]
         )
+        stats = await self._repo.get_stats(
+            [storage.id for storage in storages], read_scopes(actor)
+        )
         return [
-            StorageServiceRead.from_db(storage, infos.get(storage.tg_chat_id))
+            StorageServiceRead.from_db(
+                storage,
+                infos.get(storage.tg_chat_id),
+                files=stats.get(storage.id, (0, 0))[0],
+                total_size=stats.get(storage.id, (0, 0))[1],
+            )
             for storage in storages
         ]
 
@@ -92,18 +104,8 @@ class StorageService:
     async def get(self, actor: Actor, storage_id: UUID) -> StorageServiceRead:
         self.check_visible(actor, storage_id)
         storage = await self.get_db(storage_id)
-        files, total_size = await self._repo.get_stats(
-            storage_id,
-            (
-                None
-                if actor.is_admin
-                else [
-                    (grant.folder, grant.recursive)
-                    for grant in actor.grants
-                    if grant.storage_id == storage_id and grant.can_read
-                ]
-            ),
-        )
+        stats = await self._repo.get_stats([storage_id], read_scopes(actor, storage_id))
+        files, total_size = stats.get(storage_id, (0, 0))
         info = (await self._runtime.telegram.channels([storage.tg_chat_id])).get(
             storage.tg_chat_id
         )
