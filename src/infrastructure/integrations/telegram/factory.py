@@ -27,7 +27,7 @@ def create_telegram(
         settings.telegram.API_HASH.get_secret_value(),
         settings.telegram.UPLOAD_WORKERS,
         receive_updates,
-        f"tcloud-{target}",
+        target.value,
     )
 
 
@@ -36,5 +36,5 @@ def create_login(target: TelegramSession) -> TelegramLogin:
         session_path(target),
         settings.telegram.API_ID,
         settings.telegram.API_HASH.get_secret_value(),
-        f"tcloud-{target}",
+        target.value,
     )

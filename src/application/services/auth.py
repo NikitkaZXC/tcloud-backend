@@ -37,7 +37,7 @@ from src.infrastructure.integrations import (
 )
 from src.utilities.errors import TCloudError
 
-MODELS = {f"tcloud-{session}": session for session in TelegramSession}
+MODELS = {session.value: session for session in TelegramSession}
 MAX_ATTEMPTS = 5
 
 
@@ -294,7 +294,7 @@ class AuthService:
         return [
             item
             for item in await self._runtime.telegram.authorizations()
-            if item.device_model in MODELS
+            if item.device_model in MODELS and item.api_id == settings.telegram.API_ID
         ]
 
     async def sessions(self) -> list[AuthorizationServiceRead]:

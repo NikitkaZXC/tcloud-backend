@@ -4,9 +4,9 @@ tcloud работает от пользовательского аккаунта
 
 | Сессия | Файл | Кто использует | Устройство в Telegram |
 |---|---|---|---|
-| `api` | `TELEGRAM_SESSION` | API: каналы, скачивание, удаление, события об удалениях | `tcloud-api` |
-| `upload` | `TELEGRAM_UPLOAD_SESSION` | `worker-telegram`: отправка файлов | `tcloud-upload` |
-| `download` | `TELEGRAM_DOWNLOAD_SESSION` | API, отдельный клиент: скачивание файлов (`/files/{id}/download`) | `tcloud-download` |
+| `api` | `TELEGRAM_SESSION` | API: каналы, скачивание, удаление, события об удалениях | `api` |
+| `upload` | `TELEGRAM_UPLOAD_SESSION` | `worker-telegram`: отправка файлов | `upload` |
+| `download` | `TELEGRAM_DOWNLOAD_SESSION` | API, отдельный клиент: скачивание файлов (`/files/{id}/download`) | `download` |
 
 В каждую сессию входят отдельно, через API (Swagger `/docs`, раздел **Telegram**). Все эндпоинты только для root (flows/users.md).
 Сессия, которая подтверждала бы вход других устройств, не хранится: такая сессия могла бы подключить к аккаунту
@@ -57,13 +57,14 @@ tcloud работает от пользовательского аккаунта
 Telegram) сессию воркер замечает на первом же запросе: задача падает с `telegram_unauthorized`, клиент сбрасывается,
 после нового входа следующая задача идёт уже на новой сессии.
 
-После повторного входа прежние устройства `tcloud-api` / `tcloud-upload` остаются в списке устройств Telegram с рабочими
+После повторного входа прежние устройства `api` / `upload` остаются в списке устройств Telegram с рабочими
 ключами. tcloud отзывает их сам: после каждого входа и раз в `TELEGRAM_SESSION_SWEEP_INTERVAL` (1 ч) API-сессия
 оставляет самое новое устройство каждого вида (своё текущее всегда) и завершает остальные. Telegram разрешает
 сессии завершать другие только через 24 ч после её входа (`session_too_fresh`) — до этого чистка ждёт и повторяется.
-Другие устройства аккаунта (телефон, Desktop) не трогаются никогда.
+Своими считаются только устройства с именем сессии (`api`, `upload`, `download`) и `api_id` из `TELEGRAM_API_ID`:
+другие устройства аккаунта (телефон, Desktop, чужие приложения с тем же именем) не трогаются никогда.
 
-- `GET /api/telegram/sessions` — устройства `tcloud-*` аккаунта: `id`, `session`, даты, IP, страна, `current`.
+- `GET /api/telegram/sessions` — свои устройства аккаунта (`api`, `upload`, `download` с нашим `api_id`): `id`, `session`, даты, IP, страна, `current`.
 - `DELETE /api/telegram/sessions/{id}` — завершить одно из них; своё текущее — `409 current_session` (для него `logout`),
   не-tcloud устройство — `404 session_not_found`.
 

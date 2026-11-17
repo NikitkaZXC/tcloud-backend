@@ -164,6 +164,7 @@ class TelegramClient:
                 item.ip,
                 item.country,
                 bool(item.current),
+                item.api_id,
             )
             for item in result.authorizations
         ]

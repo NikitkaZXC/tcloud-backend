@@ -27,3 +27,4 @@ class Authorization:
     ip: str
     country: str
     current: bool
+    api_id: int

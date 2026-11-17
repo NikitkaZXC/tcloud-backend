@@ -7,7 +7,7 @@
 `TELEGRAM_UPLOAD_SESSION` (worker-telegram: выгрузка) и `TELEGRAM_DOWNLOAD_SESSION` (API: отдача файлов). Один
 SQLite-файл сессии нельзя открывать из двух процессов — будут блокировки и риск `AUTH_KEY_DUPLICATED`; скачивания
 вынесены в свою сессию, чтобы их трафик и FloodWait не задевали управление каналами. В каждую входят отдельно через
-`/api/telegram` (только root; в Telegram это три устройства, `tcloud-api`, `tcloud-upload`, `tcloud-download`; flows/auth.md).
+`/api/telegram` (только root; в Telegram это три устройства, `api`, `upload`, `download`; flows/auth.md).
 Обновления получает только API-сессия — ради событий об удалённых сообщениях (flows/folders-and-files.md).
 
 | Лимит | Значение | Как учитываем |

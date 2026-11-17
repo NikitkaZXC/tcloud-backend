@@ -207,9 +207,10 @@ async def test_logout(logged_in, client, upload_session):
 
 
 async def test_sessions_list_only_tcloud(logged_in, client):
-    current = logged_in.add_authorization("tcloud-api", 1, current=True)
-    worker = logged_in.add_authorization("tcloud-upload", 2)
+    current = logged_in.add_authorization("api", 1, current=True)
+    worker = logged_in.add_authorization("upload", 2)
     logged_in.add_authorization("iPhone 15", 100)
+    logged_in.add_authorization("download", 5, api_id=999)
     listing = (await client.get("/telegram/sessions")).json()
     assert {item["id"] for item in listing} == {str(current.hash), str(worker.hash)}
     assert {item["session"] for item in listing} == {"api", "upload"}
@@ -218,20 +219,21 @@ async def test_sessions_list_only_tcloud(logged_in, client):
     phone = logged_in.authorizations_list[2].hash
     assert (await client.delete(f"/telegram/sessions/{phone}")).status_code == 404
     assert (await client.delete(f"/telegram/sessions/{worker.hash}")).status_code == 204
-    assert len(logged_in.authorizations_list) == 2
+    assert len(logged_in.authorizations_list) == 3
 
 
 async def test_sweep_keeps_newest_tcloud_sessions(logged_in, client):
     from src.application.services import AuthService
 
-    old_api = logged_in.add_authorization("tcloud-api", 300)
-    current = logged_in.add_authorization("tcloud-api", 30, current=True)
-    old_worker = logged_in.add_authorization("tcloud-upload", 200)
-    worker = logged_in.add_authorization("tcloud-upload", 20)
+    old_api = logged_in.add_authorization("api", 300)
+    current = logged_in.add_authorization("api", 30, current=True)
+    old_worker = logged_in.add_authorization("upload", 200)
+    worker = logged_in.add_authorization("upload", 20)
     phone = logged_in.add_authorization("Telegram Desktop", 500)
+    foreign = logged_in.add_authorization("upload", 400, api_id=999)
     auth = AuthService(main.app.state.runtime)
     assert await auth.sweep() == 2
-    assert logged_in.authorizations_list == [current, worker, phone]
+    assert logged_in.authorizations_list == [current, worker, phone, foreign]
     assert old_api not in logged_in.authorizations_list
     assert old_worker not in logged_in.authorizations_list
 
@@ -239,8 +241,8 @@ async def test_sweep_keeps_newest_tcloud_sessions(logged_in, client):
 async def test_sweep_waits_while_session_is_fresh(logged_in, client):
     from src.application.services import AuthService
 
-    logged_in.add_authorization("tcloud-upload", 200)
-    logged_in.add_authorization("tcloud-upload", 1)
+    logged_in.add_authorization("upload", 200)
+    logged_in.add_authorization("upload", 1)
     logged_in.too_fresh = True
     await AuthService(main.app.state.runtime).sweep_quietly()
     assert len(logged_in.authorizations_list) == 2

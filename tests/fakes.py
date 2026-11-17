@@ -2,6 +2,7 @@ import asyncio
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+from src.config import settings
 from src.infrastructure.enums import MediaKind
 from src.infrastructure.integrations import (
     Authorization,
@@ -79,7 +80,11 @@ class FakeTelegram:
         ]
 
     def add_authorization(
-        self, device_model: str, age_hours: float, current: bool = False
+        self,
+        device_model: str,
+        age_hours: float,
+        current: bool = False,
+        api_id: int | None = None,
     ) -> Authorization:
         item = Authorization(
             hash=len(self.authorizations_list) + 2**40,
@@ -89,6 +94,7 @@ class FakeTelegram:
             ip="127.0.0.1",
             country="NL",
             current=current,
+            api_id=api_id or settings.telegram.API_ID,
         )
         self.authorizations_list.append(item)
         return item

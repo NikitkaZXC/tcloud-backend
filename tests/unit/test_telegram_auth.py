@@ -48,7 +48,7 @@ def test_session_file_name():
 async def test_finished_login_replaces_session_privately(tmp_path):
     target = tmp_path / "tcloud.session"
     target.write_bytes(b"old")
-    login = TelegramLogin(tmp_path / "tcloud", 1, "hash", "tcloud-api")
+    login = TelegramLogin(tmp_path / "tcloud", 1, "hash", "api")
     temp = tmp_path / "login-tcloud.session"
     assert temp.exists()
     await login.finish()
@@ -57,6 +57,6 @@ async def test_finished_login_replaces_session_privately(tmp_path):
 
 
 async def test_closed_login_leaves_no_file(tmp_path):
-    login = TelegramLogin(tmp_path / "tcloud", 1, "hash", "tcloud-api")
+    login = TelegramLogin(tmp_path / "tcloud", 1, "hash", "api")
     await login.close()
     assert list(tmp_path.iterdir()) == []
