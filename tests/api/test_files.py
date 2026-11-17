@@ -89,6 +89,35 @@ async def test_download_range(client, photo):
     assert outside.status_code == 416
 
 
+async def test_compressed_photo_size_matches_the_downloaded_bytes(
+    client, telegram, storage
+):
+    data = make_image()
+    photo = (await upload(client, path(storage, "images.jpeg"), data, send_as="media"))[
+        "file"
+    ]
+    message = telegram.chats[photo["telegram"]["chat_id"]]["messages"][
+        photo["telegram"]["message_id"]
+    ]
+    last = message["sizes"][-1]
+    assert last[1] is not None and len(last[1]) < len(data)
+    assert photo["sent_as"] == "media" and photo["size"] == len(data)
+    response = await client.get(f"/files/{photo['uuid']}/download")
+    assert response.status_code == 200 and response.content == data
+    assert response.headers["content-length"] == str(len(data))
+    tail = await client.get(
+        f"/files/{photo['uuid']}/download", headers={"Range": "bytes=-100"}
+    )
+    assert tail.status_code == 206 and tail.content == data[-100:]
+    assert tail.headers["content-range"] == (
+        f"bytes {len(data) - 100}-{len(data) - 1}/{len(data)}"
+    )
+    task, archive = await build_archive(client, path(storage))
+    assert task["status"] == "done" and task["warnings"] == []
+    with zipfile.ZipFile(io.BytesIO(archive.content)) as opened:
+        assert opened.read("images.jpeg") == data
+
+
 async def test_delete_file(client, telegram, photo):
     assert (await client.delete(f"/files/{photo['uuid']}")).status_code == 204
     assert telegram.messages() == []

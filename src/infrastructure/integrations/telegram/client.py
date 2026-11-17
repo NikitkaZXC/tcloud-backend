@@ -91,6 +91,44 @@ def translate_errors(method):
     return wrapper
 
 
+def photo_bytes(size: types.TypePhotoSize) -> int:
+    return size.size if isinstance(size, types.PhotoSize) else max(size.sizes)
+
+
+def photo_size(sizes: list[types.TypePhotoSize]) -> types.TypePhotoSize | None:
+    return max(
+        (
+            size
+            for size in sizes
+            if isinstance(size, (types.PhotoSize, types.PhotoSizeProgressive))
+        ),
+        key=photo_bytes,
+        default=None,
+    )
+
+
+def media_size(media) -> int | None:
+    photo = getattr(media, "photo", None)
+    if isinstance(photo, types.Photo) and (best := photo_size(photo.sizes)):
+        return photo_bytes(best)
+    document = getattr(media, "document", None)
+    return document.size if isinstance(document, types.Document) else None
+
+
+def download_location(media) -> tuple[object, dict]:
+    photo = getattr(media, "photo", None)
+    best = photo_size(photo.sizes) if isinstance(photo, types.Photo) else None
+    if not best:
+        return media, {}
+    location = types.InputPhotoFileLocation(
+        id=photo.id,
+        access_hash=photo.access_hash,
+        file_reference=photo.file_reference,
+        thumb_size=best.type,
+    )
+    return location, {"dc_id": photo.dc_id, "file_size": photo_bytes(best)}
+
+
 class TelegramClient:
     def __init__(
         self,
@@ -359,7 +397,13 @@ class TelegramClient:
             silent=True,
         )
         file = message.file
-        return SentFile(message.id, file.size, file.mime_type, file.width, file.height)
+        return SentFile(
+            message.id,
+            media_size(message.media) or file.size,
+            file.mime_type,
+            file.width,
+            file.height,
+        )
 
     async def upload(
         self, path: Path, progress: Callable[[int, int], None]
@@ -408,7 +452,7 @@ class TelegramClient:
         )
         if not message or not message.media:
             raise TelegramMessageGoneError("telegram message with this file is gone")
-        return message.media, message.file.size
+        return message.media, media_size(message.media) or message.file.size
 
     @translate_errors
     async def thumbnail(self, media) -> bytes | None:
@@ -442,8 +486,9 @@ class TelegramClient:
     async def iter_media(self, media, offset: int, length: int) -> AsyncIterator[bytes]:
         start = offset - offset % CHUNK
         skip = offset - start
+        location, extra = download_location(media)
         async for part in self._client.iter_download(
-            media, offset=start, request_size=CHUNK
+            location, offset=start, request_size=CHUNK, **extra
         ):
             part = part[skip:]
             skip = 0

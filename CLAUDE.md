@@ -35,6 +35,7 @@ Layers: `api → application → infrastructure`; `utilities` are shared. `src/a
 ## Gotchas
 
 - Telethon picks photo vs document by file extension: temp files keep the extension of the target name.
+- Compressed photos: Telethon's `file.size` is the heaviest `PhotoSize`, but `iter_download(media)` fetches `sizes[-1]`, which may be lighter. Size, download, `Range` and archives all go through `photo_size`/`download_location` in `integrations/telegram/client.py` (heaviest `PhotoSize`/`PhotoSizeProgressive`).
 - Reads after ORM `UPDATE` with `onupdate=func.now()` need `populate_existing=True`, otherwise async lazy load raises `MissingGreenlet`.
 - `media/analyze.py` is not called `probe.py` on purpose: the package exports a `probe` function.
 - ClamAV image must be `*-debian` (alpine tags are amd64 only); stream limits are raised and alerts made strict in `docker/clamd.conf` (`test_clamd_config_is_strict` guards it). `Heuristics.Encrypted|Limits.Exceeded|OLE2.ContainsMacros` mean `unscannable`, every other hit is `infected`.

@@ -2,6 +2,8 @@ import asyncio
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+from telethon import types
+
 from src.config import settings
 from src.infrastructure.enums import MediaKind
 from src.infrastructure.integrations import (
@@ -23,7 +25,27 @@ from src.infrastructure.integrations import (
     TelegramUnavailableError,
     UnscannableFileError,
 )
+from src.infrastructure.integrations.telegram.client import photo_size
 from src.infrastructure.integrations.telegram.login import session_file
+
+
+def photo_sizes(data: bytes) -> list[tuple[types.TypePhotoSize, bytes | None]]:
+    small = data[: max(1, len(data) // 3)]
+    lighter = data[: max(1, len(data) - 440)]
+    return [
+        (types.PhotoStrippedSize("i", b"\x01\x08\x08"), b""),
+        (types.PhotoSize("m", 320, 240, len(small)), small),
+        (types.PhotoSize("x", 800, 600, len(data)), None),
+        (types.PhotoSizeProgressive("y", 1280, 960, [16, len(lighter)]), lighter),
+    ]
+
+
+def body(message: dict) -> bytes:
+    if "sizes" not in message:
+        return message["data"]
+    best = photo_size([size for size, _ in message["sizes"]])
+    data = next(data for size, data in message["sizes"] if size is best)
+    return message["data"] if data is None else data
 
 
 class FakeTelegram:
@@ -197,19 +219,24 @@ class FakeTelegram:
             "thumb": Path(thumb).read_bytes() if thumb else None,
             "path": str(path),
         }
-        mime = (
-            "image/jpeg"
-            if media.kind == MediaKind.PHOTO and not as_file
-            else media.mime
+        compressed = media.kind == MediaKind.PHOTO and not as_file
+        if compressed:
+            self.chats[chat_id]["messages"][message_id]["sizes"] = photo_sizes(data)
+        mime = "image/jpeg" if compressed else media.mime
+        return SentFile(
+            message_id,
+            len(body(self.chats[chat_id]["messages"][message_id])),
+            mime,
+            media.width,
+            media.height,
         )
-        return SentFile(message_id, len(data), mime, media.width, media.height)
 
     async def message_media(self, chat_id: int, message_id: int) -> tuple[dict, int]:
         await asyncio.sleep(self.delay)
         message = self.chats[chat_id]["messages"].get(message_id)
         if not message:
             raise TelegramMessageGoneError("gone")
-        return message, len(message["data"])
+        return message, len(body(message))
 
     async def thumbnail(self, media: dict) -> bytes | None:
         if media["media"].kind == MediaKind.PHOTO:
@@ -217,7 +244,7 @@ class FakeTelegram:
         return media["thumb"]
 
     async def iter_media(self, media: dict, offset: int, length: int):
-        data = media["data"][offset : offset + length]
+        data = body(media)[offset : offset + length]
         for start in range(0, len(data), 7):
             yield data[start : start + 7]
 

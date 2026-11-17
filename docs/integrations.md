@@ -29,6 +29,7 @@ SQLite-файл сессии нельзя открывать из двух пр�
 - Куски файлов > 10 МБ отправляются параллельно (`TELEGRAM_UPLOAD_WORKERS`, `SaveBigFilePart`): Telethon шлёт их по одному
   и упирается в задержку сети. Плюс `cryptg` для быстрого AES.
 - Скачивание: смещение запроса к Telegram должно быть кратно 512 КБ, лишние байты в начале отрезаем — так работает `Range`.
+- Сжатое фото (`send_as=media`) хранится в Telegram в нескольких размерах (`PhotoSize`/`PhotoSizeProgressive`, плюс встроенные `PhotoStrippedSize`/`PhotoCachedSize`), и последний в списке не всегда самый тяжёлый. Telethon в `message.file.size` отдаёт самый тяжёлый размер, а `iter_download` по умолчанию качает последний — из-за этого `Content-Length` не совпадал с телом. Теперь размер при отправке, проверка `file_changed`, скачивание, `Range` и архивы берут один и тот же размер — самый тяжёлый `PhotoSize`/`PhotoSizeProgressive` (`client.photo_size`, `download_location`). У старых записей в `files.size` уже лежит именно он, миграция не нужна.
 - Если `access_hash` канала ещё нет в сессии, список диалогов загружается один раз.
 - Исключения Telethon переводятся в `TelegramFloodWaitError`, `TelegramUnavailableError`, `TelegramUnauthorizedError`
   (401: сессия не вошла или отозвана), ошибки входа (`invalid_code`, `invalid_password`, `invalid_phone`,
