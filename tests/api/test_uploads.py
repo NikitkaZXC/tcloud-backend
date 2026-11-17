@@ -68,6 +68,15 @@ async def test_photo_as_media(client, telegram, storage):
     assert telegram.messages()[0]["as_file"] is False
 
 
+@pytest.mark.parametrize("name", ["photo.webp", "photo.heic"])
+async def test_jpeg_named_as_other_photo_sent_as_photo(client, telegram, storage, name):
+    task = await upload(client, path(storage, name), make_image(), send_as="media")
+    assert task["status"] == "done"
+    message = telegram.messages()[0]
+    assert message["as_file"] is False and message["path"].endswith(".jpg")
+    assert message["data"] == make_image()
+
+
 async def test_webp_as_media_converted_to_jpeg(client, telegram, storage):
     task = await upload(
         client, path(storage, "a.webp"), make_image("WEBP"), send_as="media"
@@ -213,7 +222,7 @@ async def test_unscannable_allowed_with_flag(client, telegram, storage):
     task = await upload(
         client, path(storage, "secret.7z"), b"ENCRYPTED", allow_unscannable="true"
     )
-    assert task["status"] == "done", task
+    assert task["status"] == "done"
     assert task["warnings"] == [
         "antivirus cannot check this file fully (Heuristics.Encrypted.Zip),"
         " accepted by allow_unscannable"

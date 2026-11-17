@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import hashlib
+import os
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import asdict
@@ -44,7 +45,7 @@ from src.infrastructure.security import cipher_size, encrypt_file
 from src.utilities.errors import TCloudError
 from src.utilities.parsers import split_file
 
-TELEGRAM_PHOTO_MIMES = ("image/jpeg", "image/png")
+TELEGRAM_PHOTO_SUFFIXES = {"image/jpeg": ".jpg", "image/png": ".png"}
 DISK_SLOT_POLL = 1.0
 
 
@@ -242,11 +243,16 @@ class UploadPipeline:
                 warnings.append(
                     "photo does not fit Telegram photo limits (10 MB, sides), sent as file"
                 )
-            elif media.mime not in TELEGRAM_PHOTO_MIMES:
+            elif media.mime not in TELEGRAM_PHOTO_SUFFIXES:
                 send_path = temp_path("photo.jpg")
                 prepared["send_path"] = str(send_path)
                 await self._store.update(task["id"], prepared=prepared)
                 await asyncio.to_thread(to_jpeg, path, send_path)
+            elif path.suffix.lower() not in (".jpg", ".jpeg", ".png"):
+                send_path = temp_path(f"photo{TELEGRAM_PHOTO_SUFFIXES[media.mime]}")
+                prepared["send_path"] = str(send_path)
+                await self._store.update(task["id"], prepared=prepared)
+                await asyncio.to_thread(os.link, path, send_path)
         if not as_file and media.kind == MediaKind.VIDEO and media.mime != "video/mp4":
             warnings.append(
                 f"{media.mime} may be shown as a file instead of a player in Telegram"
