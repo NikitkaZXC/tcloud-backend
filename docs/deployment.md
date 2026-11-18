@@ -35,3 +35,19 @@ volume удалён или сессию завершили в Telegram. Без �
   Очереди durable, сообщения persistent; Redis с `appendonly yes` — очередь и статусы переживают рестарт.
 - Первый старт ClamAV качает базы несколько минут — до этого загрузки отвечают `503 scanner_unavailable`.
 - Пароль Postgres задаётся при первом создании volume `pgdata`; сменить его в `.env` позже — значит пересоздать volume.
+- Reverse proxy перед API (nginx фронтенда): тела файлов нельзя сжимать — `GET /api/files/{id}/download` и
+  `GET /api/tasks/{id}/archive` отдают `Cache-Control: no-transform` и точный `Content-Length` (на нём держатся `Range`
+  и прогресс в браузере). nginx `no-transform` не учитывает, а `gzip_proxied` смотрит только на запросы с `Via`,
+  поэтому gzip для этих путей выключается отдельным `location` с тем же проксированием, что и `/api/`:
+
+  ```nginx
+  location ~ ^/api/(files/[^/]+/(download|thumb)|tasks/[^/]+/archive)$ {
+      gzip off;
+      proxy_pass ${API_UPSTREAM};
+      # те же proxy_set_header / proxy_buffering off / таймауты, что в location /api/
+  }
+  ```
+
+  Документы и так приходят как `application/octet-stream`, а медиа и архивы — не `application/json`, так что при
+  `gzip_types application/json` сейчас под сжатие ничего из этого не попадает; `location` — страховка на случай
+  расширения `gzip_types`.

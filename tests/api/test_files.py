@@ -49,6 +49,8 @@ async def test_download_full(client, photo):
         and response.headers["accept-ranges"] == "bytes"
     )
     assert "photo.jpg" in response.headers["content-disposition"]
+    assert response.headers["cache-control"] == "no-transform"
+    assert "content-encoding" not in response.headers
 
 
 async def test_download_document_as_attachment(client, storage):
@@ -247,6 +249,7 @@ async def test_folder_archive_has_the_whole_tree(client, storage, redis):
     assert response.headers["content-type"] == "application/zip"
     assert response.headers["x-content-type-options"] == "nosniff"
     assert response.headers["content-disposition"].endswith("trip.zip")
+    assert response.headers["cache-control"] == "no-transform"
     with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
         assert sorted(archive.namelist()) == ["1.jpg", "day 2/2.pdf"]
         assert archive.read("day 2/2.pdf") == PDF

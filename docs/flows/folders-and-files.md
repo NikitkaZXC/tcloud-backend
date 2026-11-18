@@ -127,6 +127,10 @@ RAR не поддерживается: его создаёт только про
 - `GET /api/files/{uuid}` и `GET /api/files/by-path?path=` — все метаданные: размер, MIME, тип, `sent_as`,
   размеры, длительность, `sha256` оригинала, `telegram.chat_id`/`message_id`/`link`/`search`.
 - `GET /api/files/{uuid}/download` — поток из Telegram; `Range` (один диапазон) → `206`, видео можно перематывать.
+  Документы (`kind = document`, в т. ч. `.json`, `.txt`, `.html`) отдаются как `application/octet-stream` +
+  `attachment`, медиа — со своим MIME. У скачивания и у `GET /api/tasks/{id}/archive` есть `Cache-Control: no-transform`:
+  прокси не должны сжимать или менять тело, иначе пропадут `Content-Length` и `Range`. nginx этот заголовок не читает,
+  поэтому в nginx фронтенда для этих путей gzip выключается отдельным `location` (deployment.md).
   Перед отдачей размер файла в Telegram сверяется с `files.size`: если файл в канале подменили (размер другой), ответ
   `409 file_changed`, ничего не отдаётся. Полный `sha256` при потоковой отдаче не проверяется — он есть в метаданных.
 - Зашифрованный файл (`encrypted: true`, flows/uploads.md) расшифровывается на лету; `size`, `Range` и `Content-Length` —

@@ -124,6 +124,7 @@ async def download_file(
         "Content-Disposition": f"{'attachment' if document else 'inline'}; filename*=UTF-8''{quote(file.name)}",
         "X-Content-Type-Options": "nosniff",
         "Content-Security-Policy": "sandbox",
+        "Cache-Control": "no-transform",
     }
     if range_header:
         headers["Content-Range"] = f"bytes {start}-{end}/{file.size}"
