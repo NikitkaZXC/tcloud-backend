@@ -129,3 +129,11 @@ def test_from_stored_drops_unknown_and_invalid():
     }
     assert value.interface.theme == "dark"
     assert dropped == ["uploads.gone", "interface.theme", "old", "telegram"]
+
+
+def test_from_stored_keeps_known_dashboard_blocks():
+    value, dropped = SettingsServiceRead.from_stored(
+        {"interface": {"dashboard_layout": ["tasks", "gone", "tasks", 7, "storages"]}}
+    )
+    assert value.interface.dashboard_layout == ["tasks", "storages"]
+    assert dropped == ["interface.dashboard_layout"]

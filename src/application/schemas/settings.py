@@ -1,13 +1,32 @@
-from typing import Literal
+from typing import Literal, get_args
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from src.infrastructure.enums import ArchiveFormat
 from src.utilities.formatters import OnConflict, Priority, SendAs
 
+DashboardBlock = Literal[
+    "summary",
+    "previews",
+    "channels",
+    "storages",
+    "tasks",
+    "activity_map",
+    "system",
+    "users",
+]
+
 
 class SettingsGroup(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
+
+def valid(group: type[SettingsGroup], key: str, value: object) -> bool:
+    try:
+        group.model_validate({key: value})
+    except ValidationError:
+        return False
+    return True
 
 
 class UploadSettingsServiceRead(SettingsGroup):
@@ -43,6 +62,16 @@ class InterfaceSettingsServiceRead(SettingsGroup):
     fx_confetti: bool = False
     fx_cursor: bool = False
     fx_easter_eggs: bool = False
+    dashboard_layout: list[DashboardBlock] = Field(
+        default_factory=list, max_length=len(get_args(DashboardBlock))
+    )
+
+    @field_validator("dashboard_layout")
+    @classmethod
+    def unique_blocks(cls, value: list[str]) -> list[str]:
+        if len(set(value)) != len(value):
+            raise ValueError("dashboard blocks must not repeat")
+        return value
 
 
 class TelegramSettingsServiceRead(SettingsGroup):
@@ -82,10 +111,15 @@ class SettingsServiceRead(SettingsGroup):
                 dropped.append(group)
                 continue
             for key, value in values.items():
-                try:
-                    field.annotation.model_validate({key: value})
-                except ValidationError:
+                if not valid(field.annotation, key, value):
                     dropped.append(f"{group}.{key}")
-                else:
-                    kept.setdefault(group, {})[key] = value
+                    if not isinstance(value, list):
+                        continue
+                    value = [
+                        item
+                        for index, item in enumerate(value)
+                        if item not in value[:index]
+                        and valid(field.annotation, key, [item])
+                    ]
+                kept.setdefault(group, {})[key] = value
         return cls.model_validate(kept), dropped

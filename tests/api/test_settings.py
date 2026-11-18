@@ -37,6 +37,7 @@ DEFAULTS = {
         "fx_confetti": False,
         "fx_cursor": False,
         "fx_easter_eggs": False,
+        "dashboard_layout": [],
     },
     "telegram": {"chat_folder": True},
 }
@@ -54,6 +55,21 @@ async def patch(client, body: dict) -> dict:
 
 def test_schema_defaults_match_docs():
     assert SettingsServiceRead().model_dump(mode="json") == DEFAULTS
+
+
+async def test_dashboard_layout(client):
+    saved = await patch(
+        client, {"interface": {"dashboard_layout": ["tasks", "storages"]}}
+    )
+    assert saved["interface"]["dashboard_layout"] == ["tasks", "storages"]
+    for layout in (["nope"], ["tasks", "tasks"], ["tasks"] * 9):
+        response = await client.patch(
+            "/account/settings", json={"interface": {"dashboard_layout": layout}}
+        )
+        assert response.status_code == 422 and code(response) == "validation_error"
+    assert (await client.get("/account/settings")).json()["interface"][
+        "dashboard_layout"
+    ] == ["tasks", "storages"]
 
 
 async def test_defaults(client):
