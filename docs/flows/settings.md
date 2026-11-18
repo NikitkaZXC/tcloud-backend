@@ -61,6 +61,7 @@ Content-Type: application/json
     "sort_order": "asc",
     "folders_first": true,
     "animations": true,
+    "activity_map": true,
     "confirm_delete": true,
     "start_page": "dashboard",
     "tasks_filter": "all",
@@ -104,6 +105,7 @@ Content-Type: application/json
 | `sort_order` | `asc`, `desc` | `asc` | направление сортировки |
 | `folders_first` | `true`, `false` | `true` | папки перед файлами |
 | `animations` | `true`, `false` | `true` | анимации интерфейса |
+| `activity_map` | `true`, `false` | `true` | карта загрузок (тепловая карта активности) на дашборде |
 | `confirm_delete` | `true`, `false` | `true` | спрашивать перед удалением |
 | `start_page` | `dashboard`, `storages`, `tasks` | `dashboard` | страница после входа |
 | `tasks_filter` | `all`, `active_and_failed` | `all` | фильтр списка задач |

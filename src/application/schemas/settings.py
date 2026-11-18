@@ -32,6 +32,7 @@ class InterfaceSettingsServiceRead(SettingsGroup):
     sort_order: Literal["asc", "desc"] = "asc"
     folders_first: bool = True
     animations: bool = True
+    activity_map: bool = True
     confirm_delete: bool = True
     start_page: Literal["dashboard", "storages", "tasks"] = "dashboard"
     tasks_filter: Literal["all", "active_and_failed"] = "all"

@@ -27,6 +27,7 @@ DEFAULTS = {
         "sort_order": "asc",
         "folders_first": True,
         "animations": True,
+        "activity_map": True,
         "confirm_delete": True,
         "start_page": "dashboard",
         "tasks_filter": "all",
@@ -92,6 +93,16 @@ async def test_settings_in_me(client):
     assert me["settings"]["interface"]["language"] == "en"
     assert me["settings"]["interface"]["fx_pet"] is True
     assert me["settings"]["uploads"] == DEFAULTS["uploads"]
+
+
+async def test_activity_map_toggle(client):
+    assert (await client.get("/account/settings")).json()["interface"][
+        "activity_map"
+    ] is True
+    await patch(client, {"interface": {"activity_map": False}})
+    assert (await client.get("/account/settings")).json()["interface"][
+        "activity_map"
+    ] is False
 
 
 async def test_language_back_to_browser(client):
