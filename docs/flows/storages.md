@@ -31,13 +31,14 @@
 
 ## Сколько каналов ещё можно создать
 
-`GET /api/account` → `{premium, file_limit, channels_used, channels_limit}`. `channels_used` — сколько каналов и
+`GET /api/account` → `{telegram_connected, premium, file_limit, channels_used, channels_limit}`. `channels_used` — сколько каналов и
 супергрупп у аккаунта API-сессии (все диалоги, включая архив, где сущность — `Channel`; это то, что Telegram считает
 в `CHANNELS_TOO_MUCH`; обычные группы туда не входят), `channels_limit` — 500 или 1000 с Premium. Подсчёт — один проход
 по диалогам (`iter_dialogs`), он медленный, поэтому результат кешируется в памяти API на `UPLOAD_CHANNELS_TTL`
 (300 с). Telegram не ответил (флуд, сеть, сессия отозвана) → `channels_used: null`, остальные поля как обычно, ошибка
-не кешируется. `premium` по-прежнему читается из Telegram, поэтому без входа в API-сессию ручка отвечает
-`503 telegram_unauthorized`, как и раньше.
+не кешируется. Пока root не вошёл в API-сессию, ручка отвечает `200` с `telegram_connected: false` и `null`
+во всех полях Telegram (`premium`, `file_limit`, `channels_used`, `channels_limit`); после входа
+`telegram_connected: true` и `premium` читается из Telegram.
 
 ## Подключение из `.env`
 

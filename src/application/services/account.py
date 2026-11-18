@@ -42,8 +42,17 @@ class AccountService:
         return used
 
     async def get_account(self) -> AccountServiceRead:
+        if not self._runtime.telegram.authorized:
+            return AccountServiceRead(
+                telegram_connected=False,
+                premium=None,
+                file_limit=None,
+                channels_used=None,
+                channels_limit=None,
+            )
         premium = await self.is_premium(fresh=True)
         return AccountServiceRead(
+            telegram_connected=True,
             premium=premium,
             file_limit=file_limit(premium),
             channels_used=await self.channels_used(),

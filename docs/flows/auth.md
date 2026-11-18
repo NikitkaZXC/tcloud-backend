@@ -14,7 +14,7 @@ tcloud работает от пользовательского аккаунта
 
 ## Без сессий
 
-Приложение стартует и без входа: `/docs`, `/api/telegram` и `/api/health` работают, `health.telegram` / `health.telegram_upload` /
+Приложение стартует и без входа: `/docs`, `/api/telegram`, `/api/health` и `/api/account` (`telegram_connected: false`) работают, `health.telegram` / `health.telegram_upload` /
 `health.telegram_download` равны `false`. Всё, что ходит в Telegram через API-сессию, отвечает `503 telegram_unauthorized`; загрузки без сессии
 воркера отклоняются сразу тем же кодом, скачивания без сессии `download` — тоже. Вход в `download` подменяет клиент
 скачиваний на лету. После входа в `api` каналы из `TELEGRAM_CHATS` подключаются и запускается

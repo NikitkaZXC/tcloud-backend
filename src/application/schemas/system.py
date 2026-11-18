@@ -2,10 +2,11 @@ from pydantic import BaseModel
 
 
 class AccountServiceRead(BaseModel):
-    premium: bool
-    file_limit: int
+    telegram_connected: bool
+    premium: bool | None
+    file_limit: int | None
     channels_used: int | None
-    channels_limit: int
+    channels_limit: int | None
 
 
 class HealthServiceRead(BaseModel):
