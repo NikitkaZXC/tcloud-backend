@@ -100,7 +100,7 @@ Content-Type: application/json
 | Ключ | Значения | По умолчанию | Что |
 |---|---|---|---|
 | `language` | `ru`, `en`, `null` | `null` | язык; `null` — взять из браузера |
-| `theme` | `dark`, `light`, `system` | `dark` | тема; `system` — следовать теме ОС (выбирает фронтенд) |
+| `theme` | `dark`, `light`, `system`, `sunset`, `navy`, `lavender`, `clay` | `dark` | тема; `system` — следовать теме ОС (выбирает фронтенд); `sunset`, `navy`, `lavender`, `clay` — готовые пресеты фронтенда |
 | `folder_view` | `list`, `grid` | `list` | вид папки |
 | `sort_by` | `name`, `modified`, `uploaded`, `type`, `size` | `name` | сортировка в папке |
 | `sort_order` | `asc`, `desc` | `asc` | направление сортировки |

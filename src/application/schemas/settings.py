@@ -26,7 +26,9 @@ class ArchiveSettingsServiceRead(SettingsGroup):
 
 class InterfaceSettingsServiceRead(SettingsGroup):
     language: Literal["ru", "en"] | None = None
-    theme: Literal["dark", "light", "system"] = "dark"
+    theme: Literal["dark", "light", "system", "sunset", "navy", "lavender", "clay"] = (
+        "dark"
+    )
     folder_view: Literal["list", "grid"] = "list"
     sort_by: Literal["name", "modified", "uploaded", "type", "size"] = "name"
     sort_order: Literal["asc", "desc"] = "asc"

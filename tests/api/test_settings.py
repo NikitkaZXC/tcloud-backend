@@ -359,9 +359,8 @@ async def test_selection_archive_uses_settings(client, storage):
     assert task["priority"] == "high" and task["archive"]["format"] == "zip"
 
 
-async def test_theme_system(client):
-    result = await patch(client, {"interface": {"theme": "system"}})
-    assert result["interface"]["theme"] == "system"
-    assert (await client.get("/account/settings")).json()["interface"][
-        "theme"
-    ] == "system"
+@pytest.mark.parametrize("theme", ["system", "sunset", "navy", "lavender", "clay"])
+async def test_theme_values(client, theme):
+    result = await patch(client, {"interface": {"theme": theme}})
+    assert result["interface"]["theme"] == theme
+    assert (await client.get("/account/settings")).json()["interface"]["theme"] == theme
