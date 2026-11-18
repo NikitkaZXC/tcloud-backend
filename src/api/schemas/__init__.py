@@ -23,7 +23,7 @@ from .folder import (
 )
 from .settings import SettingsResponse, SettingsUpdate
 from .storage import StorageCreate, StorageResponse, StorageUpdate
-from .system import AccountResponse, HealthResponse
+from .system import AccountResponse, HealthResponse, PublicHealthResponse
 from .upload import (
     BATCH_MAX,
     BatchCreate,
@@ -70,6 +70,7 @@ __all__ = [
     "SettingsResponse",
     "SettingsUpdate",
     "HealthResponse",
+    "PublicHealthResponse",
     "PasswordSignIn",
     "PriorityUpdate",
     "QrResponse",

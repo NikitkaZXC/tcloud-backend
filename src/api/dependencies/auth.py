@@ -29,6 +29,16 @@ async def get_actor(
     raise NotAuthenticatedError("sign in with /api/auth/signin or pass X-API-Key")
 
 
+async def get_optional_actor(
+    key: str | None = Security(api_key_header),
+    access_token: str | None = Security(access_cookie),
+    auth_service: UserAuthService = Depends(get_service_user_auth),
+) -> Actor | None:
+    if not key and not access_token:
+        return None
+    return await get_actor(key, access_token, auth_service)
+
+
 async def get_root(actor: Actor = Depends(get_actor)) -> Actor:
     require_root(actor)
     return actor

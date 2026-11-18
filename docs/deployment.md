@@ -26,8 +26,10 @@ volume удалён или сессию завершили в Telegram. Без �
   репликами (`docker compose up --scale worker-prepare=2`), потоков на реплику — `UPLOAD_DOWNLOAD_CONCURRENCY` и
   `UPLOAD_PREPARE_CONCURRENCY`.
 - Flower — `127.0.0.1:5555` с basic auth (`FLOWER_USER` / `FLOWER_PASSWORD`); наружу — только через reverse proxy с TLS.
-- `GET /api/health` показывает брокер, живые воркеры по очередям и авторизацию сессий (`telegram`, `telegram_upload`, `telegram_download`) —
-  подходит для внешнего мониторинга.
+- `GET /api/health` с входом (кука или `X-API-Key`) показывает полный отчёт: БД, брокер, живые воркеры по очередям, авторизацию сессий
+  (`telegram`, `telegram_upload`, `telegram_download`), ClamAV, Redis и общий `ok`; ответ всегда `200`. Без входа — только
+  `{"status": "ok"}` с `200` или `{"status": "degraded"}` с `503` (то же `ok`, без подробностей) — подходит для внешнего
+  мониторинга и балансировщика. Неверные учётные данные → `401`, как у остальных ручек.
 - Volume `tmp` общий для API и воркеров и должен вмещать файлы, которые ждут в очереди (до 4 ГБ каждый).
 - RabbitMQ: `consumer_timeout` поднят до 24 ч, иначе брокер закрывает канал на долгой выгрузке (по умолчанию 30 мин).
   Очереди durable, сообщения persistent; Redis с `appendonly yes` — очередь и статусы переживают рестарт.

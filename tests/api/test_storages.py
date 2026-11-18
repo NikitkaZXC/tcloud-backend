@@ -1,6 +1,8 @@
 import asyncio
 import uuid
 
+from httpx import ASGITransport, AsyncClient
+
 import main
 from src.config import settings
 from src.infrastructure import limits
@@ -45,6 +47,22 @@ async def test_health_sees_dead_worker(client, monkeypatch):
     monkeypatch.setattr(main.app.state.runtime.store, "workers", workers)
     health = (await client.get("/health")).json()
     assert health["ok"] is False and health["workers"]["uploads.telegram"] is False
+
+
+async def test_public_health_without_sign_in(client, scanner):
+    await healthy(client)
+    async with AsyncClient(
+        transport=ASGITransport(main.app), base_url="http://test/api"
+    ) as anonymous:
+        response = await anonymous.get("/health")
+        assert response.status_code == 200 and response.json() == {"status": "ok"}
+        scanner.available = False
+        response = await anonymous.get("/health")
+        assert response.status_code == 503
+        assert response.json() == {"status": "degraded"}
+        assert (await anonymous.get("/account")).status_code == 401
+        bad = await anonymous.get("/health", headers={"X-API-Key": "nope"})
+        assert bad.status_code == 401
 
 
 async def test_account_limit(client, telegram, monkeypatch):
