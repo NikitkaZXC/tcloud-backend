@@ -42,6 +42,8 @@ class FileDB(PrimaryKeyMixin, CreatedAtMixin, UpdatedAtMixin, Base):
             postgresql_ops={"name_lower": "gin_trgm_ops"},
         ),
         Index("ix_files_name", "name"),
+        Index("ix_files_name_ru", text('name COLLATE "tcloud_ru"')),
+        Index("ix_files_name_en", text('name COLLATE "tcloud_en"')),
         Index("ix_files_kind", "kind"),
         Index("ix_files_mime", "mime"),
         Index("ix_files_size", "size"),

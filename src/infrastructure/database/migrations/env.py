@@ -18,10 +18,19 @@ from src.infrastructure.database.models import (
 
 target_metadata = Base.metadata
 MODELS = (ApiKeyDB, FileDB, FolderDB, FolderGrantDB, RefreshTokenDB, StorageDB, UserDB)
+COLLATED_INDEXES = {"ix_files_name_ru", "ix_files_name_en"}
+
+
+def include_object(obj, name, type_, reflected, compare_to) -> bool:
+    return not (type_ == "index" and name in COLLATED_INDEXES)
 
 
 def _run(connection) -> None:
-    context.configure(connection=connection, target_metadata=target_metadata)
+    context.configure(
+        connection=connection,
+        target_metadata=target_metadata,
+        include_object=include_object,
+    )
     with context.begin_transaction():
         context.run_migrations()
 

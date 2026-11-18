@@ -163,6 +163,7 @@ class FileService:
             date_to=data.date_to,
             encrypted=data.encrypted,
             sort=data.sort,
+            lang=data.lang,
             descending=(
                 data.order or ("desc" if data.sort in ("size", "date") else "asc")
             )

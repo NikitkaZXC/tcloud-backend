@@ -72,6 +72,7 @@ async def test_empty_search_is_rejected(client, storage):
         {"q": "a", "mime": "not a mime"},
         {"q": "a", "sort": "random"},
         {"q": "a", "order": "up"},
+        {"q": "a", "lang": "de"},
         {"q": "a", "path": "x" * 1025},
     ],
 )
@@ -87,9 +88,40 @@ async def test_search_is_case_insensitive_for_cyrillic(client, tree):
     assert sorted(names(await search(client, q="море"))) == ["Море.JPG", "море2.jpeg"]
 
 
+async def test_name_sort_follows_language_while_paging(client, storage):
+    for name in ("b10.txt", "b2.txt", "Яблоко.txt", "apple.txt", "ёж.txt"):
+        await put(client, storage, name, TEXT)
+
+    async def pages(lang: str) -> list[str]:
+        found = []
+        for offset in range(0, 5, 2):
+            page = await search(
+                client, q=".txt", sort="name", lang=lang, limit=2, offset=offset
+            )
+            found += names(page)
+        return found
+
+    assert await pages("ru") == [
+        "ёж.txt",
+        "Яблоко.txt",
+        "apple.txt",
+        "b2.txt",
+        "b10.txt",
+    ]
+    assert await pages("en") == [
+        "apple.txt",
+        "b2.txt",
+        "b10.txt",
+        "ёж.txt",
+        "Яблоко.txt",
+    ]
+    default = await search(client, q=".txt", sort="name", order="desc")
+    assert names(default)[0] == "Яблоко.txt"
+
+
 async def test_relevance_puts_exact_then_prefix_first(client, tree):
     assert names(await search(client, q="отчёт.txt")) == ["отчёт.txt"]
-    assert names(await search(client, q="отчёт")) == ["отчёт.txt", "Отчёт за МАЙ.pdf"]
+    assert names(await search(client, q="отчёт")) == ["Отчёт за МАЙ.pdf", "отчёт.txt"]
     assert names(await search(client, q="за май")) == ["Отчёт за МАЙ.pdf"]
 
 

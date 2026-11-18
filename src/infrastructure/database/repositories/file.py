@@ -129,6 +129,7 @@ class FileRepository:
         date_to: datetime | None,
         encrypted: bool | None,
         sort: str,
+        lang: str,
         descending: bool,
         limit: int,
         offset: int,
@@ -160,7 +161,7 @@ class FileRepository:
         column = {
             "size": FileDB.size,
             "date": FileDB.updated_at,
-        }.get(sort, FileDB.name)
+        }.get(sort, FileDB.name.collate(f"tcloud_{lang}"))
         order = [column.desc() if descending else column.asc()]
         if sort == "relevance" and query:
             lowered = func.lower(FileDB.name)

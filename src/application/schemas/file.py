@@ -79,6 +79,7 @@ class FileSearchServiceCreate(BaseModel):
     encrypted: bool | None = None
     sort: str = "relevance"
     order: str | None = None
+    lang: str = "en"
     limit: int = 50
     offset: int = 0
 

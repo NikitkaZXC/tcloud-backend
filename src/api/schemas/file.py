@@ -40,6 +40,7 @@ class FileSearchParams(BaseModel):
     encrypted: bool | None = None
     sort: Literal["relevance", "name", "size", "date"] = "relevance"
     order: Literal["asc", "desc"] | None = None
+    lang: Literal["ru", "en"] = "en"
     limit: int = Field(50, ge=1, le=SEARCH_LIMIT_MAX)
     offset: int = Field(0, ge=0, le=SEARCH_OFFSET_MAX)
 

@@ -11,13 +11,19 @@ PostgreSQL 18, SQLAlchemy 2 async (asyncpg), миграции Alembic в `src/in
 | `refresh_tokens` | `user_id`, HMAC `token_hash`, `access_jti`, user-agent, IP, `signed_in_at`, `expires_at`, `revoked` | `UNIQUE(token_hash)` — поиск при refresh; `user_id` — сессии пользователя, отзыв всех |
 | `api_keys` | `user_id`, `name`, HMAC `key_hash`, `last_used_at` | `UNIQUE(key_hash)` — проверка `X-API-Key`; `user_id` — список ключей |
 | `folder_grants` | `user_id`, `storage_id`, `path` (папка без корня, `''` — всё хранилище), `recursive`, `can_read`, `can_upload`, `can_delete` | `UNIQUE(user_id, storage_id, path)` — один грант на папку и гранты пользователя на каждый запрос; `storage_id` — каскадное удаление с хранилищем |
-| `files` | путь (`folder_path` + `name`), размер, MIME, тип (`photo/video/audio/animation/document`), `sent_as`, размеры, длительность, `sha256`, `tg_message_id`, `encryption_header` (заголовок шифрования, `NULL` — файл открыт; security.md), `thumbnail` (наше превью зашифрованного файла, зашифрованное его ключом; `NULL` у открытых файлов, у типов без превью, при ошибке генерации и у зашифрованных файлов, загруженных до `0009`; колонка `deferred`, листинги её не читают) | `UNIQUE(storage_id, folder_path, name)` — один файл на путь; `(storage_id, folder_path text_pattern_ops)` — листинг, размеры папок и удаление поддерева; `UNIQUE(storage_id, tg_message_id)`; `sha256`; поиск (flows/folders-and-files.md, «Поиск»): GIN `pg_trgm` на `lower(name)` — подстрока имени, `name` — сортировка по имени, `kind`, `mime` (и группировка форматов), `size`, `updated_at` — фильтры и сортировки, `created_at` — окно карты активности, частичный `storage_id WHERE encryption_header IS NOT NULL` — фильтр `encrypted` |
+| `files` | путь (`folder_path` + `name`), размер, MIME, тип (`photo/video/audio/animation/document`), `sent_as`, размеры, длительность, `sha256`, `tg_message_id`, `encryption_header` (заголовок шифрования, `NULL` — файл открыт; security.md), `thumbnail` (наше превью зашифрованного файла, зашифрованное его ключом; `NULL` у открытых файлов, у типов без превью, при ошибке генерации и у зашифрованных файлов, загруженных до `0009`; колонка `deferred`, листинги её не читают) | `UNIQUE(storage_id, folder_path, name)` — один файл на путь; `(storage_id, folder_path text_pattern_ops)` — листинг, размеры папок и удаление поддерева; `UNIQUE(storage_id, tg_message_id)`; `sha256`; поиск (flows/folders-and-files.md, «Поиск»): GIN `pg_trgm` на `lower(name)` — подстрока имени, `name` — сортировка по имени (листинги), `name COLLATE tcloud_ru` / `name COLLATE tcloud_en` — сортировка поиска по имени на языке интерфейса, `kind`, `mime` (и группировка форматов), `size`, `updated_at` — фильтры и сортировки, `created_at` — окно карты активности, частичный `storage_id WHERE encryption_header IS NOT NULL` — фильтр `encrypted` |
 
 `_`, `%` и `\` экранируются перед `LIKE` (в путях `\` запрещён, им и экранируем; в строке поиска он может быть).
 Расширение `pg_trgm` создаёт миграция `0006` (`CREATE EXTENSION IF NOT EXISTS`; в `postgres:18` оно есть и доверенное,
 владельцу БД суперпользователь не нужен). `lower()` берётся из локали БД: образ `postgres:18` создаёт кластер с
 `en_US.utf8`, кириллица и прочий Unicode приводятся к нижнему регистру; в кластере с локалью `C` поиск по кириллице
 станет чувствительным к регистру.
+Сортировка имён в поиске — ICU-правила сравнения из миграции `0010` (образ `postgres:18` собран с ICU 76):
+`tcloud_ru` (`ru-u-kn-kr-cyrl-latn`: кириллица перед латиницей, `ё` рядом с `е`) и `tcloud_en`
+(`en-u-kn-kr-latn-cyrl`: латиница перед кириллицей); `kn` — числа по значению (`b2` перед `b10`). Без регистра на
+первом уровне, пробелы и знаки не пропускаются. Индексы `ix_files_name_ru`/`ix_files_name_en` — выражения с `COLLATE`,
+отражение SQLAlchemy их не различает, поэтому `migrations/env.py` исключает их из сравнения autogenerate
+(`COLLATED_INDEXES`).
 Задачи загрузки в БД не хранятся: очередь — RabbitMQ, статус и прогресс — Redis (см. background-tasks.md).
 
 ## Миграции
@@ -33,6 +39,7 @@ PostgreSQL 18, SQLAlchemy 2 async (asyncpg), миграции Alembic в `src/in
 | `0007` | `files.created_at` для карты активности |
 | `0008` | `users.settings` (JSONB) — настройки пользователя по умолчанию |
 | `0009` | `files.thumbnail` — зашифрованное превью зашифрованных файлов |
+| `0010` | ICU-правила сравнения `tcloud_ru`/`tcloud_en` и индексы `name COLLATE …` для сортировки поиска по языку |
 
 Новая ревизия: `uv run alembic revision --autogenerate -m "..."`. Существующие файлы не правим.
 `tests/integration/test_migrations.py` проверяет, что модели совпадают с миграциями и что всё откатывается до `base` и обратно.
