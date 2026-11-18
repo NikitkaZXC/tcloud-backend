@@ -43,6 +43,10 @@ class InterfaceSettingsServiceRead(SettingsGroup):
     fx_easter_eggs: bool = False
 
 
+class TelegramSettingsServiceRead(SettingsGroup):
+    chat_folder: bool = True
+
+
 class SettingsServiceRead(SettingsGroup):
     uploads: UploadSettingsServiceRead = Field(
         default_factory=UploadSettingsServiceRead
@@ -52,6 +56,9 @@ class SettingsServiceRead(SettingsGroup):
     )
     interface: InterfaceSettingsServiceRead = Field(
         default_factory=InterfaceSettingsServiceRead
+    )
+    telegram: TelegramSettingsServiceRead = Field(
+        default_factory=TelegramSettingsServiceRead
     )
 
     def merged(self, patch: "SettingsServiceRead") -> "SettingsServiceRead":

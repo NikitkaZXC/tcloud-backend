@@ -13,6 +13,7 @@ from src.application.exception import (
 )
 from src.application.schemas import (
     Actor,
+    SettingsServiceRead,
     StorageServiceCreate,
     StorageServiceRead,
     StorageServiceUpdate,
@@ -25,12 +26,16 @@ from src.application.services.access import (
 from src.application.services.temp import temp_path, write_body
 from src.infrastructure.background import AppRuntime
 from src.infrastructure.database.models import StorageDB
-from src.infrastructure.database.repositories import StorageRepository
+from src.infrastructure.database.repositories import (
+    StorageRepository,
+    UserRepository,
+)
 from src.infrastructure.enums import MediaKind
 from src.infrastructure.limits import PHOTO_MAX
 from src.infrastructure.media import UnsupportedMediaError, probe, to_jpeg
 
 TELEGRAM_PHOTO_SUFFIXES = {"image/jpeg": ".jpg", "image/png": ".png"}
+CHAT_FOLDER = "TCloud"
 
 
 class StorageService:
@@ -55,6 +60,7 @@ class StorageService:
         storage = await self._repo.create(chat_id)
         await self._session.commit()
         logger.info("Storage {} created as channel {}", storage.id, chat_id)
+        await self.sync_folder()
         return await self.get(actor, storage.id)
 
     async def delete(self, actor: Actor, storage_id: UUID, keep_channel: bool) -> None:
@@ -74,6 +80,7 @@ class StorageService:
             storage.tg_chat_id,
             "kept" if keep_channel else "deleted",
         )
+        await self.sync_folder()
 
     async def get_all(self, actor: Actor) -> list[StorageServiceRead]:
         storages = [
@@ -170,6 +177,21 @@ class StorageService:
             raise StoragePhotoNotFoundError("storage has no photo")
         return data
 
+    async def sync_folder(self) -> None:
+        root = await UserRepository(self._session).get_root()
+        enabled = SettingsServiceRead.model_validate(
+            root.settings if root else {}
+        ).telegram.chat_folder
+        try:
+            chat_ids = (
+                [storage.tg_chat_id for storage in await self._repo.get_all()]
+                if enabled
+                else []
+            )
+            await self._runtime.telegram.sync_folder(CHAT_FOLDER, chat_ids)
+        except Exception as error:
+            logger.warning("Telegram folder {} is not synced: {}", CHAT_FOLDER, error)
+
     async def connect_chats(self, chat_ids: list[int]) -> None:
         for chat_id in chat_ids:
             if await self._repo.exists_chat(chat_id):
@@ -186,3 +208,4 @@ class StorageService:
             await self._repo.create(chat_id)
             await self._session.commit()
             logger.info("Storage {} connected from TELEGRAM_CHATS", chat_id)
+        await self.sync_folder()

@@ -305,3 +305,54 @@ async def test_channel_limit_is_reported(client, telegram):
     assert response.json()["error"]["code"] == "channels_limit"
     assert response.json()["error"]["limit"] == 500
     assert (await client.get("/storages")).json() == []
+
+
+async def test_chat_folder_follows_storages(client, telegram):
+    first = (await client.post("/storages", json={"name": "a"})).json()
+    second = (await client.post("/storages", json={"name": "b"})).json()
+    ids = [first["telegram"]["chat_id"], second["telegram"]["chat_id"]]
+    assert telegram.folders == {"TCloud": ids}
+    await client.delete(f"/storages/{first['id']}", params={"keep_channel": "true"})
+    assert telegram.folders == {"TCloud": ids[1:]}
+
+
+async def test_chat_folder_includes_attached_chats(make_client, telegram, monkeypatch):
+    chat_id = telegram.add_channel("ok")
+    monkeypatch.setattr(settings.telegram, "CHATS", str(chat_id))
+    await make_client()
+    assert telegram.folders == {"TCloud": [chat_id]}
+
+
+async def test_chat_folder_setting(client, telegram, storage):
+    chat_id = storage["telegram"]["chat_id"]
+    off = await client.patch(
+        "/account/settings", json={"telegram": {"chat_folder": False}}
+    )
+    assert off.status_code == 200 and telegram.folders == {}
+    assert chat_id in telegram.chats
+    await client.post("/storages", json={"name": "c"})
+    assert telegram.folders == {}
+    await client.delete("/account/settings")
+    assert len(telegram.folders["TCloud"]) == 2
+
+
+async def test_chat_folder_errors_do_not_fail_requests(client, telegram, storage):
+    telegram.folder_fails = True
+    created = await client.post("/storages", json={"name": "d"})
+    assert created.status_code == 201
+    assert (await client.delete(f"/storages/{storage['id']}")).status_code == 204
+    response = await client.patch(
+        "/account/settings", json={"telegram": {"chat_folder": False}}
+    )
+    assert response.status_code == 200
+
+
+async def test_chat_folder_follows_root_settings_only(
+    client, telegram, storage, make_user
+):
+    admin = await make_user("admin1", "admin")
+    response = await admin.patch(
+        "/account/settings", json={"telegram": {"chat_folder": False}}
+    )
+    assert response.status_code == 200
+    assert telegram.folders == {"TCloud": [storage["telegram"]["chat_id"]]}

@@ -69,6 +69,8 @@ class FakeTelegram:
         self.other_channels = 0
         self.dialogs_read = 0
         self.dialogs_flood = False
+        self.folders: dict[str, list[int]] = {}
+        self.folder_fails = False
 
     async def start(self) -> bool:
         if self.session:
@@ -157,6 +159,15 @@ class FakeTelegram:
         chat_id = self.add_channel(title)
         self.chats[chat_id]["about"] = about
         return chat_id
+
+    async def sync_folder(self, title: str, chat_ids: list[int]) -> None:
+        self._check()
+        if self.folder_fails:
+            raise TelegramFloodWaitError(30)
+        if chat_ids:
+            self.folders[title] = list(chat_ids)
+        else:
+            self.folders.pop(title, None)
 
     async def delete_channel(self, chat_id: int) -> None:
         self._check()

@@ -28,6 +28,7 @@ from .settings import (
     ArchiveSettingsServiceRead,
     InterfaceSettingsServiceRead,
     SettingsServiceRead,
+    TelegramSettingsServiceRead,
     UploadSettingsServiceRead,
 )
 from .storage import (
@@ -76,6 +77,7 @@ __all__ = [
     "ArchiveSettingsServiceRead",
     "InterfaceSettingsServiceRead",
     "SettingsServiceRead",
+    "TelegramSettingsServiceRead",
     "UploadSettingsServiceRead",
     "BatchItemServiceRead",
     "BatchServiceRead",

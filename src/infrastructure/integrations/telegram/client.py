@@ -35,6 +35,9 @@ from src.infrastructure.limits import (
     CHANNELS_MAX_PREMIUM,
     CHUNK,
     FLOOD_SLEEP_THRESHOLD,
+    FOLDER_IDS,
+    FOLDER_PEERS_MAX,
+    FOLDER_PEERS_MAX_PREMIUM,
     THUMB_SIDE,
 )
 from src.infrastructure.media import Media
@@ -257,6 +260,57 @@ class TelegramClient:
                 limit=CHANNELS_MAX_PREMIUM if await self.is_premium() else CHANNELS_MAX,
             ) from error
         return utils.get_peer_id(result.chats[0])
+
+    @translate_errors
+    async def sync_folder(self, title: str, chat_ids: list[int]) -> None:
+        result = await self._client(functions.messages.GetDialogFiltersRequest())
+        folders = [
+            item for item in result.filters if isinstance(item, types.DialogFilter)
+        ]
+        folder = next((item for item in folders if item.title.text == title), None)
+        limit = (
+            FOLDER_PEERS_MAX_PREMIUM if await self.is_premium() else FOLDER_PEERS_MAX
+        )
+        peers = []
+        for chat_id in chat_ids:
+            if len(peers) == limit:
+                logger.warning(
+                    "Telegram folder {} holds only {} of {} channels",
+                    title,
+                    limit,
+                    len(chat_ids),
+                )
+                break
+            try:
+                peers.append(utils.get_input_peer(await self._entity(chat_id)))
+            except ValueError as error:
+                logger.warning("Telegram channel {} is unavailable: {}", chat_id, error)
+        if not peers:
+            if folder:
+                await self._client(
+                    functions.messages.UpdateDialogFilterRequest(folder.id)
+                )
+            return
+        used = {item.id for item in result.filters if hasattr(item, "id")}
+        folder_id = (
+            folder.id
+            if folder
+            else next(index for index in FOLDER_IDS if index not in used)
+        )
+        await self._client(
+            functions.messages.UpdateDialogFilterRequest(
+                folder_id,
+                types.DialogFilter(
+                    id=folder_id,
+                    title=types.TextWithEntities(title, []),
+                    pinned_peers=[],
+                    include_peers=peers,
+                    exclude_peers=[],
+                    emoticon=folder.emoticon if folder else None,
+                    color=folder.color if folder else None,
+                ),
+            )
+        )
 
     @translate_errors
     async def delete_channel(self, chat_id: int) -> None:

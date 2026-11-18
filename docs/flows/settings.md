@@ -2,7 +2,7 @@
 
 Решение владельца: настройки по умолчанию хранятся на сервере у каждого пользователя, меняются им самим и действуют
 на любом устройстве и для загрузок через API-ключ. Группы `uploads` и `archives` сервер применяет сам, `interface`
-только хранит и проверяет для фронтенда.
+только хранит и проверяет для фронтенда, `telegram` действует только у root (аккаунт Telegram общий).
 
 ## Хранение
 
@@ -70,7 +70,8 @@ Content-Type: application/json
     "fx_confetti": false,
     "fx_cursor": false,
     "fx_easter_eggs": false
-  }
+  },
+  "telegram": {"chat_folder": true}
 }
 ```
 
@@ -114,6 +115,15 @@ Content-Type: application/json
 | `fx_confetti` | `true`, `false` | `false` | конфетти |
 | `fx_cursor` | `true`, `false` | `false` | эффект курсора |
 | `fx_easter_eggs` | `true`, `false` | `false` | пасхалки |
+
+### `telegram` — аккаунт Telegram, учитывается только у root
+
+| Ключ | Значения | По умолчанию | Что |
+|---|---|---|---|
+| `chat_folder` | `true`, `false` | `true` | держать все каналы хранилищ в папке чатов `TCloud`; выключение удаляет папку (каналы остаются), включение создаёт её заново (storages.md, «Папка TCloud») |
+
+Смена `chat_folder` у root сразу синхронизирует папку; ошибка Telegram пишется в лог, настройка всё равно сохраняется.
+У admin и user ключ просто хранится.
 
 ## Ошибки
 

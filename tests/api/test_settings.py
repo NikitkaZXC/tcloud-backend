@@ -37,6 +37,7 @@ DEFAULTS = {
         "fx_cursor": False,
         "fx_easter_eggs": False,
     },
+    "telegram": {"chat_folder": True},
 }
 
 
