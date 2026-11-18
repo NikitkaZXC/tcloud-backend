@@ -1,8 +1,10 @@
 from types import SimpleNamespace
 
-from telethon import types
+import pytest
+from telethon import errors, types
 
 from src.infrastructure.enums import MediaKind
+from src.infrastructure.integrations.telegram import TelegramFloodWaitError
 from src.infrastructure.integrations.telegram import client as telegram
 from src.infrastructure.integrations.telegram.client import (
     download_location,
@@ -51,6 +53,7 @@ class FakeTelethon:
     def __init__(self, data: bytes) -> None:
         self.data = data
         self.calls = []
+        self.fail = None
 
     def iter_download(self, file, *, offset, request_size, **extra):
         self.calls.append((file, offset, extra))
@@ -58,6 +61,8 @@ class FakeTelethon:
         async def chunks():
             for start in range(offset, len(self.data), request_size):
                 yield self.data[start : start + request_size]
+            if self.fail:
+                raise self.fail
 
         return chunks()
 
@@ -121,6 +126,16 @@ async def test_iter_media_streams_the_counted_photo_size():
     location, offset, extra = fake.calls[0]
     assert location.thumb_size == "x" and offset == telegram.CHUNK
     assert extra == {"dc_id": 4, "file_size": 12522}
+
+
+async def test_iter_media_translates_telethon_errors_mid_stream():
+    fake = FakeTelethon(b"x" * telegram.CHUNK)
+    fake.fail = errors.FloodWaitError(request=None, capture=30)
+    parts = []
+    with pytest.raises(TelegramFloodWaitError) as raised:
+        async for part in _client(fake).iter_media(document_media(10**9), 0, 10**9):
+            parts.append(part)
+    assert parts == [fake.data] and raised.value.seconds == 30
 
 
 async def test_message_media_reports_the_downloaded_photo_size():

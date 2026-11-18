@@ -108,7 +108,8 @@ src/
 Инфраструктура бросает свои (`UnsupportedMediaError`, `UnsafeUrlError`, `TelegramFloodWaitError`), приложение — доменные
 (`PathConflictError`, `UploadInProgressError`). HTTP-статус выбирает только слой API — по коду, в `api/exception/errors.py`.
 Telethon-исключения наружу не выходят: `translate_errors` превращает их в `TelegramFloodWaitError`,
-`TelegramUnavailableError` (можно повторить) и `TelegramError`.
+`TelegramUnavailableError` (можно повторить) и `TelegramError`. Декоратор работает и с асинхронными генераторами
+(`iter_media`): ошибка посреди потока тоже переводится, а внутренний генератор Telethon закрывается (`aclosing`).
 
 ## Соглашения
 

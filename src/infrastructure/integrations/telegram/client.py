@@ -1,6 +1,8 @@
 import asyncio
+import inspect
 import os
 from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import aclosing, contextmanager
 from functools import wraps
 from pathlib import Path
 
@@ -53,43 +55,56 @@ TRANSIENT = (
 )
 
 
+@contextmanager
+def translated():
+    try:
+        yield
+    except errors.FloodWaitError as error:
+        raise TelegramFloodWaitError(error.seconds) from error
+    except TRANSIENT as error:
+        raise TelegramUnavailableError(str(error) or type(error).__name__) from error
+    except errors.SessionPasswordNeededError as error:
+        raise TelegramPasswordNeededError(
+            "the account has two-step verification, send the password"
+        ) from error
+    except (errors.PhoneCodeInvalidError, errors.PhoneCodeExpiredError) as error:
+        raise TelegramCodeInvalidError("the login code is wrong or expired") from error
+    except errors.PasswordHashInvalidError as error:
+        raise TelegramPasswordInvalidError(
+            "the two-step verification password is wrong"
+        ) from error
+    except errors.PhoneNumberInvalidError as error:
+        raise TelegramPhoneInvalidError(
+            "Telegram does not accept this phone number"
+        ) from error
+    except errors.FreshResetAuthorisationForbiddenError as error:
+        raise TelegramSessionTooFreshError(
+            "Telegram lets a session end other sessions only 24 h after login"
+        ) from error
+    except errors.UnauthorizedError as error:
+        raise TelegramUnauthorizedError(
+            f"Telegram session is not authorized: {error}"
+        ) from error
+    except errors.RPCError as error:
+        raise TelegramError(str(error)) from error
+
+
 def translate_errors(method):
+    if inspect.isasyncgenfunction(method):
+
+        @wraps(method)
+        async def generator(*args, **kwargs):
+            with translated():
+                async with aclosing(method(*args, **kwargs)) as items:
+                    async for item in items:
+                        yield item
+
+        return generator
+
     @wraps(method)
     async def wrapper(*args, **kwargs):
-        try:
+        with translated():
             return await method(*args, **kwargs)
-        except errors.FloodWaitError as error:
-            raise TelegramFloodWaitError(error.seconds) from error
-        except TRANSIENT as error:
-            raise TelegramUnavailableError(
-                str(error) or type(error).__name__
-            ) from error
-        except errors.SessionPasswordNeededError as error:
-            raise TelegramPasswordNeededError(
-                "the account has two-step verification, send the password"
-            ) from error
-        except (errors.PhoneCodeInvalidError, errors.PhoneCodeExpiredError) as error:
-            raise TelegramCodeInvalidError(
-                "the login code is wrong or expired"
-            ) from error
-        except errors.PasswordHashInvalidError as error:
-            raise TelegramPasswordInvalidError(
-                "the two-step verification password is wrong"
-            ) from error
-        except errors.PhoneNumberInvalidError as error:
-            raise TelegramPhoneInvalidError(
-                "Telegram does not accept this phone number"
-            ) from error
-        except errors.FreshResetAuthorisationForbiddenError as error:
-            raise TelegramSessionTooFreshError(
-                "Telegram lets a session end other sessions only 24 h after login"
-            ) from error
-        except errors.UnauthorizedError as error:
-            raise TelegramUnauthorizedError(
-                f"Telegram session is not authorized: {error}"
-            ) from error
-        except errors.RPCError as error:
-            raise TelegramError(str(error)) from error
 
     return wrapper
 
@@ -543,6 +558,7 @@ class TelegramClient:
         best = fitting[-1] if fitting else sizes[0]
         return await self._client.download_media(media, file=bytes, thumb=best.type)
 
+    @translate_errors
     async def iter_media(self, media, offset: int, length: int) -> AsyncIterator[bytes]:
         start = offset - offset % CHUNK
         skip = offset - start
