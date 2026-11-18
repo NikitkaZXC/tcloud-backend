@@ -8,6 +8,7 @@ from .auth import (
     SessionStateResponse,
 )
 from .file import (
+    ActivityResponse,
     FileResponse,
     FileSearchParams,
     FileSearchResponse,
@@ -47,6 +48,7 @@ from .user import (
 )
 
 __all__ = [
+    "ActivityResponse",
     "FileSearchParams",
     "FileSearchResponse",
     "MimeCountResponse",

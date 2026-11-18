@@ -6,6 +6,8 @@ from .auth import (
     SessionStateServiceRead,
 )
 from .file import (
+    ActivityDayServiceRead,
+    ActivityServiceRead,
     FileSearchServiceCreate,
     FileSearchServiceRead,
     FileServiceRead,
@@ -52,6 +54,8 @@ from .user import (
 )
 
 __all__ = [
+    "ActivityDayServiceRead",
+    "ActivityServiceRead",
     "FileSearchServiceCreate",
     "FileSearchServiceRead",
     "FoundFileServiceRead",

@@ -7,6 +7,7 @@ from fastapi.responses import Response, StreamingResponse
 
 from src.api.dependencies import get_actor
 from src.api.schemas import (
+    ActivityResponse,
     FileResponse,
     FileSearchParams,
     FileSearchResponse,
@@ -53,6 +54,21 @@ async def search_mimes(
     file_service: FileService = Depends(get_service_file),
 ) -> list[MimeCountResponse]:
     return await file_service.mime_counts(actor, path)
+
+
+@router.get(
+    path="/activity",
+    name="files:activity",
+    summary="Files uploaded per UTC day over the last days among readable files of the scope",
+    status_code=status.HTTP_200_OK,
+)
+async def get_activity(
+    path: Annotated[str | None, Query(min_length=1, max_length=1024)] = None,
+    days: Annotated[int, Query(ge=1, le=366)] = 365,
+    actor: Actor = Depends(get_actor),
+    file_service: FileService = Depends(get_service_file),
+) -> ActivityResponse:
+    return await file_service.activity(actor, path, days)
 
 
 @router.get(

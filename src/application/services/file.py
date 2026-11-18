@@ -1,4 +1,5 @@
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime, time, timedelta
 from uuid import UUID
 
 from loguru import logger
@@ -14,6 +15,8 @@ from src.application.exception import (
     ThumbnailNotFoundError,
 )
 from src.application.schemas import (
+    ActivityDayServiceRead,
+    ActivityServiceRead,
     Actor,
     FileSearchServiceCreate,
     FileSearchServiceRead,
@@ -203,6 +206,27 @@ class FileService:
                     updated_at=folder.updated_at,
                 )
                 for folder in folders
+            ],
+        )
+
+    async def activity(
+        self, actor: Actor, raw_path: str | None, days: int
+    ) -> ActivityServiceRead:
+        scope = await self._scope(actor, raw_path)
+        until = datetime.now(UTC).date()
+        since = until - timedelta(days=days - 1)
+        rows = await self._repo.activity(
+            scope, read_scopes(actor), datetime.combine(since, time(), UTC)
+        )
+        return ActivityServiceRead(
+            since=since,
+            until=until,
+            days=days,
+            files=sum(count for _, count, _ in rows),
+            size=sum(size for _, _, size in rows),
+            items=[
+                ActivityDayServiceRead(date=day, files=count, size=size)
+                for day, count, size in rows
             ],
         )
 

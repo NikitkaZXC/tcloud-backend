@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 from uuid import UUID
 
 from sqlalchemy import ColumnElement, case, delete, func, select, update
@@ -181,6 +181,24 @@ class FileRepository:
         )
         rows = (await self._session.execute(statement)).all()
         return [(row[0], row[1]) for row in rows], total or 0
+
+    async def activity(
+        self,
+        scope: tuple[UUID, str] | None,
+        scopes: list[tuple[UUID, str, bool]] | None,
+        since: datetime,
+    ) -> list[tuple[date, int, int]]:
+        day = func.date(func.timezone("UTC", FileDB.created_at)).label("day")
+        statement = (
+            select(day, func.count(), func.coalesce(func.sum(FileDB.size), 0))
+            .where(*in_scope(scope, scopes), FileDB.created_at >= since)
+            .group_by(day)
+            .order_by(day)
+        )
+        return [
+            (row[0], row[1], row[2])
+            for row in (await self._session.execute(statement)).all()
+        ]
 
     async def mime_counts(
         self,

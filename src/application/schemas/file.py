@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 from uuid import UUID
 
 from pydantic import BaseModel
@@ -110,3 +110,18 @@ class FileSearchServiceRead(BaseModel):
 class MimeCountServiceRead(BaseModel):
     mime: str
     files: int
+
+
+class ActivityDayServiceRead(BaseModel):
+    date: date
+    files: int
+    size: int
+
+
+class ActivityServiceRead(BaseModel):
+    since: date
+    until: date
+    days: int
+    files: int
+    size: int
+    items: list[ActivityDayServiceRead]

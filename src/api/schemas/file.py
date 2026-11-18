@@ -4,6 +4,7 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, Field, model_validator
 
 from src.application.schemas import (
+    ActivityServiceRead,
     FileSearchServiceRead,
     FileServiceRead,
     MimeCountServiceRead,
@@ -60,4 +61,8 @@ class FileSearchResponse(FileSearchServiceRead):
 
 
 class MimeCountResponse(MimeCountServiceRead):
+    pass
+
+
+class ActivityResponse(ActivityServiceRead):
     pass

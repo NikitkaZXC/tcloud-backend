@@ -46,6 +46,7 @@ class FileDB(PrimaryKeyMixin, CreatedAtMixin, UpdatedAtMixin, Base):
         Index("ix_files_mime", "mime"),
         Index("ix_files_size", "size"),
         Index("ix_files_updated_at", "updated_at"),
+        Index("ix_files_created_at", "created_at"),
         Index(
             "ix_files_encrypted",
             "storage_id",
