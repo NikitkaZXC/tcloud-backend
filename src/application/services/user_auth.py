@@ -17,6 +17,7 @@ from src.application.schemas import (
     Actor,
     ClientInfo,
     GrantServiceRead,
+    SettingsServiceRead,
     TokenPair,
     UserSessionServiceRead,
 )
@@ -207,7 +208,12 @@ class UserAuthService:
             ]
         )
         return Actor(
-            user_id=user.id, login=user.login, role=user.role, jti=jti, grants=grants
+            user_id=user.id,
+            login=user.login,
+            role=user.role,
+            jti=jti,
+            grants=grants,
+            settings=SettingsServiceRead.model_validate(user.settings),
         )
 
     async def authenticate_token(self, access_token: str) -> Actor:

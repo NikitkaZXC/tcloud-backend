@@ -76,7 +76,8 @@
 
 ## Исходящие запросы (ссылки и вебхуки)
 
-- Только `http`/`https`.
+- Только `http`/`https`. Адрес вебхука (`callback_url` и настройка `uploads.webhook_url`) проверяется ещё при приёме:
+  IP-литерал непубличного адреса сразу `422 unsafe_url` (`integrations/web.check_webhook`).
 - DNS резолвится один раз, **все** адреса должны быть публичными (`is_global`): нет localhost, LAN, link-local,
   CGNAT, метаданных облака, IPv4-mapped IPv6. Соединение идёт на проверенный IP, Host и SNI — исходные:
   DNS rebinding между проверкой и запросом невозможен.

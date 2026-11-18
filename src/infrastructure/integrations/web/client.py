@@ -39,6 +39,16 @@ def check_scheme(url: str) -> httpx.URL:
     return parsed
 
 
+def check_webhook(url: str) -> None:
+    host = check_scheme(url).host
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        return
+    if not ip_allowed(host):
+        raise UnsafeUrlError("url points to a private or reserved address")
+
+
 async def resolve(host: str, port: int) -> str:
     try:
         infos = await asyncio.get_running_loop().getaddrinfo(

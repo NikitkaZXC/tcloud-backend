@@ -24,6 +24,12 @@ from .folder import (
     FolderServiceRead,
     FolderSizeServiceRead,
 )
+from .settings import (
+    ArchiveSettingsServiceRead,
+    InterfaceSettingsServiceRead,
+    SettingsServiceRead,
+    UploadSettingsServiceRead,
+)
 from .storage import (
     StorageServiceCreate,
     StorageServiceRead,
@@ -67,6 +73,10 @@ __all__ = [
     "QrServiceRead",
     "SessionStateServiceRead",
     "AccountServiceRead",
+    "ArchiveSettingsServiceRead",
+    "InterfaceSettingsServiceRead",
+    "SettingsServiceRead",
+    "UploadSettingsServiceRead",
     "BatchItemServiceRead",
     "BatchServiceRead",
     "FileServiceRead",

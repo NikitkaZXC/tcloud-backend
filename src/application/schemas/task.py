@@ -4,6 +4,7 @@ from uuid import UUID
 from pydantic import BaseModel
 
 from src.application.schemas.file import FileServiceRead
+from src.application.schemas.settings import UploadSettingsServiceRead
 
 
 class TaskWaitingServiceRead(BaseModel):
@@ -61,12 +62,39 @@ class UploadServiceCreate(BaseModel):
     path: str
     size: int | None = None
     url: str | None = None
-    send_as: str = "file"
-    on_conflict: str = "error"
-    priority: str = "normal"
-    allow_unscannable: bool = False
+    send_as: str | None = None
+    on_conflict: str | None = None
+    priority: str | None = None
+    allow_unscannable: bool | None = None
     encrypt: bool | None = None
     callback_url: str | None = None
+
+    def with_defaults(
+        self, defaults: UploadSettingsServiceRead
+    ) -> "UploadServiceCreate":
+        send_as = self.send_as or defaults.send_as
+        return self.model_copy(
+            update={
+                "send_as": send_as,
+                "on_conflict": self.on_conflict or defaults.on_conflict,
+                "priority": self.priority or defaults.priority,
+                "allow_unscannable": (
+                    defaults.allow_unscannable
+                    if self.allow_unscannable is None
+                    else self.allow_unscannable
+                ),
+                "encrypt": (
+                    defaults.encrypt and send_as == "file"
+                    if self.encrypt is None
+                    else self.encrypt
+                ),
+                "callback_url": (
+                    defaults.webhook_url
+                    if self.callback_url is None
+                    else self.callback_url
+                ),
+            }
+        )
 
 
 class BatchItemServiceRead(BaseModel):

@@ -40,7 +40,7 @@ async def me(
     user_service: UserService = Depends(get_service_user),
 ) -> MeResponse:
     user = await user_service.me(actor)
-    return MeResponse(**user.model_dump(), grants=actor.grants)
+    return MeResponse(**user.model_dump(), grants=actor.grants, settings=actor.settings)
 
 
 @router.get(

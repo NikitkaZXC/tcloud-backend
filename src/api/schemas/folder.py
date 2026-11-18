@@ -30,6 +30,6 @@ class FolderDeleteResponse(FolderDeleteServiceRead):
 class SelectionArchiveCreate(BaseModel):
     files: list[UUID] = Field(default_factory=list)
     folders: list[TcloudPath] = Field(default_factory=list)
-    format: ArchiveFormat = ArchiveFormat.ZIP
+    format: ArchiveFormat | None = None
     name: ArchiveName | None = None
-    priority: Priority = "normal"
+    priority: Priority | None = None

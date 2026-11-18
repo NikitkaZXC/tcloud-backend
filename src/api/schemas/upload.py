@@ -12,10 +12,10 @@ BATCH_MAX = 100
 
 class UploadParams(BaseModel):
     path: TcloudPath
-    send_as: SendAs = "file"
-    on_conflict: OnConflict = "error"
-    priority: Priority = "normal"
-    allow_unscannable: bool = False
+    send_as: SendAs | None = None
+    on_conflict: OnConflict | None = None
+    priority: Priority | None = None
+    allow_unscannable: bool | None = None
     encrypt: bool | None = None
     callback_url: str | None = None
 

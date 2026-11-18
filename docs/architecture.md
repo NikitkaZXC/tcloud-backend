@@ -15,7 +15,7 @@ src/
     exception/             код ошибки → HTTP-статус, обработчики, единый формат {"error": {...}}
     dependencies/          verify_api_key
   application/
-    services/              бизнес-логика: Account, Auth (вход в Telegram, чистка старых сессий), Health, Storage, Folder, File, Task, Upload, UploadPipeline (стадии воркеров),
+    services/              бизнес-логика: Account, Auth (вход в Telegram, чистка старых сессий), Health, Storage, Folder, File, Task, Upload, Settings (настройки пользователя, flows/settings.md), UploadPipeline (стадии воркеров),
                            TaskSweeper (потерянные задачи, крутится в API)
     tasks/                 Celery-задачи uploads.download, uploads.prepare, uploads.telegram, archives.build, WorkerRuntime и Heartbeat воркера
     schemas/               DTO сервисов (*ServiceRead, *ServiceCreate, *ServiceUpdate)

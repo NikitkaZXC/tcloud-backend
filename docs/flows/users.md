@@ -29,7 +29,8 @@ Admin не может создать, изменить или удалить д�
 - `POST /api/auth/logout` отзывает текущую сессию, `POST /api/auth/logout/all` отзывает все.
 - `GET /api/auth/sessions` показывает активные сессии (user-agent, IP, даты, `is_current`), `DELETE /api/auth/sessions/{id}` завершает одну из них.
 - `POST /api/auth/password` `{"current_password", "new_password"}` меняет пароль, завершает остальные сессии и выдаёт новые куки.
-- `GET /api/users/me` показывает текущего пользователя и его гранты.
+- `GET /api/users/me` показывает текущего пользователя, его гранты и настройки (`settings`, flows/settings.md).
+- Свои настройки по умолчанию (загрузки, архивы, интерфейс) пользователь меняет сам: `GET/PATCH/DELETE /api/account/settings`.
 
 JWT несёт `sub`, `user_id`, `role`, `jti`, `iat`, `exp`, `token_type`. Права берутся не из токена: на каждый запрос
 пользователь и гранты читаются из БД, поэтому блокировка, смена роли и изменение грантов действуют сразу.

@@ -6,6 +6,7 @@ from .folder import FolderService
 from .grant import GrantService
 from .health import HealthService
 from .pipeline import UploadPipeline
+from .settings import SettingsService
 from .storage import StorageService
 from .sweeper import TaskSweeper
 from .task import TaskService
@@ -21,6 +22,7 @@ __all__ = [
     "FolderService",
     "GrantService",
     "HealthService",
+    "SettingsService",
     "StorageService",
     "TaskService",
     "TaskSweeper",

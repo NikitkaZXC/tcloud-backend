@@ -45,7 +45,7 @@ from src.infrastructure.enums import (
     UploadQueue,
 )
 from src.infrastructure.integrations import session_exists
-from src.infrastructure.integrations.web import check_scheme
+from src.infrastructure.integrations.web import check_scheme, check_webhook
 from src.infrastructure.media import check_name
 from src.infrastructure.security import check_available, plain_limit
 from src.utilities.errors import TCloudError
@@ -124,18 +124,19 @@ class UploadService:
     async def _new_task(
         self, actor: Actor, data: UploadServiceCreate, batch_id: UUID | None
     ) -> tuple[dict, bool]:
+        data = data.with_defaults(actor.settings.uploads)
         storage_id, folder, name = split_file(data.path)
         self._check_access(actor, data.path, data.on_conflict)
         check_name(name)
         if data.callback_url:
-            check_scheme(data.callback_url)
+            check_webhook(data.callback_url)
         if data.url:
             check_scheme(data.url)
         if not session_exists(TelegramSession.UPLOAD):
             raise SessionNotAuthorizedError(
                 "the upload Telegram session is not logged in, use /api/telegram/upload"
             )
-        encrypt = data.send_as == "file" if data.encrypt is None else data.encrypt
+        encrypt = data.encrypt
         if encrypt:
             if data.send_as != "file":
                 raise EncryptRequiresFileError(

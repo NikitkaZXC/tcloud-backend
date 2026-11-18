@@ -121,8 +121,14 @@ class FolderService:
         )
 
     async def create_archive(
-        self, actor: Actor, raw_path: str, archive_format: ArchiveFormat, priority: str
+        self,
+        actor: Actor,
+        raw_path: str,
+        archive_format: ArchiveFormat | None,
+        priority: str | None,
     ) -> TaskServiceRead:
+        archive_format = archive_format or actor.settings.archives.format
+        priority = priority or actor.settings.archives.priority
         storage_id, path = split_folder(raw_path)
         self._require_listing(actor, storage_id, path)
         await self._storage_service.get_db(storage_id)
@@ -139,10 +145,12 @@ class FolderService:
         actor: Actor,
         file_ids: list[UUID],
         folder_paths: list[str],
-        archive_format: ArchiveFormat,
-        priority: str,
+        archive_format: ArchiveFormat | None,
+        priority: str | None,
         name: str | None,
     ) -> TaskServiceRead:
+        archive_format = archive_format or actor.settings.archives.format
+        priority = priority or actor.settings.archives.priority
         if not file_ids and not folder_paths:
             raise EmptySelectionError("select at least one file or folder")
         limit = settings.upload.ARCHIVE_MAX_ITEMS

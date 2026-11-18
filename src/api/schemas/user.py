@@ -3,6 +3,7 @@ from pydantic import BaseModel
 from src.application.schemas import (
     ApiKeyServiceRead,
     GrantServiceRead,
+    SettingsServiceRead,
     UserServiceRead,
     UserSessionServiceRead,
 )
@@ -56,6 +57,7 @@ class UserResponse(UserServiceRead):
 
 class MeResponse(UserServiceRead):
     grants: list[GrantServiceRead]
+    settings: SettingsServiceRead
 
 
 class UserSessionResponse(UserSessionServiceRead):

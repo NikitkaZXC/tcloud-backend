@@ -1,8 +1,9 @@
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
+from src.application.schemas.settings import SettingsServiceRead
 from src.infrastructure.database.models import (
     ApiKeyDB,
     FolderGrantDB,
@@ -51,6 +52,7 @@ class Actor(BaseModel):
     role: UserRole
     jti: UUID | None = None
     grants: list[GrantServiceRead] = []
+    settings: SettingsServiceRead = Field(default_factory=SettingsServiceRead)
 
     @property
     def is_admin(self) -> bool:

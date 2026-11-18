@@ -21,6 +21,7 @@ from .folder import (
     FolderResponse,
     SelectionArchiveCreate,
 )
+from .settings import SettingsResponse, SettingsUpdate
 from .storage import StorageCreate, StorageResponse, StorageUpdate
 from .system import AccountResponse, HealthResponse
 from .upload import (
@@ -66,6 +67,8 @@ __all__ = [
     "FolderListingResponse",
     "FolderResponse",
     "SelectionArchiveCreate",
+    "SettingsResponse",
+    "SettingsUpdate",
     "HealthResponse",
     "PasswordSignIn",
     "PriorityUpdate",

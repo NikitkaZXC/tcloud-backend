@@ -53,8 +53,8 @@ async def get_folder(
 )
 async def create_archive(
     path: str,
-    archive_format: ArchiveFormat = Query(ArchiveFormat.ZIP, alias="format"),
-    priority: TaskPriority = TaskPriority.NORMAL,
+    archive_format: ArchiveFormat | None = Query(None, alias="format"),
+    priority: TaskPriority | None = None,
     actor: Actor = Depends(get_actor),
     folder_service: FolderService = Depends(get_service_folder),
 ) -> TaskResponse:
