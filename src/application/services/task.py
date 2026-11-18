@@ -18,6 +18,8 @@ from src.application.schemas import (
     TaskServiceRead,
     TaskSummaryServiceRead,
     TaskWaitingServiceRead,
+    TaskWarningServiceRead,
+    task_warning,
 )
 from src.infrastructure.cache import TaskStore
 from src.infrastructure.database.repositories import FileRepository
@@ -40,16 +42,26 @@ class TaskService:
             speed=None,
             eta=None,
             waiting=None,
+            warnings=[],
+            warning_details=[],
             file=file,
             queue_position=position,
             cancel_requested=bool(task.get("cancel")),
         )
         view = TaskServiceRead(**fields)
+        for warning in task.get("warnings") or []:
+            if isinstance(warning, str):
+                warning = task_warning("other", warning)
+            view.warnings.append(warning["message"])
+            view.warning_details.append(TaskWarningServiceRead(**warning))
         waiting = task.get("waiting")
         if waiting:
             until = waiting.get("until")
+            code, _, queue = waiting["reason"].partition(":")
             view.waiting = TaskWaitingServiceRead(
                 reason=waiting["reason"],
+                code=code,
+                params={"queue": queue} if queue else {},
                 seconds=max(0, round(until - time.time())) if until else None,
             )
         if task["status"] == TaskStatus.DONE:

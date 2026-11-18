@@ -104,7 +104,8 @@ status  queued → running → done | failed | cancelled
 stage   downloading (только по ссылке) → scanning → uploading_tg → done
 ```
 
-Пока задача ждёт воркера, `waiting = {"reason": "queue:uploads.download | uploads.prepare | uploads.telegram"}`, а
+Пока задача ждёт воркера, `waiting = {"reason": "queue:uploads.download | uploads.prepare | uploads.telegram", "code": "queue", "params": {"queue": ...}}`
+(все коды ожидания и предупреждений — в flows/uploads.md), а
 `queue_position` — её номер в этой очереди: 1 — следующая на взятие, выполняющиеся задачи не считаются.
 
 RabbitMQ позицию не сообщает, поэтому её считает наш индекс: sorted set `tcloud:waiting:{queue}` со счётом

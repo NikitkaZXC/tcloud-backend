@@ -12,7 +12,7 @@ from uuid import UUID, uuid7
 from loguru import logger
 
 from src.application.exception import PathConflictError, TaskCancelledError
-from src.application.schemas import caption_token
+from src.application.schemas import SKIPPED, caption_token, task_warning
 from src.application.services.archive import build_archive
 from src.application.services.temp import remove_task_files, temp_path
 from src.application.services.webhook import send_hook
@@ -250,7 +250,7 @@ class UploadPipeline:
         _, _, name = split_file(task["path"])
         media = await asyncio.to_thread(probe, path, name)
         sha256 = await asyncio.to_thread(sha256_of, path)
-        warnings: list[str] = []
+        warnings: list[dict] = []
         try:
             await self._retry(
                 task, lambda: self._runtime.scanner.scan(path), ScannerUnavailableError
@@ -258,17 +258,30 @@ class UploadPipeline:
         except UnscannableFileError as error:
             if not task["params"].get("allow_unscannable"):
                 raise
-            warnings.append(f"{error.message}, accepted by allow_unscannable")
+            warnings.append(
+                task_warning(
+                    "unscannable_accepted",
+                    f"{error.message}, accepted by allow_unscannable",
+                    **error.extra,
+                )
+            )
         as_file = task["params"]["send_as"] == "file"
         if media.kind == MediaKind.DOCUMENT and not as_file:
             as_file = True
-            warnings.append("file is not media, sent as file")
+            warnings.append(
+                task_warning(
+                    "not_media_sent_as_file", "file is not media, sent as file"
+                )
+            )
         prepared = {"send_path": str(path), "thumb": None}
         if not as_file and media.kind == MediaKind.PHOTO:
             if not photo_fits(media, path.stat().st_size):
                 as_file = True
                 warnings.append(
-                    "photo does not fit Telegram photo limits (10 MB, sides), sent as file"
+                    task_warning(
+                        "photo_too_big_sent_as_file",
+                        "photo does not fit Telegram photo limits (10 MB, sides), sent as file",
+                    )
                 )
             elif media.mime not in TELEGRAM_PHOTO_SUFFIXES:
                 send_path = temp_path("photo.jpg")
@@ -282,7 +295,11 @@ class UploadPipeline:
                 await asyncio.to_thread(os.link, path, send_path)
         if not as_file and media.kind == MediaKind.VIDEO and media.mime != "video/mp4":
             warnings.append(
-                f"{media.mime} may be shown as a file instead of a player in Telegram"
+                task_warning(
+                    "video_may_show_as_file",
+                    f"{media.mime} may be shown as a file instead of a player in Telegram",
+                    mime=media.mime,
+                )
             )
         if media.kind == MediaKind.VIDEO:
             thumb = temp_path("thumb.jpg")
@@ -348,7 +365,7 @@ class UploadPipeline:
             if on_conflict == "skip":
                 if recorded:
                     await telegram.delete(chat_id, [recorded["message"]["message_id"]])
-                await self.finish(task, existing.id, ["skipped: file already exists"])
+                await self.finish(task, existing.id, [SKIPPED])
                 return
         file_id = planned or (existing.id if existing else uuid7())
         media = Media(**prepared["media"])
@@ -450,7 +467,13 @@ class UploadPipeline:
         finally:
             reservation.release()
         if missing:
-            warnings.append(f"{missing} files were deleted before archiving")
+            warnings.append(
+                task_warning(
+                    "archive_files_deleted",
+                    f"{missing} files were deleted before archiving",
+                    count=missing,
+                )
+            )
         await self._checkpoint(task)
         archive = Path(params["file"])
         until = time.time() + settings.upload.ARCHIVE_TTL
@@ -527,7 +550,7 @@ class UploadPipeline:
         remove_task_files(await self._store.get(task["id"]) or task)
         self.hook(task)
 
-    async def finish(self, task: dict, file_id: UUID, warnings: list[str]) -> None:
+    async def finish(self, task: dict, file_id: UUID, warnings: list[dict]) -> None:
         current = await self._store.get(task["id"]) or {}
         await self._close(
             task,

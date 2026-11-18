@@ -196,6 +196,13 @@ async def test_document_as_media_is_sent_as_file(client, telegram, storage):
     task = await upload(client, path(storage, "notes.txt"), b"hello", send_as="media")
     assert task["file"]["sent_as"] == "file" and task["file"]["kind"] == "document"
     assert task["warnings"] == ["file is not media, sent as file"]
+    assert task["warning_details"] == [
+        {
+            "code": "not_media_sent_as_file",
+            "params": {},
+            "message": "file is not media, sent as file",
+        }
+    ]
     assert telegram.messages()[0]["as_file"] is True
 
 
@@ -230,6 +237,10 @@ async def test_unscannable_allowed_with_flag(client, telegram, storage):
         "antivirus cannot check this file fully (Heuristics.Encrypted.Zip),"
         " accepted by allow_unscannable"
     ]
+    assert task["warning_details"][0]["code"] == "unscannable_accepted"
+    assert task["warning_details"][0]["params"] == {
+        "reason": "Heuristics.Encrypted.Zip"
+    }
     assert len(telegram.messages()) == 1
 
 
@@ -442,7 +453,12 @@ async def test_task_fields(client, storage):
         "high",
     )
     assert task["bytes_total"] == len(data) and task["progress"] == 0.0
-    assert task["waiting"] == {"reason": "queue:uploads.prepare", "seconds": None}
+    assert task["waiting"] == {
+        "reason": "queue:uploads.prepare",
+        "code": "queue",
+        "params": {"queue": "uploads.prepare"},
+        "seconds": None,
+    }
     done = await wait_task(client, task["id"])
     assert done["stage"] == "done" and done["error"] is None and not done["waiting"]
     assert (await client.get(f"/tasks/{uuid.uuid4()}")).status_code == 404

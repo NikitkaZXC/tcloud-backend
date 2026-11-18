@@ -347,5 +347,8 @@ async def test_folder_archive_skips_files_gone_from_telegram(client, telegram, s
         chat["messages"].pop(gone["telegram"]["message_id"], None)
     task, response = await build_archive(client, path(storage, "a"))
     assert task["warnings"] == ["2.pdf: gone from Telegram, not archived"]
+    assert [(item["code"], item["params"]) for item in task["warning_details"]] == [
+        ("archive_file_gone", {"name": "2.pdf"})
+    ]
     with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
         assert archive.namelist() == ["1.jpg"]

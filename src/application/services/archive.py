@@ -4,6 +4,7 @@ from pathlib import Path
 
 from loguru import logger
 
+from src.application.schemas import task_warning
 from src.application.services.file import file_body, stored_size
 from src.application.services.temp import temp_path, write_body
 from src.infrastructure.archive import ArchiveWriter
@@ -29,8 +30,8 @@ async def build_archive(
     target: Path,
     progress: Callable[[int], None],
     checkpoint: Callable[[], Awaitable[None]],
-) -> list[str]:
-    warnings: list[str] = []
+) -> list[dict]:
+    warnings: list[dict] = []
     done = 0
     with target.open("wb") as output:
         target.chmod(0o600)
@@ -48,11 +49,23 @@ async def build_archive(
                     logger.warning(
                         "File {} is gone from Telegram, not archived", file.id
                     )
-                    warnings.append(f"{name}: gone from Telegram, not archived")
+                    warnings.append(
+                        task_warning(
+                            "archive_file_gone",
+                            f"{name}: gone from Telegram, not archived",
+                            name=name,
+                        )
+                    )
                     continue
                 if size != stored_size(file):
                     logger.warning("File {} changed in Telegram, not archived", file.id)
-                    warnings.append(f"{name}: changed in Telegram, not archived")
+                    warnings.append(
+                        task_warning(
+                            "archive_file_changed",
+                            f"{name}: changed in Telegram, not archived",
+                            name=name,
+                        )
+                    )
                     continue
                 offset = done
                 try:
@@ -64,7 +77,13 @@ async def build_archive(
                     )
                 except DecryptionError as error:
                     logger.warning("File {} not archived: {}", file.id, error.message)
-                    warnings.append(f"{name}: {error.message}, not archived")
+                    warnings.append(
+                        task_warning(
+                            "archive_file_undecryptable",
+                            f"{name}: {error.message}, not archived",
+                            name=name,
+                        )
+                    )
                     continue
                 await asyncio.to_thread(
                     writer.add, part, name, file.updated_at.timestamp()

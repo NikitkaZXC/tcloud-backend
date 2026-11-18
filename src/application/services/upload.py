@@ -19,6 +19,7 @@ from src.application.exception import (
     UploadInProgressError,
 )
 from src.application.schemas import (
+    SKIPPED,
     Actor,
     BatchItemServiceRead,
     BatchServiceRead,
@@ -202,7 +203,7 @@ class UploadService:
                 stage=TaskStage.DONE,
                 file_id=existing.id,
                 waiting=None,
-                warnings=["skipped: file already exists"],
+                warnings=[SKIPPED],
             )
             await self._store.create(task)
             return task, False

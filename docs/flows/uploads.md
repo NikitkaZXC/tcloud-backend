@@ -92,5 +92,37 @@ DEK файла и ложится в `files.thumbnail`; `/thumb` его расш�
 
 `GET /api/tasks/{id}`: `status` (`queued/running/done/failed/cancelled`), `stage`, `priority`, `bytes_done`/`bytes_total`,
 `progress`, `speed`, `eta`, `queue_position` (номер в очереди, 1 — следующая), `waiting` (очередь, FloodWait, повтор),
-`cancel_requested`, `error`, `warnings`, `file`.
+`cancel_requested`, `error`, `warnings`, `warning_details`, `file`.
 Задача хранится 7 дней (`UPLOAD_TASK_TTL`). Вебхук описан в background-tasks.md.
+
+### Коды ожидания и предупреждений
+
+Тексты (`waiting.reason`, `warnings`, `error.message`) — английские и для людей; фронтенд переводит по кодам.
+Коды стабильны, новые могут добавляться — неизвестный код показывайте текстом `message`.
+
+`waiting = {reason, code, params, seconds}` (`seconds` — сколько ещё ждать, если известно):
+
+| `code` | `params` | Когда |
+|---|---|---|
+| `queue` | `queue`: `uploads.download` / `uploads.prepare` / `uploads.telegram` / `archives.build` | ждёт воркера в очереди (`reason` = `queue:{queue}`), номер — `queue_position` |
+| `disk_slots` | — | ждёт места на диске сервера (`UPLOAD_MAX_FILES_ON_DISK`) |
+| `retry` | — | сеть Telegram или ClamAV недоступна, повтор через `seconds` |
+| `flood_wait` | — | Telegram попросил паузу (FloodWait), вся выгрузка ждёт `seconds` |
+
+`warnings` — список английских строк (как раньше), `warning_details` — те же предупреждения по порядку как
+`{code, params, message}`:
+
+| `code` | `params` | Текст |
+|---|---|---|
+| `skipped_exists` | — | `on_conflict=skip`, файл уже был, загрузка пропущена |
+| `unscannable_accepted` | `reason` — сигнатура ClamAV (`Heuristics.Encrypted.Zip`, …) | антивирус не проверил файл целиком, принят из-за `allow_unscannable` |
+| `not_media_sent_as_file` | — | просили `send_as=media`, но это не медиа — отправлен файлом |
+| `photo_too_big_sent_as_file` | — | фото не влезает в лимиты фото Telegram (10 МБ, стороны) — отправлено файлом |
+| `video_may_show_as_file` | `mime` | видео не mp4: Telegram может показать его файлом, а не плеером |
+| `archive_file_gone` | `name` — путь внутри архива | файла уже нет в Telegram, в архив не попал |
+| `archive_file_changed` | `name` | файл в Telegram изменился (другой размер), в архив не попал |
+| `archive_file_undecryptable` | `name` | зашифрованный файл не расшифровался, в архив не попал |
+| `archive_files_deleted` | `count` | столько выбранных файлов удалили до сборки архива |
+| `other` | — | задачи, созданные до появления кодов: только `message` |
+
+Коды ошибок задач (`error.code`) — те же, что у ошибок API (`docs/flows/*`, `src/api/exception/errors.py`).

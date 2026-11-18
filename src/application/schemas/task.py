@@ -9,7 +9,22 @@ from src.application.schemas.settings import UploadSettingsServiceRead
 
 class TaskWaitingServiceRead(BaseModel):
     reason: str
+    code: str
+    params: dict = {}
     seconds: int | None = None
+
+
+class TaskWarningServiceRead(BaseModel):
+    code: str
+    params: dict = {}
+    message: str
+
+
+def task_warning(code: str, message: str, **params: object) -> dict:
+    return {"code": code, "params": params, "message": message}
+
+
+SKIPPED = task_warning("skipped_exists", "skipped: file already exists")
 
 
 class TaskArchiveServiceRead(BaseModel):
@@ -38,6 +53,7 @@ class TaskServiceRead(BaseModel):
     cancel_requested: bool
     error: dict | None
     warnings: list[str]
+    warning_details: list[TaskWarningServiceRead]
     file: FileServiceRead | None
     archive: TaskArchiveServiceRead | None = None
     created_at: datetime

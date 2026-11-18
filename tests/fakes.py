@@ -348,5 +348,6 @@ class FakeScanner:
             raise InfectedFileError("antivirus found Eicar-Signature, file rejected")
         if b"ENCRYPTED" in data:
             raise UnscannableFileError(
-                "antivirus cannot check this file fully (Heuristics.Encrypted.Zip)"
+                "antivirus cannot check this file fully (Heuristics.Encrypted.Zip)",
+                reason="Heuristics.Encrypted.Zip",
             )

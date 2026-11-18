@@ -223,6 +223,7 @@ async def test_explicit_params_win(client, storage):
     await patch(client, {"uploads": {"on_conflict": "skip"}})
     skipped = await upload(client, path(storage, "a.pdf"), PDF)
     assert skipped["warnings"] == ["skipped: file already exists"]
+    assert skipped["warning_details"][0]["code"] == "skipped_exists"
     response = await client.post(
         "/uploads",
         params={"path": path(storage, "a.pdf"), "on_conflict": "error"},
