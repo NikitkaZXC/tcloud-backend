@@ -88,8 +88,8 @@ class WorkerRuntime:
         return task
 
     async def drain(self) -> None:
-        while self._tasks:
-            await asyncio.gather(*list(self._tasks), return_exceptions=True)
+        while pending := [task for task in self._tasks if not task.done()]:
+            await asyncio.gather(*pending, return_exceptions=True)
 
     async def _close(self) -> None:
         await self.drain()
