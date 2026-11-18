@@ -168,6 +168,10 @@ async def test_list_storages(client):
     assert [item["id"] for item in listed] == [first["id"], second["id"]]
     assert [item["name"] for item in listed] == ["A", "B"]
     assert [(item["files"], item["total_size"]) for item in listed] == [(0, 0), (0, 0)]
+    assert [(item["preview_count"], item["preview_bytes"]) for item in listed] == [
+        (0, 0),
+        (0, 0),
+    ]
 
 
 async def test_list_storages_counts_files(client):
@@ -184,6 +188,45 @@ async def test_list_storages_counts_files(client):
     assert (listed[second["id"]]["files"], listed[second["id"]]["total_size"]) == (
         1,
         len(PDF) + 1,
+    )
+
+
+async def test_list_storages_counts_previews(client, engine, make_user):
+    first = (await client.post("/storages", json={"name": "A"})).json()
+    second = (await client.post("/storages", json={"name": "B"})).json()
+    await upload(client, path(first, "a/1.jpg"), make_image(), encrypt="true")
+    await upload(client, path(first, "2.jpg"), make_image(), encrypt="true")
+    await upload(client, path(first, "3.jpg"), make_image(), encrypt="false")
+    await upload(client, path(first, "4.pdf"), PDF, encrypt="true")
+    async with engine.connect() as connection:
+        stored = (
+            await connection.execute(
+                text(
+                    "SELECT name, length(thumbnail) FROM files "
+                    "WHERE thumbnail IS NOT NULL"
+                )
+            )
+        ).all()
+    assert len(stored) == 2
+    listed = {item["id"]: item for item in (await client.get("/storages")).json()}
+    assert (
+        listed[first["id"]]["preview_count"],
+        listed[first["id"]]["preview_bytes"],
+    ) == (
+        2,
+        sum(size for _, size in stored),
+    )
+    assert (
+        listed[second["id"]]["preview_count"],
+        listed[second["id"]]["preview_bytes"],
+    ) == (0, 0)
+    one = (await client.get(f"/storages/{first['id']}")).json()
+    assert one["preview_count"] == 2
+    bob = await make_user("bob", "user", {"path": path(first, "a")})
+    seen = (await bob.get(f"/storages/{first['id']}")).json()
+    assert (seen["preview_count"], seen["preview_bytes"]) == (
+        1,
+        dict(stored)["1.jpg"],
     )
 
 

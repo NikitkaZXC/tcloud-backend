@@ -24,10 +24,18 @@ class StorageServiceRead(BaseModel):
     updated_at: datetime
     files: int | None = None
     total_size: int | None = None
+    preview_count: int
+    preview_bytes: int
 
     @classmethod
     def from_db(
-        cls, storage: StorageDB, info: ChannelInfo | None, **stats: int
+        cls,
+        storage: StorageDB,
+        info: ChannelInfo | None,
+        files: int,
+        total_size: int,
+        preview_count: int,
+        preview_bytes: int,
     ) -> "StorageServiceRead":
         return cls(
             id=storage.id,
@@ -39,7 +47,10 @@ class StorageServiceRead(BaseModel):
             telegram=TelegramStorageServiceRead(chat_id=storage.tg_chat_id),
             created_at=storage.created_at,
             updated_at=storage.updated_at,
-            **stats,
+            files=files,
+            total_size=total_size,
+            preview_count=preview_count,
+            preview_bytes=preview_bytes,
         )
 
 

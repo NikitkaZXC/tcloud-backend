@@ -53,7 +53,7 @@ class StorageRepository:
         self,
         storage_ids: list[UUID],
         scopes: list[tuple[UUID, str, bool]] | None,
-    ) -> dict[UUID, tuple[int, int]]:
+    ) -> dict[UUID, tuple[int, int, int, int]]:
         if not storage_ids:
             return {}
         statement = (
@@ -61,6 +61,8 @@ class StorageRepository:
                 FileDB.storage_id,
                 func.count(),
                 func.coalesce(func.sum(FileDB.size), 0),
+                func.count(FileDB.thumbnail),
+                func.coalesce(func.sum(func.octet_length(FileDB.thumbnail)), 0),
             )
             .where(
                 FileDB.storage_id.in_(storage_ids),
@@ -69,6 +71,6 @@ class StorageRepository:
             .group_by(FileDB.storage_id)
         )
         return {
-            row[0]: (row[1], row[2])
+            row[0]: tuple(row[1:])
             for row in (await self._session.execute(statement)).all()
         }

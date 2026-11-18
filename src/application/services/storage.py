@@ -37,6 +37,7 @@ from src.infrastructure.media import UnsupportedMediaError, probe, to_jpeg
 
 TELEGRAM_PHOTO_SUFFIXES = {"image/jpeg": ".jpg", "image/png": ".png"}
 CHAT_FOLDER = "TCloud"
+NO_STATS = (0, 0, 0, 0)
 
 
 class StorageService:
@@ -111,10 +112,7 @@ class StorageService:
         )
         return [
             StorageServiceRead.from_db(
-                storage,
-                infos.get(storage.tg_chat_id),
-                files=stats.get(storage.id, (0, 0))[0],
-                total_size=stats.get(storage.id, (0, 0))[1],
+                storage, infos.get(storage.tg_chat_id), *stats.get(storage.id, NO_STATS)
             )
             for storage in storages
         ]
@@ -127,12 +125,11 @@ class StorageService:
         self.check_visible(actor, storage_id)
         storage = await self.get_db(storage_id)
         stats = await self._repo.get_stats([storage_id], read_scopes(actor, storage_id))
-        files, total_size = stats.get(storage_id, (0, 0))
         info = (await self._runtime.telegram.channels([storage.tg_chat_id])).get(
             storage.tg_chat_id
         )
         return StorageServiceRead.from_db(
-            storage, info, files=files, total_size=total_size
+            storage, info, *stats.get(storage_id, NO_STATS)
         )
 
     async def update(
@@ -195,12 +192,10 @@ class StorageService:
     async def sync_folder(self) -> None:
         try:
             root = await UserRepository(self._session).get_root()
-            enabled = SettingsServiceRead.from_stored(
-                root.settings if root else {}
-            )[0].telegram.chat_folder
+            stored, _ = SettingsServiceRead.from_stored(root.settings if root else {})
             chat_ids = (
                 [storage.tg_chat_id for storage in await self._repo.get_all()]
-                if enabled
+                if stored.telegram.chat_folder
                 else []
             )
             await self._runtime.telegram.sync_folder(CHAT_FOLDER, chat_ids)
