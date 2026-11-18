@@ -5,7 +5,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Header, Query, status
 from fastapi.responses import Response, StreamingResponse
 
-from src.api.dependencies import get_actor
+from src.api.dependencies import get_actor, get_root
 from src.api.schemas import (
     ActivityResponse,
     FileResponse,
@@ -166,6 +166,19 @@ async def get_thumbnail(
     if data is None:
         return Response(status_code=status.HTTP_304_NOT_MODIFIED, headers=headers)
     return Response(data, media_type="image/jpeg", headers=headers)
+
+
+@router.post(
+    path="/previews/backfill",
+    name="files:previews-backfill",
+    summary="Root: queue a background job that builds missing previews of encrypted photos, GIFs and videos",
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def backfill_previews(
+    actor: Actor = Depends(get_root),
+    file_service: FileService = Depends(get_service_file),
+) -> None:
+    await file_service.backfill_previews(actor)
 
 
 @router.delete(

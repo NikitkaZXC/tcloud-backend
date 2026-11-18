@@ -31,9 +31,10 @@ from src.application.services.access import (
     leads_to_grant,
     read_scopes,
     require,
+    require_root,
 )
 from src.application.services.storage import StorageService
-from src.infrastructure.background import AppRuntime
+from src.infrastructure.background import AppRuntime, enqueue
 from src.infrastructure.cache import TaskStore
 from src.infrastructure.database.models import FileDB
 from src.infrastructure.database.repositories import (
@@ -41,12 +42,13 @@ from src.infrastructure.database.repositories import (
     FolderRepository,
     StorageRepository,
 )
-from src.infrastructure.enums import Permission
+from src.infrastructure.enums import Permission, TaskPriority, UploadQueue
 from src.infrastructure.integrations import TelegramClient, TelegramMessageGoneError
 from src.infrastructure.security import cipher_size, cipher_span, decrypt, unseal
 from src.utilities.errors import TCloudError
 from src.utilities.parsers import join_path, split_file, split_folder
 
+BACKFILL_TASK = "previews.backfill"
 SEARCH_FOLDERS = 20
 MIME_FACETS = 200
 
@@ -266,6 +268,11 @@ class FileService:
     async def open_download(self, actor: Actor, file_id: UUID) -> tuple[FileDB, object]:
         file, chat_id = await self.get_db(actor, file_id, Permission.READ)
         return file, await self._media(file, chat_id)
+
+    async def backfill_previews(self, actor: Actor) -> None:
+        require_root(actor)
+        await enqueue(UploadQueue.ARCHIVE, TaskPriority.LOW.level, BACKFILL_TASK)
+        logger.info("Preview backfill queued by {}", actor.login)
 
     async def get_thumbnail(
         self, actor: Actor, file_id: UUID, if_none_match: str | None

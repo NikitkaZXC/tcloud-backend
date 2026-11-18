@@ -54,6 +54,14 @@ class FileDB(PrimaryKeyMixin, CreatedAtMixin, UpdatedAtMixin, Base):
             "storage_id",
             postgresql_where=text("encryption_header IS NOT NULL"),
         ),
+        Index(
+            "ix_files_missing_preview",
+            "kind",
+            "id",
+            postgresql_where=text(
+                "encryption_header IS NOT NULL AND thumbnail IS NULL"
+            ),
+        ),
     )
 
     storage_id: Mapped[UUID] = mapped_column(

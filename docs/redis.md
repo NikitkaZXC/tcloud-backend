@@ -4,7 +4,7 @@ Redis хранит всё быстрое и временное: задачи з�
 индексы очередей, heartbeat воркеров, метки активности хранилищ, отозванные access-токены и счётчик входов. Файлы в
 Redis не попадают. Все ключи начинаются с `REDIS_PREFIX` (`tcloud`), значения полей задачи — JSON.
 
-Код: `src/infrastructure/cache/tasks.py` (`TaskStore`, Lua `CLAIM`/`REQUEUE`/`CANCEL`/`DISK_SLOT`/`UNLOCK`),
+Код: `src/infrastructure/cache/tasks.py` (`TaskStore`, Lua `CLAIM`/`REQUEUE`/`CANCEL`/`DISK_SLOT`/`UNLOCK`/`RENEW`),
 `cache/tokens.py` (`TokenBlacklist`), `cache/limits.py` (`RateLimiter`), `background/heartbeat.py` (`Heartbeat`).
 Клиент создаёт `cache/factory.py` (`create_redis`, `create_sync_redis` для потока heartbeat).
 
@@ -21,6 +21,7 @@ flowchart LR
     subgraph workers["Celery-воркеры"]
         pl["UploadPipeline"]
         hb["Heartbeat (поток)"]
+        bf["PreviewBackfill"]
     end
     subgraph redis["Redis"]
         task[("task:{id}<br/>hash")]
@@ -35,11 +36,13 @@ flowchart LR
         activity[("activity:{storage}:{read|write}")]
         revoked[("revoked:{jti}")]
         rate[("rate:signin:{ip}")]
+        job[("job:{name}")]
     end
     us --> task & batch & owned & path & active & disk & waiting
     ts --> task & owned & waiting
     sw --> active & task & archives & path & disk & waiting
     pl --> task & waiting & disk & path & active & archives & activity
+    bf --> job & activity
     hb --> worker
     fs --> activity
     ss --> activity & path
@@ -60,6 +63,7 @@ flowchart LR
 | `tcloud:archives` | zset | путь готового архива в `tmp` → срок (`UPLOAD_ARCHIVE_TTL`); `TaskSweeper.clean_tmp` не трогает до срока и удаляет после | `keep_archive`, `archives`, `forget_archive` | — |
 | `tcloud:worker:{queue}:{host}` | string | heartbeat воркера (`health.workers`) | `Heartbeat` раз в `UPLOAD_HEARTBEAT_INTERVAL`; `TaskStore.workers` | 3 × `UPLOAD_HEARTBEAT_INTERVAL` |
 | `tcloud:activity:{storage_id}:{read\|write}` | string | «с хранилищем сейчас работают» для `GET /api/storages/activity` (flows/storages.md) | `mark_activity`; `activity` — один `MGET` | 5 с (`ACTIVITY_TTL`) |
+| `tcloud:job:{name}` | string | одна фоновая задача на имя (`job:previews` — дозаполнение превью), значение — id задачи Celery; `SET NX`, свой ключ продлевается (Lua `RENEW`), снимает только владелец (Lua `UNLOCK`) | `TaskStore.hold_job`, `release_job`; `PreviewBackfill` | 120 с (`JOB_TTL`), продлевается каждые 30 с |
 | `tcloud:revoked:{jti}` | string | отозванный access-токен (logout, refresh, смена пароля) | `TokenBlacklist.revoke/revoked` | `JWT_ACCESS_TOKEN_EXPIRATION_MINUTES` |
 | `tcloud:rate:signin:{ip}` | string | счётчик входов с IP, фиксированное окно; Redis недоступен — вход пропускается (fail open) | `RateLimiter.hit` | `JWT_SIGNIN_IP_WINDOW` (ставится `EXPIRE NX`) |
 

@@ -7,6 +7,7 @@ flowchart LR
     dev["POST /api/uploads<br/>тело → том tmp"] --> qp
     url["POST /api/uploads/from-url, /batch"] --> qd
     arc["POST /api/folders/archive, /archive/selection"] --> qa
+    bf["POST /api/files/previews/backfill (root)"] --> qa
     qd[["uploads.download"]] --> wd["worker-download<br/>скачивание по ссылке (SSRF-фильтр)"]
     wd --> qp[["uploads.prepare"]]
     qp --> wp["worker-prepare<br/>magic bytes, Pillow/ffprobe, sha256, ClamAV,<br/>JPEG для фото, превью видео (ffmpeg),<br/>шифрование и зашифрованное превью"]
@@ -27,6 +28,38 @@ flowchart LR
 Она занимает поток `worker-telegram`: при двух потоках два больших архива задержат выгрузку в Telegram, поднимите
 `TELEGRAM_CONCURRENCY`, если это мешает. Готовый архив лежит в `tmp` `UPLOAD_ARCHIVE_TTL` (24 ч): путь и срок — в
 Redis (`archives`), уборка `TaskSweeper` их не трогает до срока и удаляет после.
+
+## Дозаполнение превью
+
+`POST /api/files/previews/backfill` (только root, `202`) кладёт в `archives.build` с низким приоритетом сообщение
+задачи Celery `previews.backfill` (`FileService.backfill_previews`); его выполняет `worker-telegram`
+(`PreviewBackfill` в `services/previews.py`). Записи задачи в Redis у неё нет: прогресс — в логах воркера. Задача ищет
+зашифрованные фото, GIF и видео без `files.thumbnail` (частичный индекс `ix_files_missing_preview`), пачками по 100 в
+порядке `(kind, id)`, и по одному файлу: читает его из Telegram сессией `upload` (как архив), расшифровывает
+(`file_body`), делает превью тем же кодом, что и при загрузке (видео — кадр ffmpeg, затем `preview`), шифрует ключом
+файла (`seal`) и пишет `UPDATE … WHERE thumbnail IS NULL` без смены `updated_at`. Во время чтения горит `read` у
+хранилища (`tracked`). FloodWait — ждём и повторяем тот же файл, заодно ставим общую паузу `telegram_resume_at`
+для загрузок; любая другая ошибка (сообщения нет, файл изменён, нет места, битый файл) — warning и следующий файл;
+`telegram_unauthorized` останавливает задачу. Повторный запуск идемпотентен: берутся только файлы без превью, так что
+пропущенные в прошлый раз пробуются снова. Одновременно работает одна задача: Redis-ключ `job:previews` со значением
+id задачи Celery (`TaskStore.hold_job`, `SET NX EX 120`, продлевается каждые 30 с); второй запуск при живом ключе
+сразу завершается, а повторная доставка того же сообщения после падения воркера (`acks_late`) — то же id, поэтому
+продолжает работу.
+
+```mermaid
+flowchart TD
+    api["POST /api/files/previews/backfill (root)"] --> q[["archives.build, приоритет low"]]
+    q --> lock{"hold_job job:previews<br/>(id задачи Celery)"}
+    lock -->|занято другой| skip["лог и выход"]
+    lock -->|наше| batch["пачка ≤ 100: encrypted, thumbnail IS NULL,<br/>kind photo/animation/video, (kind, id) > последнего"]
+    batch -->|пусто| done["лог итога, ключ снят"]
+    batch --> file["message_media + iter_media (сессия upload),<br/>decrypt, activity read"]
+    file --> prev["видео: кадр ffmpeg → preview; фото, GIF: preview"]
+    prev --> seal["seal ключом файла → UPDATE files SET thumbnail"]
+    seal --> batch
+    file -. "FloodWait" .-> wait["пауза, тот же файл"] --> file
+    file -. "другая ошибка" .-> warn["warning, следующий файл"] --> batch
+```
 
 Скачивание вынесено в отдельную очередь, поэтому медленные ссылки не занимают потоки проверки. Проверка, в свою
 очередь, не занимает слоты Telegram. Чтение из Telegram (скачивание, превью, каналы) остаётся в API: очередь не подходит

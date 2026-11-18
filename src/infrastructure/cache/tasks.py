@@ -19,6 +19,14 @@ end
 return 0
 """
 
+RENEW = """
+if redis.call('GET', KEYS[1]) == ARGV[1] then
+    return redis.call('EXPIRE', KEYS[1], ARGV[2])
+end
+return 0
+"""
+JOB_TTL = 120
+
 
 FINISHED = "local finished = {done = true, failed = true, cancelled = true}\n"
 
@@ -212,6 +220,15 @@ class TaskStore:
 
     async def unlock_path(self, path: str, task_id: UUID) -> None:
         await self._redis.eval(UNLOCK, 1, self._key("path", path), str(task_id))
+
+    async def hold_job(self, name: str, owner: str) -> bool:
+        key = self._key("job", name)
+        if await self._redis.set(key, owner, nx=True, ex=JOB_TTL):
+            return True
+        return bool(await self._redis.eval(RENEW, 1, key, owner, JOB_TTL))
+
+    async def release_job(self, name: str, owner: str) -> None:
+        await self._redis.eval(UNLOCK, 1, self._key("job", name), owner)
 
     async def touch(self, task_id: UUID) -> None:
         await self._redis.hset(self._key("task", task_id), "beat_at", time.time())

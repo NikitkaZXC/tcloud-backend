@@ -4,7 +4,9 @@ from uuid import UUID
 from celery import Task
 from celery.signals import worker_ready, worker_shutdown
 
+from src.application.services.file import BACKFILL_TASK
 from src.application.services.pipeline import UploadPipeline
+from src.application.services.previews import PreviewBackfill
 from src.infrastructure.background import Heartbeat, WorkerRuntime, app
 from src.infrastructure.enums import TelegramSession, UploadQueue
 from src.infrastructure.integrations import (
@@ -57,6 +59,11 @@ def send_upload(self: Task, task_id: str, generation: int = 0) -> None:
 @app.task(name=UploadQueue.ARCHIVE.value, bind=True)
 def build_archive(self: Task, task_id: str, generation: int = 0) -> None:
     _execute(self, UploadQueue.ARCHIVE, task_id, generation)
+
+
+@app.task(name=BACKFILL_TASK, bind=True)
+def backfill_previews(self: Task) -> None:
+    runtime.run(PreviewBackfill(runtime).run(self.request.id))
 
 
 @worker_ready.connect

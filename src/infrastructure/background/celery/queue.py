@@ -8,11 +8,13 @@ from src.infrastructure.background.exception import QueueUnavailableError
 from src.infrastructure.enums import UploadQueue
 
 
-async def enqueue(queue: UploadQueue, priority: int, **kwargs) -> None:
+async def enqueue(
+    queue: UploadQueue, priority: int, task: str | None = None, **kwargs
+) -> None:
     try:
         await asyncio.to_thread(
             app.send_task,
-            queue.value,
+            task or queue.value,
             kwargs=kwargs,
             queue=queue.value,
             priority=priority,

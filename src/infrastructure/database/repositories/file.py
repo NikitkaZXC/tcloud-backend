@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from uuid import UUID
 
-from sqlalchemy import ColumnElement, case, delete, func, select, update
+from sqlalchemy import ColumnElement, case, delete, func, select, tuple_, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.infrastructure.database.models import FileDB, StorageDB
@@ -56,6 +56,34 @@ class FileRepository:
             row[0].id: (row[0], row[1])
             for row in (await self._session.execute(statement)).all()
         }
+
+    async def get_missing_previews(
+        self, kinds: list[str], after: tuple[str, UUID] | None, limit: int
+    ) -> list[tuple[FileDB, int]]:
+        statement = (
+            select(FileDB, StorageDB.tg_chat_id)
+            .join(StorageDB)
+            .where(
+                FileDB.encryption_header.is_not(None),
+                FileDB.thumbnail.is_(None),
+                FileDB.kind.in_(kinds),
+            )
+            .order_by(FileDB.kind, FileDB.id)
+            .limit(limit)
+        )
+        if after:
+            statement = statement.where(tuple_(FileDB.kind, FileDB.id) > after)
+        return [
+            (row[0], row[1]) for row in (await self._session.execute(statement)).all()
+        ]
+
+    async def set_thumbnail(self, file_id: UUID, data: bytes) -> None:
+        await self._session.execute(
+            update(FileDB)
+            .where(FileDB.id == file_id, FileDB.thumbnail.is_(None))
+            .values(thumbnail=data, updated_at=FileDB.updated_at)
+        )
+        await self._session.flush()
 
     async def get_thumbnail(self, file_id: UUID) -> bytes | None:
         statement = select(FileDB.thumbnail).where(FileDB.id == file_id)
