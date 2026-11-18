@@ -1,4 +1,4 @@
-from typing import Literal, get_args
+from typing import Annotated, Literal, get_args
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
@@ -15,6 +15,8 @@ DashboardBlock = Literal[
     "system",
     "users",
 ]
+
+FileColumn = Literal["name", "type", "size", "modified", "uploaded"]
 
 
 class SettingsGroup(BaseModel):
@@ -66,6 +68,10 @@ class InterfaceSettingsServiceRead(SettingsGroup):
         default_factory=list, max_length=len(get_args(DashboardBlock))
     )
 
+    file_columns: dict[FileColumn, Annotated[int, Field(ge=48, le=2000)]] = Field(
+        default_factory=dict
+    )
+
     @field_validator("dashboard_layout")
     @classmethod
     def unique_blocks(cls, value: list[str]) -> list[str]:
@@ -113,13 +119,22 @@ class SettingsServiceRead(SettingsGroup):
             for key, value in values.items():
                 if not valid(field.annotation, key, value):
                     dropped.append(f"{group}.{key}")
-                    if not isinstance(value, list):
+                    if key not in field.annotation.model_fields:
                         continue
-                    value = [
-                        item
-                        for index, item in enumerate(value)
-                        if item not in value[:index]
-                        and valid(field.annotation, key, [item])
-                    ]
+                    if isinstance(value, dict):
+                        value = {
+                            item: width
+                            for item, width in value.items()
+                            if valid(field.annotation, key, {item: width})
+                        }
+                    elif not isinstance(value, list):
+                        continue
+                    else:
+                        value = [
+                            item
+                            for index, item in enumerate(value)
+                            if item not in value[:index]
+                            and valid(field.annotation, key, [item])
+                        ]
                 kept.setdefault(group, {})[key] = value
         return cls.model_validate(kept), dropped

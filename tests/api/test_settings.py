@@ -38,6 +38,7 @@ DEFAULTS = {
         "fx_cursor": False,
         "fx_easter_eggs": False,
         "dashboard_layout": [],
+        "file_columns": {},
     },
     "telegram": {"chat_folder": True},
 }
@@ -70,6 +71,21 @@ async def test_dashboard_layout(client):
     assert (await client.get("/account/settings")).json()["interface"][
         "dashboard_layout"
     ] == ["tasks", "storages"]
+
+
+async def test_file_columns(client):
+    saved = await patch(
+        client, {"interface": {"file_columns": {"name": 320, "size": 48}}}
+    )
+    assert saved["interface"]["file_columns"] == {"name": 320, "size": 48}
+    for columns in ({"owner": 100}, {"name": 47}, {"type": 2001}, {"name": "wide"}):
+        response = await client.patch(
+            "/account/settings", json={"interface": {"file_columns": columns}}
+        )
+        assert response.status_code == 422 and code(response) == "validation_error"
+    assert (await client.get("/account/settings")).json()["interface"][
+        "file_columns"
+    ] == {"name": 320, "size": 48}
 
 
 async def test_defaults(client):

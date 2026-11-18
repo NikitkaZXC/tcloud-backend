@@ -137,3 +137,16 @@ def test_from_stored_keeps_known_dashboard_blocks():
     )
     assert value.interface.dashboard_layout == ["tasks", "storages"]
     assert dropped == ["interface.dashboard_layout"]
+
+
+def test_from_stored_keeps_valid_file_columns():
+    value, dropped = SettingsServiceRead.from_stored(
+        {
+            "interface": {
+                "file_columns": {"name": 300, "owner": 100, "size": 10, "type": "x"},
+                "gone": [1],
+            }
+        }
+    )
+    assert value.interface.file_columns == {"name": 300}
+    assert dropped == ["interface.file_columns", "interface.gone"]
