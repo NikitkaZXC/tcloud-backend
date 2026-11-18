@@ -117,6 +117,19 @@ async def test_account_channels_are_cached(client, telegram, monkeypatch):
     assert (await client.get("/account")).json()["channels_used"] == 9
 
 
+async def test_account_channels_refresh_after_storage_change(
+    client, telegram, monkeypatch
+):
+    monkeypatch.setattr(settings.upload, "CHANNELS_TTL", 3600)
+    telegram.other_channels = 5
+    assert (await client.get("/account")).json()["channels_used"] == 5
+    created = await client.post("/storages", json={"name": "a"})
+    assert (await client.get("/account")).json()["channels_used"] == 6
+    deleted = await client.delete(f"/storages/{created.json()['id']}")
+    assert deleted.status_code == 204
+    assert (await client.get("/account")).json()["channels_used"] == 5
+
+
 async def test_account_without_channels_count(client, telegram, monkeypatch):
     monkeypatch.setattr(settings.upload, "CHANNELS_TTL", 0)
     telegram.dialogs_flood = True

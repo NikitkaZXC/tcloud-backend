@@ -244,6 +244,7 @@ class AuthService:
         if not await client.start():
             raise TelegramUnauthorizedError("the new API session is not authorized")
         self._runtime.telegram, self._runtime.premium = client, None
+        self._runtime.channels = None
         if old is not client:
             await old.stop()
         await self.connect()
