@@ -98,7 +98,7 @@ Content-Type: application/json
 | Ключ | Значения | По умолчанию | Что |
 |---|---|---|---|
 | `language` | `ru`, `en`, `null` | `null` | язык; `null` — взять из браузера |
-| `theme` | `dark`, `light` | `dark` | тема |
+| `theme` | `dark`, `light`, `system` | `dark` | тема; `system` — следовать теме ОС (выбирает фронтенд) |
 | `folder_view` | `list`, `grid` | `list` | вид папки |
 | `sort_by` | `name`, `modified`, `uploaded`, `type`, `size` | `name` | сортировка в папке |
 | `sort_order` | `asc`, `desc` | `asc` | направление сортировки |

@@ -345,3 +345,11 @@ async def test_selection_archive_uses_settings(client, storage):
     )
     task = await wait_task(client, explicit.json()["id"])
     assert task["priority"] == "high" and task["archive"]["format"] == "zip"
+
+
+async def test_theme_system(client):
+    result = await patch(client, {"interface": {"theme": "system"}})
+    assert result["interface"]["theme"] == "system"
+    assert (await client.get("/account/settings")).json()["interface"][
+        "theme"
+    ] == "system"
