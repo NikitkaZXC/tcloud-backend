@@ -1,7 +1,10 @@
-from pydantic import BaseModel, Field
+from uuid import UUID
+
+from pydantic import BaseModel, Field, model_validator
 
 from src.application.schemas import (
     BatchServiceRead,
+    TaskCountsServiceRead,
     TaskListServiceRead,
     TaskServiceRead,
 )
@@ -26,6 +29,21 @@ class UrlUploadCreate(UploadParams):
 
 class BatchCreate(BaseModel):
     items: list[UrlUploadCreate] = Field(min_length=1, max_length=BATCH_MAX)
+
+
+class TaskListParams(BaseModel):
+    batch_id: UUID | None = None
+    ids: list[UUID] = Field([], max_length=BATCH_MAX)
+
+    @model_validator(mode="after")
+    def check_one(self) -> "TaskListParams":
+        if bool(self.batch_id) == bool(self.ids):
+            raise ValueError("give batch_id or ids")
+        return self
+
+
+class TaskCountsResponse(TaskCountsServiceRead):
+    pass
 
 
 class PriorityUpdate(BaseModel):

@@ -69,6 +69,11 @@ class TaskSummaryServiceRead(BaseModel):
     progress: float | None
 
 
+class TaskCountsServiceRead(BaseModel):
+    total: int
+    by_status: dict[str, int]
+
+
 class TaskListServiceRead(BaseModel):
     items: list[TaskServiceRead]
     summary: TaskSummaryServiceRead

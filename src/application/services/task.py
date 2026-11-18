@@ -14,6 +14,7 @@ from src.application.exception import (
 from src.application.schemas import (
     Actor,
     FileServiceRead,
+    TaskCountsServiceRead,
     TaskListServiceRead,
     TaskServiceRead,
     TaskSummaryServiceRead,
@@ -131,7 +132,16 @@ class TaskService:
         return (await self.render_many([await self.get_raw(task_id, actor)]))[0]
 
     async def get_batch(self, actor: Actor, batch_id: UUID) -> TaskListServiceRead:
-        tasks = await self._store.get_many(await self._store.batch(batch_id))
+        return await self.get_many(actor, await self._store.batch(batch_id))
+
+    async def counts(self, actor: Actor) -> TaskCountsServiceRead:
+        statuses = await self._store.statuses(actor.user_id)
+        return TaskCountsServiceRead(
+            total=len(statuses), by_status=dict(Counter(statuses))
+        )
+
+    async def get_many(self, actor: Actor, task_ids: list) -> TaskListServiceRead:
+        tasks = await self._store.get_many([str(task_id) for task_id in task_ids])
         views = await self.render_many(
             [task for task in tasks if self.visible(task, actor)]
         )

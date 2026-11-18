@@ -95,6 +95,15 @@ DEK файла и ложится в `files.thumbnail`; `/thumb` его расш�
 `cancel_requested`, `error`, `warnings`, `warning_details`, `file`.
 Задача хранится 7 дней (`UPLOAD_TASK_TTL`). Вебхук описан в background-tasks.md.
 
+Опрос многих задач одним запросом: `GET /api/tasks?ids={id}&ids={id}…` — до 100 id (больше → `422 validation_error`),
+повторы схлопываются; ответ как у пачки — `{items, summary}`, в `items` только существующие задачи, которые вы видите
+(свои; admin и root — любые), в порядке `ids`; чужие и пропавшие молча отсутствуют. Ровно один из `ids` / `batch_id`,
+иначе `422`. Один `HGETALL` на id в одном pipeline Redis и один запрос в БД за файлами.
+
+`GET /api/tasks/counts` → `{total, by_status: {"done": 12, "failed": 1, …}}` — ваши задачи (загрузки и архивы,
+созданные вами, у admin тоже только свои) за `UPLOAD_TASK_TTL`; статусы без задач в `by_status` не попадают. Индекс —
+sorted set `user_tasks:{user_id}` в Redis, подсчёт — один `HGET status` на задачу в pipeline.
+
 ### Коды ожидания и предупреждений
 
 Тексты (`waiting.reason`, `warnings`, `error.message`) — английские и для людей; фронтенд переводит по кодам.

@@ -10,6 +10,8 @@ from src.api.schemas import (
     BatchCreate,
     BatchResponse,
     PriorityUpdate,
+    TaskCountsResponse,
+    TaskListParams,
     TaskListResponse,
     TaskResponse,
     UploadParams,
@@ -76,16 +78,31 @@ async def create_batch(
 
 @router.get(
     path="/tasks",
-    name="tasks:batch",
-    summary="Tasks of a batch with a summary",
+    name="tasks:list",
+    summary="Tasks of a batch or up to 100 tasks by id, with a summary; only tasks you may see",
     status_code=status.HTTP_200_OK,
 )
-async def get_batch_tasks(
-    batch_id: UUID,
+async def get_tasks(
+    params: Annotated[TaskListParams, Query()],
     actor: Actor = Depends(get_actor),
     task_service: TaskService = Depends(get_service_task),
 ) -> TaskListResponse:
-    return await task_service.get_batch(actor, batch_id)
+    if params.batch_id:
+        return await task_service.get_batch(actor, params.batch_id)
+    return await task_service.get_many(actor, list(dict.fromkeys(params.ids)))
+
+
+@router.get(
+    path="/tasks/counts",
+    name="tasks:counts",
+    summary="Your tasks of the last UPLOAD_TASK_TTL by status",
+    status_code=status.HTTP_200_OK,
+)
+async def get_task_counts(
+    actor: Actor = Depends(get_actor),
+    task_service: TaskService = Depends(get_service_task),
+) -> TaskCountsResponse:
+    return await task_service.counts(actor)
 
 
 @router.get(

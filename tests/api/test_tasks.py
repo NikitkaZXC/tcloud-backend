@@ -28,7 +28,7 @@ from tests.api.conftest import (
     upload,
     wait_task,
 )
-from tests.factories import make_image
+from tests.factories import PDF, make_image
 
 
 async def wait_for(client, task_id: str, predicate, timeout: float = 10) -> dict:
@@ -384,3 +384,37 @@ async def test_prepare_redelivered_after_encryption_reuses_the_cipher(
     response = await client.get(f"/files/{done['file']['uuid']}/download")
     assert response.content == plain
     assert not cipher.exists()
+
+
+async def test_tasks_by_ids_show_only_visible(client, storage, make_user):
+    first = await upload(client, path(storage, "a.jpg"), make_image())
+    second = await upload(client, path(storage, "b.jpg"), make_image())
+    ids = [first["id"], second["id"], str(uuid7()), first["id"]]
+    listed = (await client.get("/tasks", params={"ids": ids})).json()
+    assert [task["id"] for task in listed["items"]] == [first["id"], second["id"]]
+    assert listed["summary"]["by_status"] == {"done": 2}
+    stranger = await make_user("stranger")
+    hidden = (await stranger.get("/tasks", params={"ids": ids})).json()
+    assert hidden["items"] == [] and hidden["summary"]["total"] == 0
+    too_many = [str(uuid7()) for _ in range(101)]
+    assert (await client.get("/tasks", params={"ids": too_many})).status_code == 422
+    both = {"ids": ids[:1], "batch_id": str(uuid7())}
+    assert (await client.get("/tasks", params=both)).status_code == 422
+
+
+async def test_task_counts_are_per_user(client, telegram, storage, make_user):
+    assert (await client.get("/tasks/counts")).json() == {"total": 0, "by_status": {}}
+    await upload(client, path(storage, "a.jpg"), make_image())
+    await upload(client, path(storage, "pdf.jpg"), PDF)
+    telegram.delay = 5
+    queued = await start_upload(client, path(storage, "b.jpg"), make_image())
+    await client.post(f"/tasks/{queued}/cancel")
+    await wait_task(client, queued)
+    counts = (await client.get("/tasks/counts")).json()
+    assert counts == {"total": 3, "by_status": {"done": 1, "failed": 1, "cancelled": 1}}
+    other = await make_user("other")
+    assert (await other.get("/tasks/counts")).json()["total"] == 0
+    await main.app.state.runtime.store._redis.delete(
+        main.app.state.runtime.store._key("task", queued)
+    )
+    assert (await client.get("/tasks/counts")).json()["total"] == 2

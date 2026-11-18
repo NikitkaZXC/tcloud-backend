@@ -127,6 +127,7 @@ RabbitMQ позицию не сообщает, поэтому её считае�
 |---|---|---|
 | `tcloud:task:{id}` | hash: поля задачи, каждое в JSON. Поля пишутся по отдельности, запись прогресса не затирает статус. Служебные поля: `generation`, `claimed`, `cancel`, `prepared`, `sent`, `committed`, `beat_at` | `UPLOAD_TASK_TTL` (7 дней) |
 | `tcloud:batch:{id}` | список id задач пачки по порядку | `UPLOAD_TASK_TTL` |
+| `tcloud:user_tasks:{user_id}` | sorted set id задач пользователя, score — время создания; для `GET /api/tasks/counts` (при чтении чистятся старше `UPLOAD_TASK_TTL` и уже пропавшие задачи) | `UPLOAD_TASK_TTL` с последней задачи |
 | `tcloud:path:{path}` | блокировка пути, значение — id задачи. Снимается только владельцем (Lua) | `UPLOAD_LOCK_TTL` (24 ч, страховка) |
 | `tcloud:active` | sorted set активных задач, score — время старта | — |
 | `tcloud:disk` | sorted set задач, чей файл сейчас в `tmp` (`UPLOAD_MAX_FILES_ON_DISK`), score — время захвата | — |

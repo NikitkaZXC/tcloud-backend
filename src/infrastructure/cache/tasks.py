@@ -109,6 +109,10 @@ class TaskStore:
                 key, mapping={name: encode(value) for name, value in task.items()}
             )
             pipe.expire(key, settings.upload.TASK_TTL)
+            if task.get("user_id"):
+                owned = self._key("user_tasks", task["user_id"])
+                pipe.zadd(owned, {str(task["id"]): now.timestamp()})
+                pipe.expire(owned, settings.upload.TASK_TTL)
             if task.get("batch_id"):
                 batch = self._key("batch", task["batch_id"])
                 pipe.rpush(batch, str(task["id"]))
@@ -139,6 +143,21 @@ class TaskStore:
             for row in rows
             if row
         ]
+
+    async def statuses(self, user_id: UUID) -> list[str]:
+        key = self._key("user_tasks", user_id)
+        await self._redis.zremrangebyscore(
+            key, "-inf", time.time() - settings.upload.TASK_TTL
+        )
+        task_ids = await self._redis.zrange(key, 0, -1)
+        async with self._redis.pipeline(transaction=False) as pipe:
+            for task_id in task_ids:
+                pipe.hget(self._key("task", task_id), "status")
+            rows = await pipe.execute()
+        gone = [task_id for task_id, row in zip(task_ids, rows) if row is None]
+        if gone:
+            await self._redis.zrem(key, *gone)
+        return [json.loads(row) for row in rows if row is not None]
 
     async def batch(self, batch_id: UUID) -> list[str]:
         return await self._redis.lrange(self._key("batch", batch_id), 0, -1)
