@@ -1,6 +1,6 @@
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from src.infrastructure.enums import ArchiveFormat
 from src.utilities.formatters import OnConflict, Priority, SendAs
@@ -72,3 +72,20 @@ class SettingsServiceRead(SettingsGroup):
                 for group in stored | update
             }
         )
+
+    @classmethod
+    def from_stored(cls, raw: dict) -> tuple["SettingsServiceRead", list[str]]:
+        kept, dropped = {}, []
+        for group, values in raw.items():
+            field = cls.model_fields.get(group)
+            if field is None or not isinstance(values, dict):
+                dropped.append(group)
+                continue
+            for key, value in values.items():
+                try:
+                    field.annotation.model_validate({key: value})
+                except ValidationError:
+                    dropped.append(f"{group}.{key}")
+                else:
+                    kept.setdefault(group, {})[key] = value
+        return cls.model_validate(kept), dropped

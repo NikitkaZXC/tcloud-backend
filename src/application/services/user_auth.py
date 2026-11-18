@@ -207,13 +207,16 @@ class UserAuthService:
                 for grant in await self._grants.get_by_user(user.id)
             ]
         )
+        stored, dropped = SettingsServiceRead.from_stored(user.settings)
+        for key in dropped:
+            logger.warning("User {}: stored setting {} ignored", user.id, key)
         return Actor(
             user_id=user.id,
             login=user.login,
             role=user.role,
             jti=jti,
             grants=grants,
-            settings=SettingsServiceRead.model_validate(user.settings),
+            settings=stored,
         )
 
     async def authenticate_token(self, access_token: str) -> Actor:

@@ -112,3 +112,20 @@ def test_check_webhook_rejects(url):
 )
 def test_check_webhook_accepts(url):
     check_webhook(url)
+
+
+def test_from_stored_drops_unknown_and_invalid():
+    value, dropped = SettingsServiceRead.from_stored(
+        {
+            "uploads": {"priority": "high", "gone": True},
+            "interface": {"theme": "neon", "folder_view": "grid"},
+            "old": {"x": 1},
+            "telegram": "broken",
+        }
+    )
+    assert value.model_dump(mode="json", exclude_unset=True) == {
+        "uploads": {"priority": "high"},
+        "interface": {"folder_view": "grid"},
+    }
+    assert value.interface.theme == "dark"
+    assert dropped == ["uploads.gone", "interface.theme", "old", "telegram"]

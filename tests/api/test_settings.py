@@ -3,6 +3,7 @@ import json
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import text
 
 import main
 from src.application.schemas import SettingsServiceRead
@@ -364,3 +365,45 @@ async def test_theme_values(client, theme):
     result = await patch(client, {"interface": {"theme": theme}})
     assert result["interface"]["theme"] == theme
     assert (await client.get("/account/settings")).json()["interface"]["theme"] == theme
+
+
+STALE = {
+    "uploads": {"priority": "high", "removed_key": 1},
+    "interface": {"theme": "retired-theme", "folder_view": "grid"},
+    "old_group": {"x": 1},
+}
+
+
+async def stored(engine, user_id: str) -> dict:
+    async with engine.begin() as connection:
+        return (
+            await connection.execute(
+                text("SELECT settings FROM users WHERE id = :id"), {"id": user_id}
+            )
+        ).scalar_one()
+
+
+async def test_stale_stored_settings_do_not_break_login(engine, make_user, login_as):
+    alice = await make_user("alice")
+    async with engine.begin() as connection:
+        await connection.execute(
+            text("UPDATE users SET settings = CAST(:value AS jsonb) WHERE id = :id"),
+            {"value": json.dumps(STALE), "id": alice.user_id},
+        )
+    again = await login_as("alice", "alice-password")
+    me = await again.get("/users/me")
+    assert me.status_code == 200, me.text
+    expected = json.loads(json.dumps(DEFAULTS))
+    expected["uploads"]["priority"] = "high"
+    expected["interface"]["folder_view"] = "grid"
+    assert me.json()["settings"] == expected
+    assert (await again.get("/account/settings")).json() == expected
+    assert await stored(engine, alice.user_id) == STALE
+    response = await again.patch("/account/settings", json={"uploads": {"nope": 1}})
+    assert response.status_code == 422 and code(response) == "validation_error"
+    await patch(again, {"archives": {"priority": "low"}})
+    assert await stored(engine, alice.user_id) == {
+        "uploads": {"priority": "high"},
+        "archives": {"priority": "low"},
+        "interface": {"folder_view": "grid"},
+    }
