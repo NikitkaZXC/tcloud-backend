@@ -65,3 +65,48 @@ class FileServiceRead(BaseModel):
                 search=caption_token(file.id),
             ),
         )
+
+
+class FileSearchServiceCreate(BaseModel):
+    q: str | None = None
+    path: str | None = None
+    kind: list[str] = []
+    mime: list[str] = []
+    size_min: int | None = None
+    size_max: int | None = None
+    date_from: datetime | None = None
+    date_to: datetime | None = None
+    encrypted: bool | None = None
+    sort: str = "relevance"
+    order: str | None = None
+    limit: int = 50
+    offset: int = 0
+
+
+class FoundFileServiceRead(FileServiceRead):
+    folder: str
+    storage_name: str | None
+
+
+class FoundFolderServiceRead(BaseModel):
+    id: UUID
+    path: str
+    name: str
+    storage_id: UUID
+    storage_name: str | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class FileSearchServiceRead(BaseModel):
+    items: list[FoundFileServiceRead]
+    total: int
+    limit: int
+    offset: int
+    has_more: bool
+    folders: list[FoundFolderServiceRead]
+
+
+class MimeCountServiceRead(BaseModel):
+    mime: str
+    files: int

@@ -27,6 +27,7 @@ STATUS_BY_CODE = {
     "too_many_items": status.HTTP_422_UNPROCESSABLE_CONTENT,
     "storage_mismatch": status.HTTP_422_UNPROCESSABLE_CONTENT,
     "file_not_found": status.HTTP_404_NOT_FOUND,
+    "empty_search": status.HTTP_422_UNPROCESSABLE_CONTENT,
     "thumbnail_not_found": status.HTTP_404_NOT_FOUND,
     "file_changed": status.HTTP_409_CONFLICT,
     "decryption_failed": status.HTTP_409_CONFLICT,

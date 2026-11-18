@@ -1,11 +1,15 @@
 from uuid import UUID, uuid7
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.infrastructure.database.models import FolderDB
-from src.infrastructure.database.repositories.like import escape_like, folder_and_below
+from src.infrastructure.database.repositories.like import (
+    escape_like,
+    folder_and_below,
+    readable,
+)
 
 
 class FolderRepository:
@@ -53,6 +57,35 @@ class FolderRepository:
             )
             .order_by(FolderDB.path)
         )
+        return list((await self._session.scalars(statement)).all())
+
+    async def search(
+        self,
+        scope: tuple[UUID, str] | None,
+        scopes: list[tuple[UUID, str, bool]] | None,
+        query: str,
+        limit: int,
+    ) -> list[FolderDB]:
+        pattern = func.lower("%" + escape_like(query) + "%")
+        name = func.regexp_replace(FolderDB.path, "^.*/", "")
+        statement = select(FolderDB).where(
+            readable(FolderDB.storage_id, FolderDB.path, scopes),
+            func.lower(FolderDB.path).like(pattern, escape="\\"),
+            func.lower(name).like(pattern, escape="\\"),
+        )
+        if scope:
+            statement = statement.where(FolderDB.storage_id == scope[0])
+            if scope[1]:
+                statement = statement.where(
+                    FolderDB.path.like(escape_like(scope[1] + "/") + "%", escape="\\")
+                )
+        lowered = func.lower(name)
+        statement = statement.order_by(
+            (lowered == func.lower(query)).desc(),
+            lowered.like(func.lower(escape_like(query) + "%"), escape="\\").desc(),
+            name,
+            FolderDB.path,
+        ).limit(limit)
         return list((await self._session.scalars(statement)).all())
 
     async def delete_with_children(self, storage_id: UUID, path: str) -> None:

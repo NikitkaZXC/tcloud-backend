@@ -1,10 +1,32 @@
+from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import case, delete, func, select, update
+from sqlalchemy import ColumnElement, case, delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.infrastructure.database.models import FileDB, StorageDB
-from src.infrastructure.database.repositories.like import folder_and_below, readable
+from src.infrastructure.database.repositories.like import (
+    escape_like,
+    folder_and_below,
+    readable,
+)
+
+
+def in_scope(
+    scope: tuple[UUID, str] | None, scopes: list[tuple[UUID, str, bool]] | None
+) -> list[ColumnElement[bool]]:
+    conditions = [readable(FileDB.storage_id, FileDB.folder_path, scopes)]
+    if scope:
+        conditions.append(FileDB.storage_id == scope[0])
+        if scope[1]:
+            conditions.append(folder_and_below(FileDB.folder_path, scope[1]))
+    return conditions
+
+
+def contains(column: ColumnElement[str], query: str) -> ColumnElement[bool]:
+    return func.lower(column).like(
+        func.lower("%" + escape_like(query) + "%"), escape="\\"
+    )
 
 
 class FileRepository:
@@ -88,6 +110,95 @@ class FileRepository:
             row[0]: (row[1], row[2])
             for row in (await self._session.execute(statement)).all()
         }
+
+    async def search(
+        self,
+        *,
+        scope: tuple[UUID, str] | None,
+        scopes: list[tuple[UUID, str, bool]] | None,
+        query: str | None,
+        kinds: list[str],
+        mimes: list[str],
+        size_min: int | None,
+        size_max: int | None,
+        date_from: datetime | None,
+        date_to: datetime | None,
+        encrypted: bool | None,
+        sort: str,
+        descending: bool,
+        limit: int,
+        offset: int,
+    ) -> tuple[list[tuple[FileDB, int]], int]:
+        conditions = in_scope(scope, scopes)
+        if query:
+            conditions.append(contains(FileDB.name, query))
+        if kinds:
+            conditions.append(FileDB.kind.in_(kinds))
+        if mimes:
+            conditions.append(FileDB.mime.in_(mimes))
+        if size_min is not None:
+            conditions.append(FileDB.size >= size_min)
+        if size_max is not None:
+            conditions.append(FileDB.size <= size_max)
+        if date_from is not None:
+            conditions.append(FileDB.updated_at >= date_from)
+        if date_to is not None:
+            conditions.append(FileDB.updated_at <= date_to)
+        if encrypted is not None:
+            conditions.append(
+                FileDB.encryption_header.is_not(None)
+                if encrypted
+                else FileDB.encryption_header.is_(None)
+            )
+        total = await self._session.scalar(
+            select(func.count()).select_from(FileDB).where(*conditions)
+        )
+        column = {
+            "size": FileDB.size,
+            "date": FileDB.updated_at,
+        }.get(sort, FileDB.name)
+        order = [column.desc() if descending else column.asc()]
+        if sort == "relevance" and query:
+            lowered = func.lower(FileDB.name)
+            order.insert(
+                0,
+                case(
+                    (lowered == func.lower(query), 0),
+                    (
+                        lowered.like(func.lower(escape_like(query) + "%"), escape="\\"),
+                        1,
+                    ),
+                    else_=2,
+                ),
+            )
+        statement = (
+            select(FileDB, StorageDB.tg_chat_id)
+            .join(StorageDB)
+            .where(*conditions)
+            .order_by(*order, FileDB.id)
+            .limit(limit)
+            .offset(offset)
+        )
+        rows = (await self._session.execute(statement)).all()
+        return [(row[0], row[1]) for row in rows], total or 0
+
+    async def mime_counts(
+        self,
+        scope: tuple[UUID, str] | None,
+        scopes: list[tuple[UUID, str, bool]] | None,
+        limit: int,
+    ) -> list[tuple[str, int]]:
+        count = func.count()
+        statement = (
+            select(FileDB.mime, count)
+            .where(*in_scope(scope, scopes))
+            .group_by(FileDB.mime)
+            .order_by(count.desc(), FileDB.mime)
+            .limit(limit)
+        )
+        return [
+            (row[0], row[1]) for row in (await self._session.execute(statement)).all()
+        ]
 
     async def get_messages_below(
         self, storage_id: UUID, folder: str

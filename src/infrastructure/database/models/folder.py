@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from sqlalchemy import ForeignKey, Index, Text, UniqueConstraint, Uuid
+from sqlalchemy import ForeignKey, Index, Text, UniqueConstraint, Uuid, func, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from src.infrastructure.database.base import Base
@@ -20,6 +20,12 @@ class FolderDB(PrimaryKeyMixin, CreatedAtMixin, UpdatedAtMixin, Base):
             "storage_id",
             "path",
             postgresql_ops={"path": "text_pattern_ops"},
+        ),
+        Index(
+            "ix_folders_path_trgm",
+            func.lower(text("path")).label("path_lower"),
+            postgresql_using="gin",
+            postgresql_ops={"path_lower": "gin_trgm_ops"},
         ),
     )
 

@@ -10,6 +10,8 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     Uuid,
+    func,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -33,6 +35,22 @@ class FileDB(PrimaryKeyMixin, CreatedAtMixin, UpdatedAtMixin, Base):
             postgresql_ops={"folder_path": "text_pattern_ops"},
         ),
         Index("ix_files_sha256", "sha256"),
+        Index(
+            "ix_files_name_trgm",
+            func.lower(text("name")).label("name_lower"),
+            postgresql_using="gin",
+            postgresql_ops={"name_lower": "gin_trgm_ops"},
+        ),
+        Index("ix_files_name", "name"),
+        Index("ix_files_kind", "kind"),
+        Index("ix_files_mime", "mime"),
+        Index("ix_files_size", "size"),
+        Index("ix_files_updated_at", "updated_at"),
+        Index(
+            "ix_files_encrypted",
+            "storage_id",
+            postgresql_where=text("encryption_header IS NOT NULL"),
+        ),
     )
 
     storage_id: Mapped[UUID] = mapped_column(

@@ -7,6 +7,7 @@ from .auth import (
     SessionNotFoundError,
 )
 from .file import (
+    EmptySearchError,
     FileChangedError,
     PathConflictError,
     StoredFileNotFoundError,
@@ -55,6 +56,7 @@ from .user import (
 )
 
 __all__ = [
+    "EmptySearchError",
     "AlreadyAuthorizedError",
     "CurrentSessionError",
     "LoginNotFoundError",

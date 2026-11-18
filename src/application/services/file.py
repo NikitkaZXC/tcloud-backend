@@ -5,21 +5,45 @@ from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.application.exception import (
+    EmptySearchError,
     FileChangedError,
+    FolderNotFoundError,
+    ForbiddenError,
     SessionNotAuthorizedError,
     StoredFileNotFoundError,
     ThumbnailNotFoundError,
 )
-from src.application.schemas import Actor, FileServiceRead
-from src.application.services.access import require
+from src.application.schemas import (
+    Actor,
+    FileSearchServiceCreate,
+    FileSearchServiceRead,
+    FileServiceRead,
+    FoundFileServiceRead,
+    FoundFolderServiceRead,
+    MimeCountServiceRead,
+)
+from src.application.services.access import (
+    allowed,
+    leads_to_grant,
+    read_scopes,
+    require,
+)
 from src.application.services.storage import StorageService
 from src.infrastructure.background import AppRuntime
 from src.infrastructure.database.models import FileDB
-from src.infrastructure.database.repositories import FileRepository, StorageRepository
+from src.infrastructure.database.repositories import (
+    FileRepository,
+    FolderRepository,
+    StorageRepository,
+)
 from src.infrastructure.enums import Permission
 from src.infrastructure.integrations import TelegramClient, TelegramMessageGoneError
 from src.infrastructure.security import cipher_size, cipher_span, decrypt
-from src.utilities.parsers import split_file
+from src.utilities.errors import TCloudError
+from src.utilities.parsers import join_path, split_file, split_folder
+
+SEARCH_FOLDERS = 20
+MIME_FACETS = 200
 
 
 def stored_size(file: FileDB) -> int:
@@ -53,6 +77,7 @@ class FileService:
         self._storage_service = storage_service
         self._repo = FileRepository(session)
         self._storages = StorageRepository(session)
+        self._folders = FolderRepository(session)
 
     async def get_db(
         self, actor: Actor, file_id: UUID, permission: Permission
@@ -76,6 +101,121 @@ class FileService:
         if not file:
             raise StoredFileNotFoundError("file not found")
         return FileServiceRead.from_db(file, storage.tg_chat_id)
+
+    async def _scope(
+        self, actor: Actor, raw_path: str | None
+    ) -> tuple[UUID, str] | None:
+        if raw_path is None:
+            return None
+        storage_id, folder = split_folder(raw_path)
+        if not allowed(
+            actor, storage_id, folder, Permission.READ
+        ) and not leads_to_grant(actor, storage_id, folder):
+            raise ForbiddenError("no read access to this folder")
+        await self._storage_service.get_db(storage_id)
+        if not await self._folders.exists(storage_id, folder):
+            raise FolderNotFoundError("folder not found")
+        return storage_id, folder
+
+    async def _storage_names(self, chats: dict[UUID, int]) -> dict[UUID, str]:
+        try:
+            infos = await self._runtime.telegram.channels(list(set(chats.values())))
+        except TCloudError as error:
+            logger.warning(
+                "Storage names for search are unavailable: {}", error.message
+            )
+            return {}
+        return {
+            storage_id: infos[chat_id].title
+            for storage_id, chat_id in chats.items()
+            if chat_id in infos
+        }
+
+    async def search(
+        self, actor: Actor, data: FileSearchServiceCreate
+    ) -> FileSearchServiceRead:
+        query = (data.q or "").strip() or None
+        file_filters = bool(
+            data.kind
+            or data.mime
+            or data.size_min is not None
+            or data.size_max is not None
+            or data.date_from is not None
+            or data.date_to is not None
+            or data.encrypted is not None
+        )
+        if not query and not file_filters:
+            raise EmptySearchError("give a query or at least one filter")
+        scope = await self._scope(actor, data.path)
+        scopes = read_scopes(actor)
+        rows, total = await self._repo.search(
+            scope=scope,
+            scopes=scopes,
+            query=query,
+            kinds=data.kind,
+            mimes=[mime.lower() for mime in data.mime],
+            size_min=data.size_min,
+            size_max=data.size_max,
+            date_from=data.date_from,
+            date_to=data.date_to,
+            encrypted=data.encrypted,
+            sort=data.sort,
+            descending=(
+                data.order or ("desc" if data.sort in ("size", "date") else "asc")
+            )
+            == "desc",
+            limit=data.limit,
+            offset=data.offset,
+        )
+        folders = (
+            await self._folders.search(scope, scopes, query, SEARCH_FOLDERS)
+            if query and not file_filters and data.offset == 0
+            else []
+        )
+        chats = {file.storage_id: chat_id for file, chat_id in rows}
+        missing = {folder.storage_id for folder in folders} - set(chats)
+        for storage_id in missing:
+            chats[storage_id] = (
+                await self._storage_service.get_db(storage_id)
+            ).tg_chat_id
+        names = await self._storage_names(chats) if chats else {}
+        return FileSearchServiceRead(
+            items=[
+                FoundFileServiceRead(
+                    **FileServiceRead.from_db(file, chat_id).model_dump(),
+                    folder=join_path(file.storage_id, file.folder_path),
+                    storage_name=names.get(file.storage_id),
+                )
+                for file, chat_id in rows
+            ],
+            total=total,
+            limit=data.limit,
+            offset=data.offset,
+            has_more=data.offset + len(rows) < total,
+            folders=[
+                FoundFolderServiceRead(
+                    id=folder.id,
+                    path=join_path(folder.storage_id, folder.path),
+                    name=folder.path.rpartition("/")[2],
+                    storage_id=folder.storage_id,
+                    storage_name=names.get(folder.storage_id),
+                    created_at=folder.created_at,
+                    updated_at=folder.updated_at,
+                )
+                for folder in folders
+            ],
+        )
+
+    async def mime_counts(
+        self, actor: Actor, raw_path: str | None
+    ) -> list[MimeCountServiceRead]:
+        scope = await self._scope(actor, raw_path)
+        return [
+            MimeCountServiceRead(mime=mime, files=count)
+            for mime, count in await self._repo.mime_counts(
+                scope, read_scopes(actor), MIME_FACETS
+            )
+        ]
 
     async def delete(self, actor: Actor, file_id: UUID) -> None:
         file, chat_id = await self.get_db(actor, file_id, Permission.DELETE)

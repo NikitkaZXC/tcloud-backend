@@ -5,7 +5,7 @@ from sqlalchemy.orm import InstrumentedAttribute
 
 
 def escape_like(value: str) -> str:
-    return value.replace("%", r"\%").replace("_", r"\_")
+    return value.replace("\\", "\\\\").replace("%", r"\%").replace("_", r"\_")
 
 
 def folder_and_below(

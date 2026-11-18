@@ -5,7 +5,17 @@ from .auth import (
     QrServiceRead,
     SessionStateServiceRead,
 )
-from .file import FileServiceRead, TelegramFileServiceRead, caption_token, telegram_link
+from .file import (
+    FileSearchServiceCreate,
+    FileSearchServiceRead,
+    FileServiceRead,
+    FoundFileServiceRead,
+    FoundFolderServiceRead,
+    MimeCountServiceRead,
+    TelegramFileServiceRead,
+    caption_token,
+    telegram_link,
+)
 from .folder import (
     FolderDeleteServiceRead,
     FolderListingServiceRead,
@@ -42,6 +52,11 @@ from .user import (
 )
 
 __all__ = [
+    "FileSearchServiceCreate",
+    "FileSearchServiceRead",
+    "FoundFileServiceRead",
+    "FoundFolderServiceRead",
+    "MimeCountServiceRead",
     "AuthServiceRead",
     "AuthorizationServiceRead",
     "LoginServiceRead",

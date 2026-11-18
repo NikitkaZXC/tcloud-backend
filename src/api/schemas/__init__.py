@@ -7,7 +7,12 @@ from .auth import (
     QrResponse,
     SessionStateResponse,
 )
-from .file import FileResponse
+from .file import (
+    FileResponse,
+    FileSearchParams,
+    FileSearchResponse,
+    MimeCountResponse,
+)
 from .folder import (
     FolderCreate,
     FolderDeleteResponse,
@@ -42,6 +47,9 @@ from .user import (
 )
 
 __all__ = [
+    "FileSearchParams",
+    "FileSearchResponse",
+    "MimeCountResponse",
     "BATCH_MAX",
     "AccountResponse",
     "AuthResponse",

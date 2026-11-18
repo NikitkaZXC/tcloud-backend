@@ -23,3 +23,9 @@ class ThumbnailNotFoundError(TCloudError):
     """Raised when Telegram has no thumbnail for the file or the file is encrypted."""
 
     code = "thumbnail_not_found"
+
+
+class EmptySearchError(TCloudError):
+    """Raised when a search has neither a query nor any filter."""
+
+    code = "empty_search"

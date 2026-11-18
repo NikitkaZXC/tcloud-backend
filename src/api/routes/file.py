@@ -1,13 +1,19 @@
+from typing import Annotated
 from urllib.parse import quote
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, status
+from fastapi import APIRouter, Depends, Header, Query, status
 from fastapi.responses import Response, StreamingResponse
 
 from src.api.dependencies import get_actor
-from src.api.schemas import FileResponse
+from src.api.schemas import (
+    FileResponse,
+    FileSearchParams,
+    FileSearchResponse,
+    MimeCountResponse,
+)
 from src.application.factory import get_runtime, get_service_file
-from src.application.schemas import Actor
+from src.application.schemas import Actor, FileSearchServiceCreate
 from src.application.services import FileService
 from src.application.services.file import file_body
 from src.infrastructure.background import AppRuntime
@@ -17,6 +23,36 @@ from src.utilities.parsers import parse_range
 THUMB_MAX_AGE = 24 * 3600
 
 router = APIRouter(prefix="/files", tags=["Files"])
+
+
+@router.get(
+    path="/search",
+    name="files:search",
+    summary="Search readable files by name and filters in a folder subtree, a storage or everywhere",
+    status_code=status.HTTP_200_OK,
+)
+async def search_files(
+    params: Annotated[FileSearchParams, Query()],
+    actor: Actor = Depends(get_actor),
+    file_service: FileService = Depends(get_service_file),
+) -> FileSearchResponse:
+    return await file_service.search(
+        actor, FileSearchServiceCreate.model_validate(params.model_dump())
+    )
+
+
+@router.get(
+    path="/search/mimes",
+    name="files:search-mimes",
+    summary="MIME types with file counts among readable files of the scope",
+    status_code=status.HTTP_200_OK,
+)
+async def search_mimes(
+    path: Annotated[str | None, Query(min_length=1, max_length=1024)] = None,
+    actor: Actor = Depends(get_actor),
+    file_service: FileService = Depends(get_service_file),
+) -> list[MimeCountResponse]:
+    return await file_service.mime_counts(actor, path)
 
 
 @router.get(
