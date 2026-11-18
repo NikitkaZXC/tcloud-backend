@@ -2,6 +2,7 @@ import asyncio
 import uuid
 
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import text
 
 import main
 from src.config import settings
@@ -402,6 +403,23 @@ async def test_chat_folder_follows_root_settings_only(
     )
     assert response.status_code == 200
     assert telegram.folders == {"TCloud": [storage["telegram"]["chat_id"]]}
+
+
+async def test_chat_folder_survives_stale_root_settings(client, telegram, engine):
+    async with engine.begin() as connection:
+        await connection.execute(
+            text(
+                "UPDATE users SET settings = CAST(:value AS jsonb) "
+                "WHERE login = 'root'"
+            ),
+            {"value": '{"telegram": {"chat_folder": "maybe", "gone": 1}}'},
+        )
+    created = await client.post("/storages", json={"name": "s"})
+    assert created.status_code == 201, created.text
+    assert telegram.folders == {"TCloud": [created.json()["telegram"]["chat_id"]]}
+    deleted = await client.delete(f"/storages/{created.json()['id']}")
+    assert deleted.status_code == 204
+    assert telegram.folders == {}
 
 
 async def test_activity_shows_reads_and_writes(client, storage, make_user, redis):

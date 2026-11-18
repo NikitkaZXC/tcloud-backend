@@ -193,11 +193,11 @@ class StorageService:
         return data
 
     async def sync_folder(self) -> None:
-        root = await UserRepository(self._session).get_root()
-        enabled = SettingsServiceRead.model_validate(
-            root.settings if root else {}
-        ).telegram.chat_folder
         try:
+            root = await UserRepository(self._session).get_root()
+            enabled = SettingsServiceRead.from_stored(
+                root.settings if root else {}
+            )[0].telegram.chat_folder
             chat_ids = (
                 [storage.tg_chat_id for storage in await self._repo.get_all()]
                 if enabled

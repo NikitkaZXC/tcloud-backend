@@ -50,12 +50,13 @@ sequenceDiagram
 (в БД ничего не хранится), `messages.updateDialogFilter` выставляет `include_peers` ровно в текущие каналы хранилищ
 (по порядку создания, не больше лимита — 100 / 200 с Premium), эмодзи и цвет папки сохраняются, закрепления
 сбрасываются. Новой папке достаётся первый свободный id в 2..255. Каналов нет или настройка выключена — папка удаляется
-(каналы остаются).
+(каналы остаются). Настройки root читаются терпимо (`SettingsServiceRead.from_stored`), и весь sync, включая чтение
+настроек, идёт после commit внутри `try`: любая ошибка — только warning, запрос успешен.
 
 
 ```mermaid
 flowchart TD
-    trig["создание или удаление хранилища,<br/>connect_chats (старт, вход в api),<br/>root меняет telegram.chat_folder"] --> root["StorageService.sync_folder:<br/>настройки root из users.settings"]
+    trig["создание или удаление хранилища,<br/>connect_chats (старт, вход в api),<br/>root меняет telegram.chat_folder"] --> root["StorageService.sync_folder:<br/>настройки root из users.settings (from_stored)"]
     root --> en{"chat_folder?"}
     en -->|да| ids["tg_chat_id всех storages"]
     en -->|нет| none["пустой список"]
@@ -65,6 +66,7 @@ flowchart TD
     peers --> empty{"peers пустой?"}
     empty -->|да| del["папка есть → updateDialogFilter(id) без фильтра = удалить"]
     empty -->|нет| upd["updateDialogFilter: id своей папки или первый свободный 2..255,<br/>include_peers, эмодзи и цвет сохраняются, pinned сбрасываются"]
+    root -. "любая ошибка" .-> log
     tg -. "любая ошибка" .-> log["warning в лог, запрос успешен"]
 ```
 
