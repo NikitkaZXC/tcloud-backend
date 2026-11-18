@@ -32,6 +32,62 @@ Admin не может создать, изменить или удалить д�
 - `GET /api/users/me` показывает текущего пользователя, его гранты и настройки (`settings`, flows/settings.md).
 - Свои настройки по умолчанию (загрузки, архивы, интерфейс) пользователь меняет сам: `GET/PATCH/DELETE /api/account/settings`.
 
+Вход, refresh и проверка запроса — `src/application/services/user_auth.py` (`UserAuthService`), куки —
+`src/api/routes/auth.py`, зависимость `get_actor` — `src/api/dependencies/auth.py`, токены и хеши —
+`src/infrastructure/security/` (`jwt.py`, `hashing.py`).
+
+```mermaid
+sequenceDiagram
+    participant C as Клиент
+    participant A as API (routes/auth.py)
+    participant U as UserAuthService
+    participant R as Redis
+    participant DB as PostgreSQL
+    C->>A: POST /api/auth/signin {login, password}
+    A->>U: signin
+    U->>R: INCR rate:signin:{ip}
+    alt больше JWT_SIGNIN_IP_LIMIT за окно
+        U-->>C: 429 rate_limited
+    end
+    U->>DB: users по login
+    U->>U: argon2 verify (неизвестный логин — фиктивный хеш)
+    alt locked_until в будущем
+        U-->>C: 429 account_locked
+    else неверный пароль
+        U->>DB: failed_logins + 1, на JWT_MAX_FAILED_LOGINS — locked_until
+        U-->>C: 401 invalid_credentials или 429 account_locked
+    else blocked
+        U-->>C: 403 user_blocked
+    end
+    U->>DB: удалить истёкшие refresh, INSERT refresh_tokens (HMAC, access_jti)
+    A-->>C: 204, куки access (JWT RS256) и refresh
+```
+
+```mermaid
+flowchart TD
+    r["POST /api/auth/refresh, кука refresh"] --> h["refresh_tokens по HMAC"]
+    h -->|"нет или истёк"| e401["401 invalid_refresh_token"]
+    h -->|"revoked: reuse detection"| reuse["revoke_all: все refresh пользователя отозваны,<br/>их access jti → revoked:{jti} в Redis"] --> e401
+    h -->|активен| b{"пользователь заблокирован?"}
+    b -->|да| blk["revoke_all → 403 user_blocked"]
+    b -->|нет| rot["старый refresh revoked, его access jti → Redis;<br/>новая пара, signed_in_at сохраняется"] --> ok["204 и новые куки"]
+```
+
+Каждый запрос к `/api` (кроме `signin`, `refresh`, `logout` и публичного `/health`) проходит `get_actor`:
+
+```mermaid
+flowchart TD
+    req["Запрос"] --> k{"X-API-Key?"}
+    k -->|да| key["api_keys по HMAC<br/>нет → 401 unauthorized<br/>last_used_at не чаще раза в минуту"]
+    k -->|нет| c{"кука access?"}
+    c -->|нет| e["401 unauthorized"]
+    c -->|да| jwt["проверка RS256 и срока → 401 token_invalid / token_expired<br/>revoked:{jti} в Redis → 401 token_invalid"]
+    key --> user["users по user_id<br/>blocked → 403 user_blocked"]
+    jwt --> user
+    user --> actor["UserAuthService.actor: гранты (только у user),<br/>settings через from_stored → Actor"]
+    actor --> svc["сервисы проверяют права: services/access.py"]
+```
+
 JWT несёт `sub`, `user_id`, `role`, `jti`, `iat`, `exp`, `token_type`. Права берутся не из токена: на каждый запрос
 пользователь и гранты читаются из БД, поэтому блокировка, смена роли и изменение грантов действуют сразу.
 Отозванные access-токены хранятся в Redis (`{REDIS_PREFIX}:revoked:{jti}`) до конца их срока, в refresh-таблице лежит

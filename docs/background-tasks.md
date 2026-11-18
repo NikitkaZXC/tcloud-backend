@@ -2,17 +2,17 @@
 
 Загрузки и сборку архивов папок обрабатывают воркеры Celery. Брокер — RabbitMQ, состояние задач хранится в Redis. Таблицы задач в PostgreSQL нет.
 
-```
-                 по ссылке ─► uploads.download ─► worker-download (скачивание)
-                                                     │
-API ──(файл в общий том /data/tmp)──► uploads.prepare ◄┘ ─► worker-prepare
-                                                     │ magic bytes, Pillow/ffprobe, sha256, ClamAV,
-                                                     │ JPEG для фото, превью видео, зашифрованное превью
-                                      uploads.telegram ◄┘
-                                             │
-                                             ▼
-                                      worker-telegram (своя сессия Telethon)
-                                      отправка в TG → запись files → вебхук
+```mermaid
+flowchart LR
+    dev["POST /api/uploads<br/>тело → том tmp"] --> qp
+    url["POST /api/uploads/from-url, /batch"] --> qd
+    arc["POST /api/folders/archive, /archive/selection"] --> qa
+    qd[["uploads.download"]] --> wd["worker-download<br/>скачивание по ссылке (SSRF-фильтр)"]
+    wd --> qp[["uploads.prepare"]]
+    qp --> wp["worker-prepare<br/>magic bytes, Pillow/ffprobe, sha256, ClamAV,<br/>JPEG для фото, превью видео (ffmpeg),<br/>шифрование и зашифрованное превью"]
+    wp --> qt[["uploads.telegram"]]
+    qt --> wt["worker-telegram (1 реплика, сессия upload)<br/>отправка в TG → строка files → вебхук"]
+    qa[["archives.build"]] --> wt
 ```
 
 | Очередь | Воркер | Потоков | Реплики |
@@ -31,6 +31,71 @@ Redis (`archives`), уборка `TaskSweeper` их не трогает до с�
 Скачивание вынесено в отдельную очередь, поэтому медленные ссылки не занимают потоки проверки. Проверка, в свою
 очередь, не занимает слоты Telegram. Чтение из Telegram (скачивание, превью, каналы) остаётся в API: очередь не подходит
 для потоковой отдачи с Range.
+
+## Путь загрузки целиком
+
+API — `UploadService` (`src/application/services/upload.py`), стадии воркеров — `UploadPipeline`
+(`src/application/services/pipeline.py`, вход — `src/application/tasks/upload.py`), состояние — `TaskStore`
+(`src/infrastructure/cache/tasks.py`, карта ключей — redis.md).
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant C as Клиент
+    participant A as API (UploadService)
+    participant R as Redis (TaskStore)
+    participant Q as RabbitMQ
+    participant D as worker-download
+    participant P as worker-prepare
+    participant T as worker-telegram
+    participant TG as Telegram (сессия upload)
+    participant DB as PostgreSQL
+    C->>A: POST /api/uploads (тело) или /uploads/from-url
+    A->>A: with_defaults из настроек, права, check_name, сессия upload, лимит файла, диск, конфликт пути
+    A->>R: SET NX path:{path} (занят → 409 upload_in_progress)
+    alt с устройства
+        A->>R: take_disk_slot (нет слота → 429 too_many_tasks)
+        A->>A: write_body → tmp (Content-Length, 413 / 400 size_mismatch)
+        A->>R: create, activate, join_queue(uploads.prepare)
+        A->>Q: uploads.prepare {task_id, generation}
+        A-->>C: 202 задача queued
+    else по ссылке
+        A->>R: create, activate, join_queue(uploads.download)
+        A->>Q: uploads.download
+        A-->>C: 202 задача queued
+        Q->>D: сообщение
+        D->>R: CLAIM (status running)
+        D->>R: take_disk_slot (ждёт, waiting = disk_slots)
+        D->>D: download() через SSRF-фильтр в tmp
+        D->>R: stage scanning, join_queue(uploads.prepare)
+        D->>Q: uploads.prepare
+    end
+    Q->>P: сообщение
+    P->>R: CLAIM
+    P->>P: probe (magic bytes, Pillow/ffprobe), sha256, ClamAV (повторы)
+    P->>P: send_as=media: фото → JPEG, видео: превью ffmpeg
+    opt encrypt
+        P->>P: encrypt_file → .bin (AES-256-GCM), preview() + seal → thumbnail
+    end
+    P->>R: prepared, stage uploading_tg, join_queue(uploads.telegram)
+    P->>Q: uploads.telegram
+    Q->>T: сообщение
+    T->>R: CLAIM
+    T->>TG: send (куски параллельно, FloodWait — общая пауза)
+    T->>R: sent {file_id, chat_id, message}
+    T->>DB: folders.ensure, INSERT или UPDATE files, commit
+    T->>R: committed
+    opt replace
+        T->>TG: удалить старое сообщение
+    end
+    T->>R: status done, release (path, disk, active, waiting)
+    T-->>C: вебхук на callback_url (на каждой стадии)
+```
+
+Переход между стадиями — `UploadPipeline._handoff`: проверка отмены, новая стадия с
+`waiting = queue:{следующая очередь}`, затем под `handoff_lock` запись в `waiting:{queue}` и публикация в RabbitMQ.
+Архив — тот же механизм с одной стадией: `FolderService._queue_archive` → `archives.build` →
+`UploadPipeline._archive` (flows/folders-and-files.md).
 
 ## Воркер изнутри
 
@@ -99,14 +164,53 @@ RabbitMQ по умолчанию закрывает канал, если зад�
 
 ## Статусы и стадии
 
-```
-status  queued → running → done | failed | cancelled
-stage   downloading (только по ссылке) → scanning → uploading_tg → done
+`status` — `queued → running → done | failed | cancelled` (`TaskStatus`), `stage` — `downloading` (только по ссылке)
+`→ scanning → uploading_tg → done`, у архива `archiving → done` (`TaskStage`, `src/infrastructure/enums`). `queued`
+бывает только до первого `CLAIM`: между стадиями задача остаётся `running`, а в очереди её видно по `waiting`.
+
+```mermaid
+stateDiagram-v2
+    direction LR
+    [*] --> queued: создана в API
+    [*] --> done: on_conflict=skip и файл уже есть
+    queued --> running: CLAIM воркером
+    queued --> cancelled: cancel в очереди
+    queued --> failed: queue_unavailable или lost
+    state running {
+        [*] --> downloading: по ссылке
+        [*] --> scanning: с устройства
+        [*] --> archiving: архив
+        downloading --> scanning: uploads.prepare
+        scanning --> uploading_tg: uploads.telegram
+    }
+    running --> done
+    running --> failed: ошибка или lost
+    running --> cancelled: cancel
+    failed --> queued: retry, только по ссылке
+    cancelled --> queued: retry, только по ссылке
 ```
 
-Пока задача ждёт воркера, `waiting = {"reason": "queue:uploads.download | uploads.prepare | uploads.telegram", "code": "queue", "params": {"queue": ...}}`
-(все коды ожидания и предупреждений — в flows/uploads.md), а
-`queue_position` — её номер в этой очереди: 1 — следующая на взятие, выполняющиеся задачи не считаются.
+`waiting` — почему задача сейчас стоит. В Redis — `{"reason", "until"?}`; API отдаёт `{reason, code, params, seconds}`,
+где `code` — часть `reason` до `:`, а `params.queue` — после (`TaskService.render`). Все коды ожидания и предупреждений
+с параметрами — в flows/uploads.md.
+
+```mermaid
+flowchart LR
+    work["waiting = null<br/>воркер работает"]
+    queue["queue<br/>reason queue:{очередь}<br/>есть queue_position"]
+    slots["disk_slots<br/>worker-download ждёт слот<br/>UPLOAD_MAX_FILES_ON_DISK"]
+    retry["retry<br/>сеть Telegram или ClamAV,<br/>seconds до повтора"]
+    flood["flood_wait<br/>пауза всей выгрузки<br/>worker-telegram"]
+    queue -- CLAIM --> work
+    work -- "_handoff: следующая стадия" --> queue
+    work -- "_disk_slot" --> slots -- слот получен --> work
+    work -- "_retry" --> retry -- пауза прошла --> work
+    work -- "FloodWait > 60 с" --> flood -- пауза прошла --> work
+```
+
+Пока задача ждёт воркера, `waiting = {"reason": "queue:{очередь}", "code": "queue", "params": {"queue": ...}}`
+(очередь — `uploads.download`, `uploads.prepare`, `uploads.telegram` или `archives.build`), а `queue_position` — её
+номер в этой очереди: 1 — следующая на взятие, выполняющиеся задачи не считаются.
 
 RabbitMQ позицию не сообщает, поэтому её считает наш индекс: sorted set `tcloud:waiting:{queue}` со счётом
 `(10 − уровень приоритета) × 10¹³ + время постановки в мкс` — тот же порядок, что у RabbitMQ (выше приоритет — раньше,
@@ -121,21 +225,9 @@ RabbitMQ позицию не сообщает, поэтому её считае�
 
 ## Redis
 
-Ключи с префиксом `REDIS_PREFIX` (`tcloud`):
-
-| Ключ | Что | TTL |
-|---|---|---|
-| `tcloud:task:{id}` | hash: поля задачи, каждое в JSON. Поля пишутся по отдельности, запись прогресса не затирает статус. Служебные поля: `generation`, `claimed`, `cancel`, `prepared`, `sent`, `committed`, `beat_at` | `UPLOAD_TASK_TTL` (7 дней) |
-| `tcloud:batch:{id}` | список id задач пачки по порядку | `UPLOAD_TASK_TTL` |
-| `tcloud:user_tasks:{user_id}` | sorted set id задач пользователя, score — время создания; для `GET /api/tasks/counts` (при чтении чистятся старше `UPLOAD_TASK_TTL` и уже пропавшие задачи) | `UPLOAD_TASK_TTL` с последней задачи |
-| `tcloud:path:{path}` | блокировка пути, значение — id задачи. Снимается только владельцем (Lua) | `UPLOAD_LOCK_TTL` (24 ч, страховка) |
-| `tcloud:active` | sorted set активных задач, score — время старта | — |
-| `tcloud:disk` | sorted set задач, чей файл сейчас в `tmp` (`UPLOAD_MAX_FILES_ON_DISK`), score — время захвата | — |
-| `tcloud:waiting:{queue}` | sorted set задач, ждущих в очереди, для `queue_position` | — |
-| `tcloud:worker:{queue}:{host}` | heartbeat воркера | 3 × `UPLOAD_HEARTBEAT_INTERVAL` |
-| `tcloud:activity:{storage_id}:{read\|write}` | метка «хранилище сейчас читают / пишут» для `GET /api/storages/activity` (flows/storages.md) | 5 с |
-
-Через 7 дней задача пропадает из Redis, и `GET /api/tasks/{id}` отвечает `404`. Сам файл остаётся в `files`.
+Задачи, пачки, блокировки путей, слоты диска, индексы очередей, архивы и heartbeat — полная карта ключей и полей
+задачи в redis.md. Через `UPLOAD_TASK_TTL` (7 дней) задача пропадает из Redis, и `GET /api/tasks/{id}` отвечает
+`404`. Сам файл остаётся в `files`.
 
 ## Потерянные задачи
 

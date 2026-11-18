@@ -11,7 +11,7 @@ make up             # сборка и запуск
 make logs
 ```
 
-Затем вход как root (`ROOT_LOGIN`/`ROOT_PASSWORD`, `POST /api/auth/signin`) и вход в Telegram через Swagger `http://127.0.0.1:8000/docs`, раздел **Telegram** — отдельно для сессий `api` и `upload`
+Затем вход как root (`ROOT_LOGIN`/`ROOT_PASSWORD`, `POST /api/auth/signin`) и вход в Telegram через Swagger `http://127.0.0.1:8000/docs`, раздел **Telegram** — отдельно для сессий `api`, `upload` и `download`
 (flows/auth.md). Файлы сессий лежат в volume `session` и переживают пересборку; входить заново нужно, только если
 volume удалён или сессию завершили в Telegram. Без входа приложение работает, но Telegram-запросы отвечают
 `503 telegram_unauthorized`.

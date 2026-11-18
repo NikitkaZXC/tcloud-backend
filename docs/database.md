@@ -3,6 +3,100 @@
 PostgreSQL 18, SQLAlchemy 2 async (asyncpg), миграции Alembic в `src/infrastructure/database/migrations/`.
 Все первичные ключи — UUID (v7, генерируются в Python).
 
+Модели — `src/infrastructure/database/models/` (класс `*DB`), миксины `id`/`created_at`/`updated_at` — `mixins/`.
+
+```mermaid
+erDiagram
+    users ||--o{ refresh_tokens : "user_id, CASCADE"
+    users ||--o{ api_keys : "user_id, CASCADE"
+    users ||--o{ folder_grants : "user_id, CASCADE"
+    storages ||--o{ folder_grants : "storage_id, CASCADE"
+    storages ||--o{ folders : "storage_id, CASCADE"
+    storages ||--o{ files : "storage_id, CASCADE"
+    folders ||..o{ files : "логически folder_path = path, без FK"
+
+    users {
+        uuid id PK
+        text login UK
+        text password_hash "argon2"
+        text role "root, admin, user; root один"
+        bool blocked
+        int failed_logins
+        timestamptz locked_until
+        timestamptz last_login_at
+        jsonb settings "только заданные ключи"
+        timestamptz created_at
+        timestamptz updated_at
+    }
+    refresh_tokens {
+        uuid id PK
+        uuid user_id FK
+        text token_hash UK "HMAC-SHA256"
+        uuid access_jti
+        text user_agent
+        text ip_address
+        timestamptz signed_in_at
+        timestamptz expires_at
+        bool revoked
+        timestamptz created_at
+    }
+    api_keys {
+        uuid id PK
+        uuid user_id FK
+        text name
+        text key_hash UK "HMAC-SHA256"
+        timestamptz last_used_at
+        timestamptz created_at
+    }
+    folder_grants {
+        uuid id PK
+        uuid user_id FK
+        uuid storage_id FK
+        text path "пусто = всё хранилище"
+        bool recursive
+        bool can_read
+        bool can_upload
+        bool can_delete
+        timestamptz created_at
+        timestamptz updated_at
+    }
+    storages {
+        uuid id PK
+        bigint tg_chat_id UK "название и фото только в Telegram"
+        timestamptz created_at
+        timestamptz updated_at
+    }
+    folders {
+        uuid id PK
+        uuid storage_id FK
+        text path "a/b/c; у корня строки нет"
+        timestamptz created_at
+        timestamptz updated_at
+    }
+    files {
+        uuid id PK
+        uuid storage_id FK
+        text folder_path
+        text name
+        bigint size "открытый размер"
+        text mime
+        text kind
+        text sent_as
+        int width
+        int height
+        float duration
+        text sha256
+        bigint tg_message_id
+        bytea encryption_header "NULL = открытый"
+        bytea thumbnail "deferred, наше превью"
+        timestamptz created_at
+        timestamptz updated_at
+    }
+```
+
+`folder_grants.path` и `files.folder_path` — текст, а не ссылки на `folders`: грант может указывать на ещё не
+созданную папку и переживает её удаление, а файлы и папки связаны путём (flows/users.md, flows/folders-and-files.md).
+
 | Таблица | Что хранит | Индексы и зачем |
 |---|---|---|
 | `storages` | `id`, `tg_chat_id`, даты. Название, описание, фото — только в Telegram | `UNIQUE(tg_chat_id)` — канал подключается один раз |

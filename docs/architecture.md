@@ -1,34 +1,90 @@
 # Архитектура
 
-Слои, зависимости идут только вниз: `api → application → infrastructure`; `utilities` доступны всем.
+## Компоненты
+
+```mermaid
+flowchart LR
+    browser["Браузер<br/>tcloud-frontend"] --> nginx["nginx фронтенда<br/>/api/* → API, gzip off для<br/>download, thumb, archive"]
+    script["Скрипты<br/>X-API-Key"] --> api
+    nginx --> api["API: FastAPI, один процесс uvicorn<br/>main.py, AppRuntime, TaskSweeper"]
+    flower["Flower :5555"] --> mq
+    api -- "SQL, asyncpg" --> pg[("PostgreSQL 18<br/>индекс файлов, пользователи")]
+    api -- "задачи, блокировки, метки" --> redis[("Redis 8")]
+    api -- "send_task" --> mq[["RabbitMQ 4<br/>uploads.download, uploads.prepare,<br/>uploads.telegram, archives.build"]]
+    api -- "INSTREAM: фото хранилищ" --> clam["ClamAV clamd"]
+    api -- "клиент api: каналы, удаления, события" --> tg(("Telegram"))
+    api -- "клиент download: скачивание, превью" --> tg
+    mq --> wd["worker-download"]
+    mq --> wp["worker-prepare"]
+    mq --> wt["worker-telegram<br/>одна реплика"]
+    wd -- "ссылки, SSRF-фильтр" --> web["Интернет"]
+    wp -- "INSTREAM" --> clam
+    wt -- "клиент upload: отправка, чтение для архивов" --> tg
+    wd & wp -- "следующая стадия" --> mq
+    wd & wp & wt --> redis
+    wd & wp & wt --> pg
+    api & wd & wp & wt --- tmp[/"том tmp: тела загрузок,<br/>шифротекст, архивы"/]
+```
+
+- **API** (`main.py`): HTTP, приём тел загрузок в `tmp`, постановка задач, отдача файлов из Telegram с `Range`,
+  вход в Telegram, `TaskSweeper` (потерянные задачи, уборка `tmp`) и чистка старых Telegram-сессий в фоне.
+  Состояние процесса — `AppRuntime` (`src/infrastructure/background/runtime.py`): клиенты Telegram `telegram` (сессия
+  `api`, `receive_updates=True`) и `download`, сканер, `TaskStore`, кеши Premium и числа каналов, логины в процессе.
+- **Воркеры** (`src/application/tasks/upload.py`): один образ, Celery `--pool threads`; `WorkerRuntime`
+  (`background/worker.py`) — свой event loop, движок БД с `NullPool`, Redis и ленивый клиент Telegram сессии `upload`
+  (его открывает только `worker-telegram`). Подробно — background-tasks.md.
+- **Хранилища данных**: PostgreSQL — database.md, Redis — redis.md, RabbitMQ — очереди с `x-max-priority=9`.
+- **Telegram**: три сессии одного аккаунта (integrations.md, flows/auth.md).
+- **ClamAV**: `clamav/clamav:*-debian`, строгий `docker/clamd.conf` (security.md).
+
+## Слои
+
+```mermaid
+flowchart TD
+    api["src/api<br/>routes, schemas, middleware, exception, dependencies"] --> app["src/application<br/>services, tasks, schemas, factory, exception, bootstrap"]
+    app --> infra["src/infrastructure<br/>database, cache, background, integrations, media, security"]
+    api -.-> util["src/utilities<br/>errors, parsers, formatters"]
+    app -.-> util
+    infra -.-> util
+```
+
+Зависимости идут только вниз: `api → application → infrastructure`; `utilities` доступны всем.
 `src/application` никогда не импортирует `src/api`, `src/infrastructure` — ни то, ни другое.
 
 ```
-main.py                    FastAPI-приложение, lifespan: БД, Telegram, ClamAV, Redis, AppRuntime, подготовка при старте
+main.py                    FastAPI-приложение, lifespan: БД, клиенты Telegram api и download, ClamAV, Redis, AppRuntime,
+                           startup, TaskSweeper и чистка старых Telegram-сессий
 src/
-  config/                  настройки (pydantic-settings), по классу на группу: APP_, POSTGRES_, TELEGRAM_, CLAMAV_, UPLOAD_, RABBITMQ_, REDIS_, LOG_
+  config/                  настройки (pydantic-settings), по классу на группу: APP_, POSTGRES_, JWT_, ROOT_, TELEGRAM_, CLAMAV_, UPLOAD_, RABBITMQ_,
+                           REDIS_, LOG_
   api/
     endpoints.py           все роутеры под /api; /api/telegram только для root
     middleware/            заголовки безопасности, проверка Origin (CSRF), см. security.md; CORS подключён в main.py
-    routes/                system, storage, folder, upload, file
+    routes/                auth, user, system (health, account), telegram, settings, storage, folder, upload (и задачи), file
     schemas/               HTTP-схемы запросов и ответов
     exception/             код ошибки → HTTP-статус, обработчики, единый формат {"error": {...}}
-    dependencies/          verify_api_key
+    dependencies/          get_actor (кука access или X-API-Key → Actor), get_optional_actor, get_root
   application/
-    services/              бизнес-логика: Account, Auth (вход в Telegram, чистка старых сессий), Health, Storage, Folder, File, Task, Upload, Settings (настройки пользователя, flows/settings.md), UploadPipeline (стадии воркеров),
-                           TaskSweeper (потерянные задачи, крутится в API)
-    tasks/                 Celery-задачи uploads.download, uploads.prepare, uploads.telegram, archives.build, WorkerRuntime и Heartbeat воркера
+    services/              бизнес-логика: Account, Auth (вход в Telegram, чистка старых сессий), UserAuth (вход
+                           пользователей, токены, Actor), User, Grant, ApiKey, Health, Storage, Folder, File, Task,
+                           Upload, Settings (flows/settings.md), access (проверки прав), UploadPipeline (стадии
+                           воркеров), archive, webhook, TaskSweeper (потерянные задачи и уборка tmp, крутится в API)
+    tasks/                 Celery-задачи uploads.download, uploads.prepare, uploads.telegram, archives.build; запуск WorkerRuntime и Heartbeat по сигналам Celery
     schemas/               DTO сервисов (*ServiceRead, *ServiceCreate, *ServiceUpdate)
     factory/               FastAPI-зависимости get_service_*: сервисы роуты получают только через них
     exception/             доменные ошибки
-    bootstrap/             startup (старые файлы tmp; если API-сессия вошла — каналы из .env и события удалений)
+    bootstrap/             startup (старые файлы tmp, ключи JWT, строка root; если API-сессия вошла — каналы из .env,
+                           папка TCloud и события удалений)
   infrastructure/
     database/              модели *DB, миксины (UUIDv7 id, created_at, updated_at), репозитории, миграции
     integrations/          telegram (Telethon), antivirus (clamd), web (безопасные исходящие запросы)
+    security/              JWT, argon2, HMAC секретов, шифрование файлов (encryption.py)
     media/                 определение типа, Pillow/ffprobe, превью, перевод в JPEG
     background/            Celery-приложение и очереди, enqueue, queue_sizes, DiskBudget (резерв места), AppRuntime (состояние API),
                            WorkerRuntime (event loop, Telethon, БД и Redis воркера), Heartbeat
-    cache/                 Redis: TaskStore — задачи, пачки, блокировки путей, активные задачи, Lua CLAIM/REQUEUE/CANCEL
+    cache/                 Redis: TaskStore (задачи, пачки, блокировки, очереди, активность; Lua CLAIM/REQUEUE/CANCEL),
+                           TokenBlacklist, RateLimiter — карта ключей в redis.md
+    archive.py             ArchiveWriter: zip, 7z, tar.*
     enums/, logger/, limits.py
   utilities/
     errors.py              TCloudError: базовая ошибка с кодом

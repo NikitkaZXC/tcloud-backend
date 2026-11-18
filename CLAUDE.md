@@ -57,6 +57,7 @@ Layers: `api → application → infrastructure`; `utilities` are shared. `src/a
 
 - Plan first, then implement by the plan. Important decisions go to the owner as multiple-choice questions.
 - Tests for every new feature (the more the better). Keep `docs/`, `README.md` and this file current in the same change; schema changes → `docs/database.md`.
+- When code changes a flow shown in `docs/`, update the doc and its diagram in the same commit (Mermaid blocks; check they render with `mmdc` installed outside the repo). New Redis keys → `docs/redis.md`.
 - Every new query with a filter or sort gets an index. All our ids are UUID. Never edit existing migrations.
 - Respect Telegram limits (`src/infrastructure/limits.py`, `docs/integrations.md`).
 - No code comments or docstrings (one-line docstrings on exception classes only); explanations go to `docs/`.

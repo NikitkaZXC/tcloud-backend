@@ -3,7 +3,13 @@
 Хранилище медиа поверх Telegram: файлы лежат в приватных каналах (хранилищах), у каждого файла свой UUID
 и путь `tcloud/{uuid хранилища}/{папки}/{файл}`, всё управляется через REST API.
 
-Краткое описание и быстрый старт — в [`../README.md`](../README.md). Правила для Claude Code — в [`../CLAUDE.md`](../CLAUDE.md).
+Точка входа — [`../README.md`](../README.md) (запуск, команды, настройки, тесты). Правила для Claude Code — в
+[`../CLAUDE.md`](../CLAUDE.md). Здесь — как всё устроено, со схемами Mermaid, сверенными с кодом, и путями к файлам,
+где это сделано. Как этим API пользуется фронтенд — в `../tcloud-frontend/docs/`.
+
+**Правило: изменение кода, которое меняет поток, показанный в `docs/`, обновляет документ и его схему в том же
+коммите.** Новая схема — блок ` ```mermaid `; перед коммитом проверьте, что она рендерится (`mmdc` из
+`@mermaid-js/mermaid-cli`, установленный вне репозитория).
 
 ## Содержание
 
@@ -12,11 +18,12 @@
 | Документ | О чём |
 |---|---|
 | [overview.md](overview.md) | что делает сервис, словарь терминов, главные правила, планы |
-| [architecture.md](architecture.md) | слои, папки, сервисы, репозитории, фабрики, транзакции, соглашения по коду |
-| [database.md](database.md) | таблицы, индексы и зачем они, миграции |
+| [architecture.md](architecture.md) | схема компонентов (API, воркеры, PostgreSQL, Redis, RabbitMQ, ClamAV, Telegram, nginx), слои, папки, сервисы, транзакции, соглашения |
+| [database.md](database.md) | ER-схема, таблицы, индексы и зачем они, миграции |
+| [redis.md](redis.md) | карта ключей Redis: задачи, очереди, блокировки, heartbeat, активность, токены |
 | [security.md](security.md) | доступ, проверка файлов, ClamAV, SSRF, контейнер, секреты |
 | [integrations.md](integrations.md) | Telegram (Telethon) и его лимиты, ClamAV, исходящий HTTP |
-| [background-tasks.md](background-tasks.md) | Celery и RabbitMQ: очереди загрузок и архивов, приоритеты, воркеры, состояние в Redis, лимиты, FloodWait, повторы, вебхуки |
+| [background-tasks.md](background-tasks.md) | Celery и RabbitMQ: схема очередей, путь загрузки (sequence), статусы и коды ожидания (state), приоритеты, отмена, лимиты, FloodWait, вебхуки |
 
 ### Работа с проектом
 
@@ -30,9 +37,9 @@
 
 | Документ | О чём |
 |---|---|
-| [flows/users.md](flows/users.md) | пользователи, роли root/admin/user, JWT в куках, API-ключи, гранты на папки |
-| [flows/auth.md](flows/auth.md) | вход в Telegram через API: QR, код, 2FA, выход, старые сессии, безопасность |
-| [flows/storages.md](flows/storages.md) | хранилища: создание, удаление, подключение из `.env`, название, описание, фото, папка чатов `TCloud` |
-| [flows/folders-and-files.md](flows/folders-and-files.md) | пути, папки, метаданные, скачивание с Range и папок архивом, удаление |
-| [flows/settings.md](flows/settings.md) | настройки пользователя на сервере: `GET/PATCH/DELETE /api/account/settings`, все ключи, как они подставляются в загрузки и архивы |
-| [flows/uploads.md](flows/uploads.md) | загрузка с устройства, по ссылке, пачками; `send_as`, `on_conflict`, `priority`, прогресс |
+| [flows/users.md](flows/users.md) | пользователи и роли; схемы входа, refresh с reuse detection и проверки запроса (кука или API-ключ); гранты |
+| [flows/auth.md](flows/auth.md) | вход в Telegram через API: три сессии, состояния входа, что происходит после входа, старые сессии |
+| [flows/storages.md](flows/storages.md) | хранилища: создание и удаление (схема), подключение из `.env`, папка чатов `TCloud` (схема), кеш числа каналов (схема), индикаторы чтения и записи |
+| [flows/folders-and-files.md](flows/folders-and-files.md) | пути, папки, метаданные, скачивание с Range и расшифровкой (схема), архивы (схема), превью, поиск, удаление |
+| [flows/settings.md](flows/settings.md) | настройки пользователя: терпимое чтение, строгий `PATCH`, слияние (схема), все ключи, подстановка в загрузки и архивы |
+| [flows/uploads.md](flows/uploads.md) | загрузка с устройства, по ссылке, пачками; `send_as`, `on_conflict`, `encrypt`, прогресс, коды ожидания и предупреждений |

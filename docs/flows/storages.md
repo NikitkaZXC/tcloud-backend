@@ -11,6 +11,34 @@
 | Удалить | `DELETE /api/storages/{id}?keep_channel=false` | `204`. Записи файлов и папок удаляются из БД (каскад), канал — `DeleteChannelRequest` вместе со всеми сообщениями, безвозвратно. `keep_channel=true` — канал с файлами остаётся в Telegram, отвязывается только БД. Идут загрузки в хранилище — `409 storage_busy` (дождаться или отменить). Канал уже удалён руками — удаление всё равно проходит |
 | Фото | `PUT` / `GET` / `DELETE /api/storages/{id}/photo` | PUT — тело-картинка ≤ 10 МБ, проверка типа и ClamAV, не JPEG/PNG → JPEG; GET — поток из Telegram, у нас не хранится |
 
+```mermaid
+sequenceDiagram
+    participant C as admin
+    participant S as StorageService
+    participant TG as Telegram (сессия api)
+    participant DB as PostgreSQL
+    participant R as Redis
+    C->>S: POST /api/storages {name, description}
+    S->>TG: channels.createChannel (broadcast)
+    alt CHANNELS_TOO_MUCH
+        S-->>C: 409 channels_limit
+    end
+    S->>S: runtime.channels = None (сброс кеша числа каналов)
+    S->>DB: INSERT storages (tg_chat_id), commit
+    S->>TG: sync_folder TCloud (ошибки только в лог)
+    S-->>C: 201, хранилище с названием и фото из GetFullChannel
+    C->>S: DELETE /api/storages/{id}?keep_channel=
+    S->>R: SCAN path:tcloud/{id}/* (есть → 409 storage_busy)
+    opt keep_channel=false
+        S->>TG: channels.deleteChannel, сброс кеша
+    end
+    S->>DB: DELETE storages (каскад folders, files, folder_grants), commit
+    S->>TG: sync_folder TCloud
+    S-->>C: 204
+```
+
+Код — `src/application/services/storage.py`, вызовы Telegram — `src/infrastructure/integrations/telegram/client.py`.
+
 ## Папка TCloud
 
 Все каналы хранилищ (созданные приложением и подключённые из `TELEGRAM_CHATS`) лежат в папке чатов Telegram
@@ -23,6 +51,22 @@
 (по порядку создания, не больше лимита — 100 / 200 с Premium), эмодзи и цвет папки сохраняются, закрепления
 сбрасываются. Новой папке достаётся первый свободный id в 2..255. Каналов нет или настройка выключена — папка удаляется
 (каналы остаются).
+
+
+```mermaid
+flowchart TD
+    trig["создание или удаление хранилища,<br/>connect_chats (старт, вход в api),<br/>root меняет telegram.chat_folder"] --> root["StorageService.sync_folder:<br/>настройки root из users.settings"]
+    root --> en{"chat_folder?"}
+    en -->|да| ids["tg_chat_id всех storages"]
+    en -->|нет| none["пустой список"]
+    ids --> tg["TelegramClient.sync_folder:<br/>messages.getDialogFilters, папка по названию TCloud"]
+    none --> tg
+    tg --> peers["каналы → input peers, не больше 100 / 200 с Premium;<br/>недоступный канал — warning"]
+    peers --> empty{"peers пустой?"}
+    empty -->|да| del["папка есть → updateDialogFilter(id) без фильтра = удалить"]
+    empty -->|нет| upd["updateDialogFilter: id своей папки или первый свободный 2..255,<br/>include_peers, эмодзи и цвет сохраняются, pinned сбрасываются"]
+    tg -. "любая ошибка" .-> log["warning в лог, запрос успешен"]
+```
 
 Когда синхронизируется: после создания и удаления хранилища, после подключения из `TELEGRAM_CHATS` (при каждом старте
 и входе в API-сессию), когда root меняет `telegram.chat_folder` (`PATCH` или `DELETE /api/account/settings`).
@@ -44,6 +88,19 @@
 не кешируется. Пока root не вошёл в API-сессию, ручка отвечает `200` с `telegram_connected: false` и `null`
 во всех полях Telegram (`premium`, `file_limit`, `channels_used`, `channels_limit`); после входа
 `telegram_connected: true` и `premium` читается из Telegram.
+
+```mermaid
+flowchart TD
+    get["GET /api/account"] --> auth{"сессия api вошла?"}
+    auth -->|нет| off["telegram_connected false, остальные поля null"]
+    auth -->|да| prem["is_premium(fresh): get_me().premium"]
+    prem --> cache{"runtime.channels моложе UPLOAD_CHANNELS_TTL?"}
+    cache -->|да| hit["channels_used из кеша"]
+    cache -->|нет| count["iter_dialogs: число dialog.is_channel"]
+    count -->|ок| put["кеш = (время, число)"]
+    count -->|ошибка Telegram| nul["channels_used null, не кешируется"]
+    reset["создание хранилища, удаление с каналом,<br/>вход в сессию api"] -. "runtime.channels = None" .-> cache
+```
 
 ## Активность чтения и записи (индикаторы)
 

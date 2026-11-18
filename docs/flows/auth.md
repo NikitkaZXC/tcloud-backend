@@ -4,9 +4,9 @@ tcloud работает от пользовательского аккаунта
 
 | Сессия | Файл | Кто использует | Устройство в Telegram |
 |---|---|---|---|
-| `api` | `TELEGRAM_SESSION` | API: каналы, скачивание, удаление, события об удалениях | `api` |
-| `upload` | `TELEGRAM_UPLOAD_SESSION` | `worker-telegram`: отправка файлов | `upload` |
-| `download` | `TELEGRAM_DOWNLOAD_SESSION` | API, отдельный клиент: скачивание файлов (`/files/{id}/download`) | `download` |
+| `api` | `TELEGRAM_SESSION` | API (`runtime.telegram`, получает обновления): каналы, фото хранилищ, удаление сообщений, события об удалениях, Premium и число каналов, папка `TCloud`, чистка старых сессий | `api` |
+| `upload` | `TELEGRAM_UPLOAD_SESSION` | `worker-telegram` (`WorkerRuntime.telegram`): отправка файлов и чтение файлов для архивов | `upload` |
+| `download` | `TELEGRAM_DOWNLOAD_SESSION` | API, отдельный клиент (`runtime.download`): скачивание файлов и превью (`/files/{id}/download`, `/thumb`) | `download` |
 
 В каждую сессию входят отдельно, через API (Swagger `/docs`, раздел **Telegram**). Все эндпоинты только для root (flows/users.md).
 Сессия, которая подтверждала бы вход других устройств, не хранится: такая сессия могла бы подключить к аккаунту
@@ -37,6 +37,42 @@ tcloud работает от пользовательского аккаунта
 (служебный чат «Telegram»), не по SMS. `POST /api/telegram/{session}/sign-in` `{"code": "12345"}` — вход или `step: password`.
 
 **Двухэтапная проверка.** `POST /api/telegram/{session}/password` `{"password": "..."}`.
+
+Состояние входа — `Login` в `AppRuntime.logins` (`src/application/services/auth.py`, `AuthService`), клиент входа —
+`TelegramLogin` (`src/infrastructure/integrations/telegram/login.py`).
+
+```mermaid
+stateDiagram-v2
+    [*] --> starting: POST qr или code (только root)
+    starting --> qr: auth.exportLoginToken
+    starting --> code: auth.sendCode
+    qr --> authorized: QR отсканирован
+    qr --> password: включена 2FA
+    qr --> failed: QR истёк (login_expired) или ошибка
+    code --> authorized: sign-in
+    code --> password: нужен пароль
+    password --> authorized: password, SRP
+    qr --> expired: прошёл expires_at QR
+    code --> expired: прошло TELEGRAM_LOGIN_TTL
+    password --> expired: прошло TELEGRAM_LOGIN_TTL
+    code --> [*]: 5-я неверная попытка, вход сброшен
+    password --> [*]: 5-я неверная попытка, вход сброшен
+    authorized --> [*]: файл сессии заменён
+```
+
+После успешного входа (`AuthService._complete`):
+
+```mermaid
+flowchart TD
+    done["TelegramLogin.finish: login-*.session → файл сессии (os.replace)"] --> which{"какая сессия?"}
+    which -->|api| api["_switch_api: новый runtime.telegram,<br/>сброс кешей Premium и числа каналов"]
+    api --> connect["connect: каналы из TELEGRAM_CHATS,<br/>sync_folder TCloud, MessageDeleted + catch_up"]
+    which -->|download| dl["_switch_download: новый runtime.download"]
+    which -->|upload| up["ничего: worker-telegram откроет файл<br/>на следующей задаче"]
+    connect --> sweep["sweep_quietly: отозвать старые устройства tcloud"]
+    dl --> sweep
+    up --> sweep
+```
 
 Незавершённый вход живёт `TELEGRAM_LOGIN_TTL` (300 с) и только один на сессию: новый `qr`/`code` отменяет прежний.
 Неверный код или пароль можно повторить 4 раза, на пятой ошибке вход сбрасывается. Вход в уже авторизованную

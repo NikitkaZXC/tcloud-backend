@@ -20,6 +20,30 @@
 и имя ключа, без значений). Вход и `/users/me` не ломаются. Очищенные настройки записываются в колонку при следующем
 `PATCH` (`DELETE` пишет `{}`). Входящий `PATCH` остаётся строгим: неизвестный ключ или значение → `422 validation_error`.
 
+```mermaid
+flowchart TD
+    subgraph load["Чтение: на каждый запрос, терпимо"]
+        db[("users.settings JSONB<br/>только заданные ключи")] --> fs["SettingsServiceRead.from_stored<br/>в UserAuthService.actor"]
+        fs -->|"неизвестная группа или ключ,<br/>невалидное значение"| warn["warning в лог: id и ключ,<br/>ключ отброшен"]
+        fs --> actor["Actor.settings:<br/>сохранённое + умолчания схемы"]
+    end
+    subgraph write["PATCH /api/account/settings: строго"]
+        body["тело JSON"] --> strict["SettingsServiceRead, extra=forbid<br/>ошибка → 422 validation_error"]
+        strict --> merge["actor.settings.merged(patch):<br/>по группам, exclude_unset"]
+        merge --> wh["check_webhook(webhook_url)<br/>→ 422 unsafe_url"]
+        wh --> save["users.settings = model_dump(exclude_unset)<br/>отброшенные ключи уходят из колонки"]
+        save --> chg{"root и chat_folder изменился?"}
+        chg -->|да| sync["StorageService.sync_folder"]
+    end
+    reset["DELETE /api/account/settings"] --> zero["users.settings = {}"] --> chg
+    actor --> merge
+    actor --> use["значения по умолчанию:<br/>UploadServiceCreate.with_defaults,<br/>FolderService.create_archive / create_selection_archive"]
+    actor --> me["GET /api/account/settings, GET /api/users/me"]
+```
+
+Код: `src/application/schemas/settings.py` (`SettingsServiceRead`, `merged`, `from_stored`),
+`src/application/services/settings.py` (`SettingsService`), `src/api/routes/settings.py`.
+
 ## Эндпоинты
 
 Любой вошедший пользователь (кука `access` или `X-API-Key`), только свои настройки. Чужие настройки не читает никто,

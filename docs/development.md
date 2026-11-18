@@ -6,7 +6,8 @@ Python 3.14, зависимости — `uv` (`pyproject.toml`, `uv.lock`). Гр
 ```bash
 make install        # uv sync
 make env            # .env из .env.exemple + сгенерированные APP_SECRET_KEY, ROOT_PASSWORD, пароли Postgres, RabbitMQ, Redis и ключи JWT в certs/
-make dev-up         # Postgres, RabbitMQ (панель :15672), Redis на localhost; ClamAV — docker-compose.dev.yml
+make dev-up         # Postgres, RabbitMQ (панель :15672), Redis на localhost
+docker compose -f docker-compose.dev.yml up -d clamav   # ClamAV на :3310 (make dev-up его не поднимает)
 make app            # uvicorn с --reload на 127.0.0.1:8000 (в .env: POSTGRES_HOST, CLAMAV_HOST, RABBITMQ_HOST, REDIS_HOST=127.0.0.1)
 make worker-download  # Celery-воркер очереди uploads.download
 make worker-prepare   # Celery-воркер очереди uploads.prepare

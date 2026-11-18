@@ -112,6 +112,37 @@ RAR не поддерживается: его создаёт только про
 медиа почти не меньше самих файлов.
 
 Как работает (`services/folder.py`, `services/pipeline.py`, `services/archive.py`, `infrastructure/archive.py`):
+
+```mermaid
+sequenceDiagram
+    participant C as Клиент
+    participant A as API (FolderService)
+    participant DB as PostgreSQL
+    participant R as Redis
+    participant Q as RabbitMQ
+    participant T as worker-telegram
+    participant TG as Telegram (сессия upload)
+    C->>A: POST /api/folders/archive или /archive/selection
+    A->>A: настройки archives.*, права, общая папка, дедупликация
+    A->>DB: читаемые файлы (read_scopes), список фиксируется
+    A->>A: сессия upload есть? DiskBudget.check(сумма + самый большой)
+    A->>R: create (stage archiving), activate, join_queue(archives.build)
+    A->>Q: archives.build
+    A-->>C: 202 задача
+    Q->>T: сообщение
+    T->>R: CLAIM
+    T->>DB: файлы по id (пропавшие → archive_files_deleted)
+    loop каждый файл
+        T->>TG: getMessages: нет → archive_file_gone, размер другой → archive_file_changed
+        T->>TG: iter_media (+ decrypt) → часть в tmp
+        T->>T: ArchiveWriter.add в потоке, часть удаляется
+        T->>R: прогресс, activity:{storage}:read раз в секунду
+    end
+    T->>R: zset archives (путь, срок), archive.size и expires_at, status done
+    C->>A: GET /api/tasks/{id}/archive (Range)
+    A-->>C: файл, только автору, 409 archive_not_ready, 410 archive_expired
+```
+
 - до постановки в очередь проверяются права, папка, вход сессии `upload` и место на диске: `DiskBudget` должен
   вместить сумму размеров плюс самый большой файл, иначе `507 insufficient_storage`;
 - собирает `worker-telegram` (очередь `archives.build`, та же сессия Telethon и общая пауза FloodWait, см.
@@ -156,6 +187,49 @@ RAR не поддерживается: его создаёт только про
 - `DELETE /api/files/{uuid}` — сообщение в Telegram и запись в БД.
 - Удалили сообщение руками в Telegram — запись тоже пропадает, см. «Ручные удаления в Telegram» ниже.
 - Для сжатого фото (`send_as=media`) `size`, `width`, `height` — того, что хранит Telegram; `sha256` — всегда от оригинала.
+
+### Как идёт скачивание
+
+Роут — `src/api/routes/file.py` (`download_file`), проверки и тело — `services/file.py` (`open_download`, `_media`,
+`file_body`, `tracked`), расшифровка — `infrastructure/security/encryption.py` (`cipher_span`, `decrypt`), чтение из
+Telegram — `TelegramClient.iter_media` клиентом `runtime.download`.
+
+```mermaid
+sequenceDiagram
+    participant C as Клиент
+    participant A as API (routes/file.py)
+    participant F as FileService
+    participant DB as PostgreSQL
+    participant TG as Telegram (сессия download)
+    participant R as Redis
+    C->>A: GET /api/files/{id}/download, Range bytes=a-b
+    A->>F: open_download
+    F->>DB: files + storages.tg_chat_id
+    F->>F: require READ (403 forbidden)
+    F->>TG: getMessages(chat, message_id)
+    alt сообщения нет
+        F->>DB: DELETE files (запись удаляется)
+        F-->>C: 404 file_not_found
+    else размер в Telegram не равен stored_size(file)
+        F-->>C: 409 file_changed
+    end
+    A->>A: parse_range(a-b, files.size), иначе 0..size-1
+    A-->>C: 200 или 206, Content-Length, Content-Range, Accept-Ranges, no-transform, sandbox
+    loop куски тела
+        alt открытый файл
+            A->>TG: iter_media(смещение вниз до кратного 512 КиБ), лишнее в начале отрезается
+        else зашифрованный
+            A->>A: cipher_span: диапазон блоков шифротекста по 64 КиБ
+            A->>TG: iter_media(диапазон шифротекста)
+            A->>A: decrypt блоков (GCM-тег, номер блока), обрезка до a..b
+        end
+        A->>R: SET activity:{storage}:read EX 5 (не чаще раза в секунду)
+        A-->>C: байты
+    end
+```
+
+Статус и заголовки уходят до первого байта тела: подменённый или обрезанный блок шифротекста обрывает уже начатый
+поток.
 
 ## Поиск
 
@@ -229,7 +303,8 @@ query, списки — повтором параметра (`kind=photo&kind=vi
    `FileService.forget_messages` находит хранилище по `tg_chat_id` и удаляет записи по `(storage_id, tg_message_id)`
    (индекс `UNIQUE(storage_id, tg_message_id)`) одним запросом. Чужие чаты и личные сообщения игнорируются.
    Цена — ноль запросов к Telegram, при миллионе файлов тоже.
-2. **Лениво при скачивании.** `GET /api/files/{uuid}/download` и `/thumb`: сообщения нет → запись удаляется, ответ `404 file_not_found`.
+2. **Лениво при скачивании.** `GET /api/files/{uuid}/download` и `/thumb` открытого файла: сообщения нет → запись
+   удаляется, ответ `404 file_not_found`. `/thumb` зашифрованного файла в Telegram не ходит и запись не трогает.
 
 Безопасно для наших собственных удалений: при `replace` событие о старом сообщении приходит, когда запись уже
 указывает на новое; при `DELETE` записи уже нет. Папки живут только в БД и остаются, даже если все файлы в них удалены.
