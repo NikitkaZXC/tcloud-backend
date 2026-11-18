@@ -25,7 +25,7 @@ async def anonymous(client):
 
 async def test_requests_need_sign_in(anonymous):
     for response in (
-        await anonymous.get("/health"),
+        await anonymous.get("/account"),
         await anonymous.get("/storages"),
         await anonymous.get("/telegram"),
     ):
