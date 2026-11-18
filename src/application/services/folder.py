@@ -280,6 +280,7 @@ class FolderService:
         if not await self._repo.exists(storage_id, path):
             raise FolderNotFoundError("folder not found")
         files = await self._files.get_messages_below(storage_id, path)
+        await self._runtime.store.mark_activity(storage_id, "write")
         await self._runtime.telegram.delete(
             storage.tg_chat_id, [message_id for _, message_id in files]
         )

@@ -402,3 +402,35 @@ async def test_chat_folder_follows_root_settings_only(
     )
     assert response.status_code == 200
     assert telegram.folders == {"TCloud": [storage["telegram"]["chat_id"]]}
+
+
+async def test_activity_shows_reads_and_writes(client, storage, make_user, redis):
+    other = (await client.post("/storages", json={"name": "b"})).json()
+    idle = {"read": False, "write": False}
+    activity = (await client.get("/storages/activity")).json()
+    assert {item["storage_id"]: {**item} for item in activity} == {
+        storage["id"]: {"storage_id": storage["id"], **idle},
+        other["id"]: {"storage_id": other["id"], **idle},
+    }
+    file = (await upload(client, path(storage, "a.pdf"), PDF))["file"]
+
+    async def flags() -> dict:
+        items = (await client.get("/storages/activity")).json()
+        return {item["storage_id"]: (item["read"], item["write"]) for item in items}
+
+    async def calm() -> None:
+        keys = [key async for key in redis.scan_iter("*:activity:*")]
+        await redis.delete(*keys)
+
+    assert (await flags()) == {
+        storage["id"]: (False, True),
+        other["id"]: (False, False),
+    }
+    await calm()
+    assert (await client.get(f"/files/{file['uuid']}/download")).status_code == 200
+    assert (await flags())[storage["id"]] == (True, False)
+    await calm()
+    assert (await client.delete(f"/files/{file['uuid']}")).status_code == 204
+    assert (await flags())[storage["id"]] == (False, True)
+    stranger = await make_user("stranger")
+    assert (await stranger.get("/storages/activity")).json() == []

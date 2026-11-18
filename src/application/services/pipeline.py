@@ -98,6 +98,8 @@ class UploadPipeline:
             UploadQueue.ARCHIVE: self._archive,
         }[queue]
         beat = self._runtime.spawn(self._beat(task_id))
+        kind = {UploadQueue.TELEGRAM: "write", UploadQueue.ARCHIVE: "read"}.get(queue)
+        activity = kind and self._runtime.spawn(self._activity(task["path"], kind))
         try:
             await step(task)
         except BaseException as error:
@@ -108,11 +110,19 @@ class UploadPipeline:
                 raise
         finally:
             beat.cancel()
+            if activity:
+                activity.cancel()
 
     async def _beat(self, task_id: UUID) -> None:
         while True:
             await self._store.touch(task_id)
             await asyncio.sleep(settings.upload.HEARTBEAT_INTERVAL)
+
+    async def _activity(self, path: str, kind: str) -> None:
+        storage_id = path.split("/")[1]
+        while True:
+            await self._store.mark_activity(storage_id, kind)
+            await asyncio.sleep(1)
 
     async def _checkpoint(self, task: dict) -> None:
         current = await self._store.get(task["id"]) or {}

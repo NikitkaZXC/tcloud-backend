@@ -14,6 +14,7 @@ from src.application.exception import (
 from src.application.schemas import (
     Actor,
     SettingsServiceRead,
+    StorageActivityServiceRead,
     StorageServiceCreate,
     StorageServiceRead,
     StorageServiceUpdate,
@@ -83,6 +84,18 @@ class StorageService:
             "kept" if keep_channel else "deleted",
         )
         await self.sync_folder()
+
+    async def activity(self, actor: Actor) -> list[StorageActivityServiceRead]:
+        storage_ids = [
+            storage.id
+            for storage in await self._repo.get_all()
+            if can_see_storage(actor, storage.id)
+        ]
+        flags = await self._runtime.store.activity(storage_ids)
+        return [
+            StorageActivityServiceRead(storage_id=storage_id, **flags[storage_id])
+            for storage_id in storage_ids
+        ]
 
     async def get_all(self, actor: Actor) -> list[StorageServiceRead]:
         storages = [

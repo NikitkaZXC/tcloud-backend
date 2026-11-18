@@ -32,6 +32,7 @@ from .settings import (
     UploadSettingsServiceRead,
 )
 from .storage import (
+    StorageActivityServiceRead,
     StorageServiceCreate,
     StorageServiceRead,
     StorageServiceUpdate,
@@ -93,6 +94,7 @@ __all__ = [
     "HealthServiceRead",
     "StorageServiceCreate",
     "StorageServiceRead",
+    "StorageActivityServiceRead",
     "StorageServiceUpdate",
     "TaskCountsServiceRead",
     "TaskListServiceRead",

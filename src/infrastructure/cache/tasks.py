@@ -9,6 +9,8 @@ from src.config import settings
 from src.infrastructure.enums import UploadQueue
 
 QUEUES = [queue.value for queue in UploadQueue]
+ACTIVITY_TTL = 5
+ACTIVITY_KINDS = ("read", "write")
 
 UNLOCK = """
 if redis.call('GET', KEYS[1]) == ARGV[1] then
@@ -260,6 +262,25 @@ class TaskStore:
             task_id: rank + 1
             for (task_id, _), rank in zip(waiting, ranks)
             if rank is not None
+        }
+
+    async def mark_activity(self, storage_id: UUID | str, kind: str) -> None:
+        await self._redis.set(
+            self._key("activity", storage_id, kind), 1, ex=ACTIVITY_TTL
+        )
+
+    async def activity(self, storage_ids: list[UUID]) -> dict[UUID, dict[str, bool]]:
+        if not storage_ids:
+            return {}
+        keys = [
+            self._key("activity", storage_id, kind)
+            for storage_id in storage_ids
+            for kind in ACTIVITY_KINDS
+        ]
+        flags = iter(await self._redis.mget(keys))
+        return {
+            storage_id: {kind: next(flags) is not None for kind in ACTIVITY_KINDS}
+            for storage_id in storage_ids
         }
 
     async def keep_archive(self, path: str, until: float) -> None:

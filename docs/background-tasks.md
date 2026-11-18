@@ -133,6 +133,7 @@ RabbitMQ позицию не сообщает, поэтому её считае�
 | `tcloud:disk` | sorted set задач, чей файл сейчас в `tmp` (`UPLOAD_MAX_FILES_ON_DISK`), score — время захвата | — |
 | `tcloud:waiting:{queue}` | sorted set задач, ждущих в очереди, для `queue_position` | — |
 | `tcloud:worker:{queue}:{host}` | heartbeat воркера | 3 × `UPLOAD_HEARTBEAT_INTERVAL` |
+| `tcloud:activity:{storage_id}:{read\|write}` | метка «хранилище сейчас читают / пишут» для `GET /api/storages/activity` (flows/storages.md) | 5 с |
 
 Через 7 дней задача пропадает из Redis, и `GET /api/tasks/{id}` отвечает `404`. Сам файл остаётся в `files`.
 

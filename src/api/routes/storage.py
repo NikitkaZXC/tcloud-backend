@@ -3,7 +3,12 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Request, Response, status
 
 from src.api.dependencies import get_actor
-from src.api.schemas import StorageCreate, StorageResponse, StorageUpdate
+from src.api.schemas import (
+    StorageActivityResponse,
+    StorageCreate,
+    StorageResponse,
+    StorageUpdate,
+)
 from src.application.factory import get_service_storage
 from src.application.schemas import Actor, StorageServiceCreate, StorageServiceUpdate
 from src.application.services import StorageService
@@ -38,6 +43,19 @@ async def get_storages(
     storage_service: StorageService = Depends(get_service_storage),
 ) -> list[StorageResponse]:
     return await storage_service.get_all(actor)
+
+
+@router.get(
+    path="/activity",
+    name="storages:activity",
+    summary="Which storages are being read or written now, for the read/write LEDs",
+    status_code=status.HTTP_200_OK,
+)
+async def get_activity(
+    actor: Actor = Depends(get_actor),
+    storage_service: StorageService = Depends(get_service_storage),
+) -> list[StorageActivityResponse]:
+    return await storage_service.activity(actor)
 
 
 @router.get(

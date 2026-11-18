@@ -51,3 +51,9 @@ class StorageServiceCreate(BaseModel):
 class StorageServiceUpdate(BaseModel):
     name: str | None = None
     description: str | None = None
+
+
+class StorageActivityServiceRead(BaseModel):
+    storage_id: UUID
+    read: bool
+    write: bool

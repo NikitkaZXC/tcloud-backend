@@ -22,7 +22,12 @@ from .folder import (
     SelectionArchiveCreate,
 )
 from .settings import SettingsResponse, SettingsUpdate
-from .storage import StorageCreate, StorageResponse, StorageUpdate
+from .storage import (
+    StorageActivityResponse,
+    StorageCreate,
+    StorageResponse,
+    StorageUpdate,
+)
 from .system import AccountResponse, HealthResponse, PublicHealthResponse
 from .upload import (
     BATCH_MAX,
@@ -77,6 +82,7 @@ __all__ = [
     "PriorityUpdate",
     "QrResponse",
     "SessionStateResponse",
+    "StorageActivityResponse",
     "StorageCreate",
     "StorageResponse",
     "StorageUpdate",

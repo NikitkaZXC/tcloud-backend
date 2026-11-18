@@ -1,6 +1,6 @@
 from pydantic import BaseModel
 
-from src.application.schemas import StorageServiceRead
+from src.application.schemas import StorageActivityServiceRead, StorageServiceRead
 from src.utilities.formatters import StorageDescription, StorageName
 
 
@@ -15,4 +15,8 @@ class StorageUpdate(BaseModel):
 
 
 class StorageResponse(StorageServiceRead):
+    pass
+
+
+class StorageActivityResponse(StorageActivityServiceRead):
     pass
