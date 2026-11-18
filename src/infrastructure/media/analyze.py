@@ -1,3 +1,4 @@
+import io
 import json
 import subprocess
 import warnings
@@ -7,7 +8,7 @@ from pathlib import Path
 
 import filetype
 import pillow_heif
-from PIL import Image
+from PIL import Image, ImageOps
 
 from src.infrastructure.enums import MediaKind
 from src.infrastructure.limits import (
@@ -80,6 +81,7 @@ EXECUTABLE_MAGIC = (
     b"dex\n",
 )
 DOCUMENT_MIME = "application/octet-stream"
+PREVIEW_MAX = 20 * 1024
 SNIFF_BYTES = 8192
 TIMEOUT = 120
 UNSUPPORTED = "only photo, video, audio and GIF files are accepted"
@@ -311,3 +313,15 @@ def thumbnail(source: Path, target: Path, duration: float | None) -> bool:
         if target.stat().st_size <= THUMB_MAX:
             return True
     return False
+
+
+def preview(source: Path) -> bytes:
+    with Image.open(source) as image:
+        image.thumbnail((THUMB_SIDE, THUMB_SIDE))
+        frame = ImageOps.exif_transpose(image).convert("RGB")
+    for quality in (80, 60, 40, 20):
+        buffer = io.BytesIO()
+        frame.save(buffer, "JPEG", quality=quality)
+        if buffer.tell() <= PREVIEW_MAX:
+            break
+    return buffer.getvalue()

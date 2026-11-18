@@ -20,7 +20,7 @@ class FileChangedError(TCloudError):
 
 
 class ThumbnailNotFoundError(TCloudError):
-    """Raised when Telegram has no thumbnail for the file or the file is encrypted."""
+    """Raised when neither Telegram nor the database has a thumbnail for the file."""
 
     code = "thumbnail_not_found"
 

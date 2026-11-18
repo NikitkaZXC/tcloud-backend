@@ -41,7 +41,7 @@ from src.infrastructure.database.repositories import (
 )
 from src.infrastructure.enums import Permission
 from src.infrastructure.integrations import TelegramClient, TelegramMessageGoneError
-from src.infrastructure.security import cipher_size, cipher_span, decrypt
+from src.infrastructure.security import cipher_size, cipher_span, decrypt, unseal
 from src.utilities.errors import TCloudError
 from src.utilities.parsers import join_path, split_file, split_folder
 
@@ -256,9 +256,14 @@ class FileService:
         self, actor: Actor, file_id: UUID, if_none_match: str | None
     ) -> tuple[str, bytes | None]:
         file, chat_id = await self.get_db(actor, file_id, Permission.READ)
-        if file.encryption_header:
-            raise ThumbnailNotFoundError("encrypted files have no thumbnail")
         tag = f'"{file.tg_message_id}"'
+        if file.encryption_header:
+            sealed = await self._repo.get_thumbnail(file.id)
+            if not sealed:
+                raise ThumbnailNotFoundError("this encrypted file has no thumbnail")
+            if if_none_match == tag:
+                return tag, None
+            return tag, unseal(file.encryption_header, sealed)
         if if_none_match == tag:
             return tag, None
         data = await self._runtime.download.thumbnail(await self._media(file, chat_id))

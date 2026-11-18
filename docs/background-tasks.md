@@ -7,7 +7,7 @@
                                                      │
 API ──(файл в общий том /data/tmp)──► uploads.prepare ◄┘ ─► worker-prepare
                                                      │ magic bytes, Pillow/ffprobe, sha256, ClamAV,
-                                                     │ JPEG для фото, превью видео
+                                                     │ JPEG для фото, превью видео, зашифрованное превью
                                       uploads.telegram ◄┘
                                              │
                                              ▼

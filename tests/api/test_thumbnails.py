@@ -1,9 +1,17 @@
+import base64
+import io
+import os
+
 import pytest
 from httpx import ASGITransport, AsyncClient
+from PIL import Image
+from pydantic import SecretStr
 
 import main
+from src.application.services import pipeline
+from src.config import settings
 from tests.api.conftest import path, upload
-from tests.factories import PDF, make_image
+from tests.factories import PDF, make_image, make_video
 
 
 def code(response) -> str:
@@ -80,14 +88,71 @@ async def test_document_with_telegram_thumbnail(client, telegram, storage):
     assert response.status_code == 200 and response.content == b"\xff\xd8jpeg"
 
 
-async def test_encrypted_file_has_no_thumbnail(client, telegram, storage):
+async def test_encrypted_photo_has_own_encrypted_thumbnail(
+    client, telegram, storage, monkeypatch
+):
     file = (
-        await upload(client, path(storage, "s.png"), make_image("PNG"), encrypt="true")
+        await upload(
+            client,
+            path(storage, "s.png"),
+            make_image("PNG", (1280, 960)),
+            encrypt="true",
+        )
     )["file"]
     assert file["encrypted"] is True
+    assert message(telegram, file)["thumb"] is None
     message(telegram, file)["thumb"] = b"leak"
     response = await client.get(f"/files/{file['uuid']}/thumb")
+    assert response.status_code == 200 and response.content != b"leak"
+    assert response.headers["content-type"] == "image/jpeg"
+    assert response.headers["cache-control"] == "private, max-age=86400"
+    assert response.headers["etag"] == f'"{file["telegram"]["message_id"]}"'
+    assert len(response.content) <= 20 * 1024
+    with Image.open(io.BytesIO(response.content)) as image:
+        assert image.format == "JPEG" and image.size == (320, 240)
+    again = await client.get(
+        f"/files/{file['uuid']}/thumb",
+        headers={"If-None-Match": response.headers["etag"]},
+    )
+    assert again.status_code == 304
+    other = SecretStr(base64.b64encode(os.urandom(32)).decode())
+    monkeypatch.setattr(settings.app, "ENCRYPTION_KEY", other)
+    response = await client.get(f"/files/{file['uuid']}/thumb")
+    assert response.status_code == 409 and code(response) == "decryption_failed"
+
+
+async def test_encrypted_document_has_no_thumbnail(client, storage):
+    file = (await upload(client, path(storage, "doc.pdf"), PDF, encrypt="true"))["file"]
+    response = await client.get(f"/files/{file['uuid']}/thumb")
     assert response.status_code == 404 and code(response) == "thumbnail_not_found"
+
+
+async def test_failed_preview_keeps_upload(client, storage, monkeypatch):
+    def broken(source):
+        raise OSError("disk on fire")
+
+    monkeypatch.setattr(pipeline, "preview", broken)
+    task = await upload(client, path(storage, "s.jpg"), make_image(), encrypt="true")
+    assert task["status"] == "done" and task["file"]["encrypted"]
+    response = await client.get(f"/files/{task['file']['uuid']}/thumb")
+    assert response.status_code == 404 and code(response) == "thumbnail_not_found"
+
+
+@pytest.mark.ffmpeg
+async def test_encrypted_video_has_own_thumbnail(client, telegram, storage):
+    file = (
+        await upload(
+            client,
+            path(storage, "clip.mp4"),
+            make_video("mp4", 640, 360),
+            encrypt="true",
+        )
+    )["file"]
+    assert message(telegram, file)["thumb"] is None
+    response = await client.get(f"/files/{file['uuid']}/thumb")
+    assert response.status_code == 200
+    with Image.open(io.BytesIO(response.content)) as image:
+        assert image.size == (320, 180)
 
 
 async def test_thumbnail_of_missing_file(client):

@@ -57,6 +57,10 @@ class FileRepository:
             for row in (await self._session.execute(statement)).all()
         }
 
+    async def get_thumbnail(self, file_id: UUID) -> bytes | None:
+        statement = select(FileDB.thumbnail).where(FileDB.id == file_id)
+        return await self._session.scalar(statement)
+
     async def get_by_path(
         self, storage_id: UUID, folder: str, name: str
     ) -> FileDB | None:

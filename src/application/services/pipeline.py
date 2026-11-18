@@ -40,13 +40,21 @@ from src.infrastructure.integrations import (
     UnscannableFileError,
 )
 from src.infrastructure.integrations.web import download
-from src.infrastructure.media import Media, photo_fits, probe, thumbnail, to_jpeg
-from src.infrastructure.security import cipher_size, encrypt_file
+from src.infrastructure.media import (
+    Media,
+    photo_fits,
+    preview,
+    probe,
+    thumbnail,
+    to_jpeg,
+)
+from src.infrastructure.security import cipher_size, encrypt_file, seal
 from src.utilities.errors import TCloudError
 from src.utilities.parsers import split_file
 
 TELEGRAM_PHOTO_SUFFIXES = {"image/jpeg": ".jpg", "image/png": ".png"}
 DISK_SLOT_POLL = 1.0
+PREVIEW_KINDS = {MediaKind.PHOTO, MediaKind.ANIMATION, MediaKind.VIDEO}
 
 
 def describe(error: BaseException) -> dict:
@@ -185,7 +193,26 @@ class UploadPipeline:
             header = await asyncio.to_thread(encrypt_file, source, target)
         finally:
             reservation.release()
-        return {**prepared, "encryption_header": base64.b64encode(header).decode()}
+        return {
+            **prepared,
+            "encryption_header": base64.b64encode(header).decode(),
+            "thumbnail": await self._preview(task, prepared, source, header),
+        }
+
+    async def _preview(
+        self, task: dict, prepared: dict, source: Path, header: bytes
+    ) -> str | None:
+        kind = prepared["media"]["kind"]
+        if kind == MediaKind.VIDEO:
+            source = prepared["thumb"] and Path(prepared["thumb"])
+        if kind not in PREVIEW_KINDS or not source:
+            return None
+        try:
+            data = await asyncio.to_thread(preview, source)
+        except Exception as error:
+            logger.warning("Task {}: no preview: {!r}", task["id"], error)
+            return None
+        return base64.b64encode(seal(header, data)).decode()
 
     async def _retry(
         self,
@@ -257,7 +284,7 @@ class UploadPipeline:
             warnings.append(
                 f"{media.mime} may be shown as a file instead of a player in Telegram"
             )
-        if media.kind == MediaKind.VIDEO and not task["params"].get("encrypt"):
+        if media.kind == MediaKind.VIDEO:
             thumb = temp_path("thumb.jpg")
             prepared["thumb"] = str(thumb)
             await self._store.update(task["id"], prepared=prepared)
@@ -339,7 +366,11 @@ class UploadPipeline:
                 caption=caption_token(file_id),
                 media=media,
                 as_file=as_file,
-                thumb=Path(prepared["thumb"]) if prepared["thumb"] else None,
+                thumb=(
+                    Path(prepared["thumb"])
+                    if prepared["thumb"] and not header
+                    else None
+                ),
                 progress=lambda done, total: self.progress(task["id"], done, total),
             )
             await self._store.update(
@@ -361,6 +392,11 @@ class UploadPipeline:
             sha256=prepared["sha256"],
             tg_message_id=sent.message_id,
             encryption_header=base64.b64decode(header) if header else None,
+            thumbnail=(
+                base64.b64decode(prepared["thumbnail"])
+                if prepared.get("thumbnail")
+                else None
+            ),
         )
         async with self._runtime.session_factory() as session:
             await FolderRepository(session).ensure(storage_id, folder)

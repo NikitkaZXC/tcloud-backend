@@ -19,6 +19,7 @@ NONCE = 12
 PREFIX = 7
 WRAPPED = NONCE + KEY + TAG
 HEADER = len(MAGIC) + WRAPPED + PREFIX
+SEALED = b"TCE1-thumbnail"
 
 
 def _kek() -> AESGCM:
@@ -81,6 +82,20 @@ def _open(header: bytes) -> tuple[AESGCM, bytes]:
     except InvalidTag as error:
         raise DecryptionError("the server key does not open this file") from error
     return AESGCM(dek), header[-PREFIX:]
+
+
+def seal(header: bytes, data: bytes) -> bytes:
+    cipher, _ = _open(header)
+    nonce = os.urandom(NONCE)
+    return nonce + cipher.encrypt(nonce, data, SEALED)
+
+
+def unseal(header: bytes, data: bytes) -> bytes:
+    cipher, _ = _open(header)
+    try:
+        return cipher.decrypt(data[:NONCE], data[NONCE:], SEALED)
+    except InvalidTag as error:
+        raise DecryptionError("the encrypted thumbnail is damaged") from error
 
 
 def cipher_span(plain_size: int, start: int, end: int) -> tuple[int, int]:

@@ -6,6 +6,8 @@ from .encryption import (
     decrypt,
     encrypt_file,
     plain_limit,
+    seal,
+    unseal,
 )
 from .exception import (
     DecryptionError,
@@ -32,6 +34,8 @@ __all__ = [
     "decrypt",
     "encrypt_file",
     "plain_limit",
+    "seal",
+    "unseal",
     "DUMMY_HASH",
     "JWTPayload",
     "TokenExpiredError",

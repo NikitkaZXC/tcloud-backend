@@ -140,7 +140,7 @@ async def download_file(
 @router.get(
     path="/{file_id}/thumb",
     name="files:thumb",
-    summary="Small JPEG preview made by Telegram (none for encrypted files)",
+    summary="Small JPEG preview: Telegram's for open files, our own encrypted one for encrypted files",
     status_code=status.HTTP_200_OK,
     response_class=Response,
     responses={200: {"content": {"image/jpeg": {}}}, 304: {}},

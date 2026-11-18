@@ -69,3 +69,4 @@ class FileDB(PrimaryKeyMixin, CreatedAtMixin, UpdatedAtMixin, Base):
     sha256: Mapped[str] = mapped_column(Text, nullable=False)
     tg_message_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     encryption_header: Mapped[bytes | None] = mapped_column(LargeBinary)
+    thumbnail: Mapped[bytes | None] = mapped_column(LargeBinary, deferred=True)

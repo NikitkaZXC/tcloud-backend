@@ -1,3 +1,4 @@
+import io
 import subprocess
 from pathlib import Path
 
@@ -13,6 +14,7 @@ from src.infrastructure.media import (
     Media,
     check_name,
     photo_fits,
+    preview,
     probe,
     thumbnail,
     to_jpeg,
@@ -223,6 +225,21 @@ def test_thumbnail_limits(tmp_path):
     assert target.stat().st_size <= limits.THUMB_MAX
     with Image.open(target) as image:
         assert image.size == (320, 180)
+
+
+@pytest.mark.parametrize(
+    "data,size",
+    [
+        (make_image("PNG", (4000, 1000)), (320, 80)),
+        (make_image("WEBP", (100, 50)), (100, 50)),
+        (make_gif_animated(), (32, 32)),
+    ],
+)
+def test_preview(tmp_path, data, size):
+    result = preview(_file(tmp_path, data, "p"))
+    assert len(result) <= 20 * 1024
+    with Image.open(io.BytesIO(result)) as image:
+        assert image.format == "JPEG" and image.size == size
 
 
 def test_to_jpeg(tmp_path):
