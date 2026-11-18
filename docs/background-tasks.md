@@ -313,7 +313,11 @@ RabbitMQ позицию не сообщает, поэтому её считае�
 ## Наблюдение
 
 - `GET /api/health`: `queue` — брокер отвечает; `workers` — для каждой очереди, есть ли живой воркер (heartbeat в Redis).
-  `ok` — всё вместе с БД, Telegram, ClamAV и Redis.
+  `ok` — всё вместе с БД, Telegram, ClamAV и Redis. `details` — по тем же ключам (`db`, `telegram`, `telegram_upload`,
+  `telegram_download`, `antivirus`, `redis`, `queue` и имена очередей): `latency_ms` — сколько шла сама проверка
+  (замер вокруг уже идущих `SELECT 1`, ping Redis, проверки брокера, ping ClamAV, проверки клиентов Telegram),
+  `last_seen_s` — секунд с последнего heartbeat самого свежего воркера очереди; где неприменимо — `null`. Без входа
+  ответ по-прежнему только `{status}`.
 - Flower — `http://127.0.0.1:5555`, логин и пароль `FLOWER_USER` / `FLOWER_PASSWORD`: воркеры, задачи, очереди.
 
 ## Вебхуки

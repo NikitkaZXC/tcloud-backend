@@ -1,4 +1,5 @@
 import asyncio
+import time
 import uuid
 
 from httpx import ASGITransport, AsyncClient
@@ -21,7 +22,9 @@ async def healthy(client) -> dict:
 
 
 async def test_health(client, scanner, redis):
-    assert await healthy(client) == {
+    health = await healthy(client)
+    details = health.pop("details")
+    assert health == {
         "ok": True,
         "db": True,
         "telegram": True,
@@ -37,17 +40,32 @@ async def test_health(client, scanner, redis):
             "archives.build": True,
         },
     }
+    probes = ["db", "telegram", "telegram_upload", "telegram_download"]
+    probes += ["antivirus", "redis", "queue"]
+    queues = ["uploads.download", "uploads.prepare", "uploads.telegram"]
+    queues += ["archives.build"]
+    assert set(details) == {*probes, *queues}
+    for name in probes:
+        assert details[name]["latency_ms"] >= 0
+        assert details[name]["last_seen_s"] is None
+    for name in queues:
+        assert details[name]["latency_ms"] is None
+        assert (
+            0 <= details[name]["last_seen_s"] < 3 * settings.upload.HEARTBEAT_INTERVAL
+        )
     scanner.available = False
     assert (await client.get("/health")).json()["ok"] is False
 
 
 async def test_health_sees_dead_worker(client, monkeypatch):
-    async def workers() -> set[str]:
-        return {"uploads.download", "uploads.prepare"}
+    async def workers() -> dict[str, float]:
+        return {"uploads.download": time.time() - 2, "uploads.prepare": time.time()}
 
     monkeypatch.setattr(main.app.state.runtime.store, "workers", workers)
     health = (await client.get("/health")).json()
     assert health["ok"] is False and health["workers"]["uploads.telegram"] is False
+    assert health["details"]["uploads.telegram"]["last_seen_s"] is None
+    assert 2 <= health["details"]["uploads.download"]["last_seen_s"] < 3
 
 
 async def test_public_health_without_sign_in(client, scanner):

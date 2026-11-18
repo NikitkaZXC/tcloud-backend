@@ -38,7 +38,7 @@ from .storage import (
     StorageServiceUpdate,
     TelegramStorageServiceRead,
 )
-from .system import AccountServiceRead, HealthServiceRead
+from .system import AccountServiceRead, HealthDetailServiceRead, HealthServiceRead
 from .task import (
     SKIPPED,
     BatchItemServiceRead,
@@ -91,6 +91,7 @@ __all__ = [
     "FolderListingServiceRead",
     "FolderServiceRead",
     "FolderSizeServiceRead",
+    "HealthDetailServiceRead",
     "HealthServiceRead",
     "StorageServiceCreate",
     "StorageServiceRead",

@@ -1,4 +1,5 @@
 import threading
+import time
 
 from loguru import logger
 
@@ -28,7 +29,7 @@ class Heartbeat:
                 ttl = max(1, int(settings.upload.HEARTBEAT_INTERVAL * 3))
                 try:
                     for key in keys:
-                        redis.set(key, 1, ex=ttl)
+                        redis.set(key, time.time(), ex=ttl)
                 except Exception as error:
                     logger.warning("Worker heartbeat failed: {!r}", error)
                 self._stop.wait(settings.upload.HEARTBEAT_INTERVAL)

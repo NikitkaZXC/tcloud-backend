@@ -320,9 +320,15 @@ class TaskStore:
     async def active_ids(self) -> list[str]:
         return await self._redis.zrange(self._key("active"), 0, -1)
 
-    async def workers(self) -> set[str]:
+    async def workers(self) -> dict[str, float]:
         keys = [key async for key in self._redis.scan_iter(self._key("worker", "*"))]
-        return {key.rsplit(":", 2)[1] for key in keys}
+        beats: dict[str, float] = {}
+        for key, value in zip(keys, await self._redis.mget(keys) if keys else []):
+            if value is None:
+                continue
+            queue = key.rsplit(":", 2)[1]
+            beats[queue] = max(beats.get(queue, 0.0), float(value))
+        return beats
 
     async def count_active(self) -> int:
         key = self._key("active")

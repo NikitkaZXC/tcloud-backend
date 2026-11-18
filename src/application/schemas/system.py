@@ -9,6 +9,11 @@ class AccountServiceRead(BaseModel):
     channels_limit: int | None
 
 
+class HealthDetailServiceRead(BaseModel):
+    latency_ms: float | None = None
+    last_seen_s: float | None = None
+
+
 class HealthServiceRead(BaseModel):
     ok: bool
     db: bool
@@ -19,3 +24,4 @@ class HealthServiceRead(BaseModel):
     redis: bool
     queue: bool
     workers: dict[str, bool]
+    details: dict[str, HealthDetailServiceRead]

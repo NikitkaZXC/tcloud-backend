@@ -1,7 +1,11 @@
+import inspect
+import time
+from collections.abc import Awaitable, Callable
+
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.application.schemas import HealthServiceRead
+from src.application.schemas import HealthDetailServiceRead, HealthServiceRead
 from src.infrastructure.background import AppRuntime, broker_alive
 from src.infrastructure.enums import TelegramSession, UploadQueue
 from src.infrastructure.integrations import session_exists
@@ -13,23 +17,44 @@ class HealthService:
         self._runtime = runtime
 
     async def check(self) -> HealthServiceRead:
-        try:
-            await self._session.execute(text("SELECT 1"))
-            db = True
-        except Exception:
-            db = False
-        telegram = (
-            self._runtime.telegram.connected() and self._runtime.telegram.authorized
+        details: dict[str, HealthDetailServiceRead] = {}
+
+        async def probe(name: str, check: Callable[[], bool | Awaitable[bool]]) -> bool:
+            started = time.perf_counter()
+            result = check()
+            if inspect.isawaitable(result):
+                result = await result
+            details[name] = HealthDetailServiceRead(
+                latency_ms=round((time.perf_counter() - started) * 1000, 3)
+            )
+            return result
+
+        db = await probe("db", self._db)
+        telegram = await probe(
+            "telegram",
+            lambda: self._runtime.telegram.connected()
+            and self._runtime.telegram.authorized,
         )
-        telegram_upload = session_exists(TelegramSession.UPLOAD)
-        telegram_download = (
-            self._runtime.download.connected() and self._runtime.download.authorized
+        telegram_upload = await probe(
+            "telegram_upload", lambda: session_exists(TelegramSession.UPLOAD)
         )
-        antivirus = await self._runtime.scanner.ping()
-        redis = await self._runtime.store.ping()
-        queue = await broker_alive()
-        alive = await self._runtime.store.workers() if redis else set()
-        workers = {item.value: item.value in alive for item in UploadQueue}
+        telegram_download = await probe(
+            "telegram_download",
+            lambda: self._runtime.download.connected()
+            and self._runtime.download.authorized,
+        )
+        antivirus = await probe("antivirus", self._runtime.scanner.ping)
+        redis = await probe("redis", self._runtime.store.ping)
+        queue = await probe("queue", broker_alive)
+        beats = await self._runtime.store.workers() if redis else {}
+        now = time.time()
+        workers = {item.value: item.value in beats for item in UploadQueue}
+        for name in workers:
+            details[name] = HealthDetailServiceRead(
+                last_seen_s=(
+                    round(max(0.0, now - beats[name]), 3) if name in beats else None
+                )
+            )
         return HealthServiceRead(
             ok=db
             and telegram
@@ -47,4 +72,12 @@ class HealthService:
             redis=redis,
             queue=queue,
             workers=workers,
+            details=details,
         )
+
+    async def _db(self) -> bool:
+        try:
+            await self._session.execute(text("SELECT 1"))
+            return True
+        except Exception:
+            return False
