@@ -5,7 +5,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Header, Query, status
 from fastapi.responses import Response, StreamingResponse
 
-from src.api.dependencies import get_actor, get_root
+from src.api.dependencies import get_actor, get_root, rate_limit_by_user
 from src.api.schemas import (
     ActivityResponse,
     FileResponse,
@@ -17,6 +17,7 @@ from src.application.factory import get_runtime, get_service_file
 from src.application.schemas import Actor, FileSearchServiceCreate
 from src.application.services import FileService
 from src.application.services.file import file_body, tracked
+from src.config import settings
 from src.infrastructure.background import AppRuntime
 from src.infrastructure.enums import MediaKind
 from src.utilities.parsers import parse_range
@@ -24,6 +25,13 @@ from src.utilities.parsers import parse_range
 THUMB_MAX_AGE = 24 * 3600
 
 router = APIRouter(prefix="/files", tags=["Files"])
+stream_router = APIRouter(
+    prefix="/files",
+    tags=["Files"],
+    dependencies=[
+        Depends(rate_limit_by_user("file_read", settings.rate_limit.FILE_READ_USER))
+    ],
+)
 
 
 @router.get(
@@ -99,7 +107,7 @@ async def get_file(
     return await file_service.get(actor, file_id)
 
 
-@router.get(
+@stream_router.get(
     path="/{file_id}/download",
     name="files:download",
     summary="Stream the file from Telegram (Range supported)",
@@ -143,7 +151,7 @@ async def download_file(
     )
 
 
-@router.get(
+@stream_router.get(
     path="/{file_id}/thumb",
     name="files:thumb",
     summary="Small JPEG preview: Telegram's for open files, our own encrypted one for encrypted files",
@@ -170,6 +178,13 @@ async def get_thumbnail(
 
 @router.post(
     path="/previews/backfill",
+    dependencies=[
+        Depends(
+            rate_limit_by_user(
+                "previews_backfill", settings.rate_limit.PREVIEWS_BACKFILL_USER
+            )
+        )
+    ],
     name="files:previews-backfill",
     summary="Root: queue a background job that builds missing previews of encrypted photos, GIFs and videos",
     status_code=status.HTTP_202_ACCEPTED,

@@ -21,8 +21,9 @@ Usage = namedtuple("Usage", "total used free")
 
 
 async def test_hundred_parallel_uploads_respect_telegram_limit(
-    client, telegram, storage
+    client, telegram, storage, monkeypatch
 ):
+    monkeypatch.setattr(settings.rate_limit, "ENABLED", False)
     telegram.delay = 0.02
     data = make_image()
     ids = await asyncio.gather(

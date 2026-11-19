@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, Query, status
 
-from src.api.dependencies import get_actor
+from src.api.dependencies import get_actor, rate_limit_by_user
 from src.api.schemas import (
     FolderCreate,
     FolderDeleteResponse,
@@ -12,6 +12,7 @@ from src.api.schemas import (
 from src.application.factory import get_service_folder
 from src.application.schemas import Actor
 from src.application.services import FolderService
+from src.config import settings
 from src.infrastructure.enums import ArchiveFormat, TaskPriority
 
 router = APIRouter(prefix="/folders", tags=["Folders"])
@@ -47,6 +48,9 @@ async def get_folder(
 
 @router.post(
     path="/archive",
+    dependencies=[
+        Depends(rate_limit_by_user("archive", settings.rate_limit.ARCHIVE_USER))
+    ],
     name="folders:archive",
     summary="Build an archive of the folder with everything readable inside in the background",
     status_code=status.HTTP_202_ACCEPTED,
@@ -63,6 +67,9 @@ async def create_archive(
 
 @router.post(
     path="/archive/selection",
+    dependencies=[
+        Depends(rate_limit_by_user("archive", settings.rate_limit.ARCHIVE_USER))
+    ],
     name="folders:archive-selection",
     summary="Build one archive of selected files and folders of one storage in the background",
     status_code=status.HTTP_202_ACCEPTED,

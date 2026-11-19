@@ -15,7 +15,7 @@ from src.application.services import AuthService, TaskSweeper
 from src.config import settings
 from src.infrastructure.background import AppRuntime
 from src.infrastructure.cache import (
-    RateLimiter,
+    RateLimitStore,
     TaskStore,
     TokenBlacklist,
     create_redis,
@@ -49,7 +49,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         scanner=create_scanner(),
         store=TaskStore(redis),
         blacklist=TokenBlacklist(redis),
-        limiter=RateLimiter(redis),
+        rate_limits=RateLimitStore(redis),
         make_telegram=create_telegram,
         make_login=create_login,
     )

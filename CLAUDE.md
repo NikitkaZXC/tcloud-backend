@@ -60,6 +60,7 @@ Layers: `api → application → infrastructure`; `utilities` are shared. `src/a
 - When code changes a flow shown in `docs/`, update the doc and its diagram in the same commit (Mermaid blocks; check they render with `mmdc` installed outside the repo). New Redis keys → `docs/redis.md`.
 - Every new query with a filter or sort gets an index. All our ids are UUID. Never edit existing migrations.
 - Respect Telegram limits (`src/infrastructure/limits.py`, `docs/integrations.md`).
+- Endpoint rate limits are set in the routes (`rate_limit_by_ip` / `rate_limit_by_user` / `RateLimiter.hit`, or router-level in `endpoints.py`); values live in `RATE_LIMIT_*` (`src/config/models/rate_limit.py`, docs/security.md).
 - No code comments or docstrings (one-line docstrings on exception classes only); explanations go to `docs/`.
 - Log with loguru; never log secrets.
 - Commits: one-line English messages (`feat:`, `fix:`, `refactor:`), one per logical change. **Never push.**

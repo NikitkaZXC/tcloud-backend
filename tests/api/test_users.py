@@ -380,16 +380,42 @@ async def test_storage_stats_count_only_readable_files(client, storage, make_use
 
 
 async def test_signin_is_rate_limited_by_ip(anonymous, monkeypatch):
-    monkeypatch.setattr(settings.jwt, "SIGNIN_IP_LIMIT", 3)
-    for _ in range(3):
+    monkeypatch.setattr(settings.rate_limit.SIGNIN_IP, "limit", 3)
+    for index in range(3):
         await anonymous.post(
-            "/auth/signin", json={"login": "nobody", "password": "wrong-password"}
+            "/auth/signin", json={"login": f"nobody{index}", "password": "wrong-pass"}
         )
     response = await anonymous.post(
         "/auth/signin", json={"login": "root", "password": "root-password"}
     )
     assert response.status_code == 429 and code(response) == "rate_limited"
-    assert int(response.headers["retry-after"]) > 0
+    assert 0 < int(response.headers["retry-after"]) <= 60
+    assert response.json()["error"]["retry_after"] == int(
+        response.headers["retry-after"]
+    )
+
+
+async def test_signin_is_rate_limited_by_login(anonymous, monkeypatch):
+    monkeypatch.setattr(settings.rate_limit.SIGNIN_LOGIN, "limit", 2)
+    for _ in range(2):
+        await anonymous.post(
+            "/auth/signin", json={"login": "Root", "password": "wrong-pass"}
+        )
+    response = await anonymous.post(
+        "/auth/signin", json={"login": "root", "password": "root-password"}
+    )
+    assert response.status_code == 429 and code(response) == "rate_limited"
+    assert 0 < int(response.headers["retry-after"]) <= 900
+
+
+async def test_rate_limit_disabled(anonymous, monkeypatch):
+    monkeypatch.setattr(settings.rate_limit, "ENABLED", False)
+    monkeypatch.setattr(settings.rate_limit.SIGNIN_IP, "limit", 1)
+    for _ in range(3):
+        response = await anonymous.post(
+            "/auth/signin", json={"login": "nobody", "password": "wrong-pass"}
+        )
+        assert response.status_code == 401
 
 
 async def test_security_headers(client):

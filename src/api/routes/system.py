@@ -1,16 +1,23 @@
 from fastapi import APIRouter, Depends, Response, status
 
-from src.api.dependencies import get_actor, get_optional_actor
+from src.api.dependencies import (
+    get_actor,
+    get_optional_actor,
+    rate_limit_api,
+    rate_limit_by_ip,
+)
 from src.api.schemas import AccountResponse, HealthResponse, PublicHealthResponse
 from src.application.factory import get_service_account, get_service_health
 from src.application.schemas import Actor
 from src.application.services import AccountService, HealthService
+from src.config import settings
 
 router = APIRouter(tags=["System"])
 
 
 @router.get(
     path="/health",
+    dependencies=[Depends(rate_limit_by_ip("health", settings.rate_limit.HEALTH_IP))],
     name="system:health",
     summary="Database, Telegram and antivirus state; without sign-in only ok or degraded",
     status_code=status.HTTP_200_OK,
@@ -34,7 +41,7 @@ async def health(
     name="system:account",
     summary="Telegram Premium and the current file size limit",
     status_code=status.HTTP_200_OK,
-    dependencies=[Depends(get_actor)],
+    dependencies=[Depends(get_actor), Depends(rate_limit_api)],
 )
 async def account(
     account_service: AccountService = Depends(get_service_account),

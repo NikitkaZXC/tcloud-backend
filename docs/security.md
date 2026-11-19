@@ -7,10 +7,45 @@
   ключи хранятся только как HMAC-SHA256 от `APP_SECRET_KEY`. Подробно — flows/users.md.
 - Права проверяются на каждый запрос по БД (роль, блокировка, гранты на папки), а не по содержимому токена.
 - Регистрации нет; Telegram-сессии (`/api/telegram`) доступны только root.
-- Вход ограничен по IP (`JWT_SIGNIN_IP_LIMIT` за `JWT_SIGNIN_IP_WINDOW` с, `429 rate_limited`) поверх блокировки аккаунта.
-  IP берётся из соединения: за обратным прокси uvicorn нужен `--forwarded-allow-ips` с адресом прокси, никогда `*`,
-  иначе клиент подделает IP через `X-Forwarded-For`.
+- Вход ограничен по IP и по логину (rate limiting, ниже) поверх блокировки аккаунта.
 - Порт публикуется только на `127.0.0.1`. Postgres и ClamAV наружу не выходят.
+
+## Rate limiting
+
+- Redis, скользящее окно (журнал запросов): один Lua-скрипт `RATE_LIMIT_SCRIPT` (`infrastructure/cache/limits.py`,
+  `RateLimitStore`) держит sorted set на ключ со временем Redis (`TIME`) каждого принятого запроса. Записи старше окна
+  удаляются, отклонённые запросы не записываются, `Retry-After` — когда самая старая запись выйдет из окна. Ключ другого
+  типа (например, старый счётчик) заменяется. Ключи — `{REDIS_PREFIX}:rate_limit:{scope}:{ip|user}:{id}` (redis.md).
+- В коде (`src/api/dependencies/rate_limit.py`): зависимости `rate_limit_by_ip(scope, rule)` /
+  `rate_limit_by_user(scope, rule)` (пользователь — `actor.user_id`, поэтому запросы по `X-API-Key` считаются на
+  владельца ключа вместе с его куками) или `RateLimiter.hit` для ключей из тела (вход — по логину в нижнем регистре).
+  `rate_limit_api` — общее правило `API_USER`.
+- Правила — `RateLimitRule(limit, window)` в `RateLimitSettings` (`src/config/models/rate_limit.py`), переменные
+  `RATE_LIMIT_<ПРАВИЛО>__LIMIT` и `RATE_LIMIT_<ПРАВИЛО>__WINDOW` (задаются парой: одно без другого — ошибка старта).
+  Выключить всё: `RATE_LIMIT_ENABLED=false`.
+- Превышение — `429 rate_limited`, тело `{"error": {"code": "rate_limited", "message": ..., "retry_after": N}}` и
+  заголовок `Retry-After: N` (секунды, ≥ 1). Если Redis недоступен — запрос пропускается (fail open, в лог
+  `Rate limit check failed`); блокировка аккаунта при этом продолжает работать.
+- Лимиты эндпоинтов задаются в роутах (или при подключении роутера в `endpoints.py`), значения — `RATE_LIMIT_*`.
+
+| Правило | По умолчанию | Ключ | Где |
+|---|---|---|---|
+| `SIGNIN_IP` | 20 / 60 с | IP | `POST /api/auth/signin` |
+| `SIGNIN_LOGIN` | 10 / 900 с | логин | `POST /api/auth/signin` (`RateLimiter.hit` по телу) |
+| `REFRESH_IP` | 60 / 60 с | IP | `POST /api/auth/refresh`, `POST /api/auth/logout` (свои счётчики) |
+| `HEALTH_IP` | 120 / 60 с | IP | `GET /api/health` |
+| `TELEGRAM_LOGIN_USER` | 10 / 600 с | пользователь | `POST /api/telegram/{session}/qr`, `/code`, `/sign-in`, `/password` |
+| `UPLOAD_USER` | 300 / 60 с | пользователь | `POST /api/uploads`, `/uploads/from-url` (общий счётчик; 429 до чтения тела) |
+| `UPLOAD_BATCH_USER` | 30 / 60 с | пользователь | `POST /api/uploads/batch` |
+| `ARCHIVE_USER` | 30 / 3600 с | пользователь | `POST /api/folders/archive`, `/folders/archive/selection` |
+| `PREVIEWS_BACKFILL_USER` | 3 / 3600 с | пользователь | `POST /api/files/previews/backfill` |
+| `FILE_READ_USER` | 3000 / 60 с | пользователь | `GET /api/files/{id}/download`, `/files/{id}/thumb`, `/tasks/{id}/archive` — вместо общего правила, чтобы сетка большой папки не упиралась в 429 |
+| `API_USER` | 1200 / 60 с | пользователь | все остальные ручки со входом (роутеры users, telegram, settings, storages, folders, uploads/tasks, files; `GET /api/account`; `/auth/logout/all`, `/auth/sessions*`, `/auth/password`) — поверх своих правил |
+
+IP клиента — `request.client.host`. uvicorn берёт его из `X-Forwarded-For` только от адресов из
+`FORWARDED_ALLOW_IPS` (в образе `127.0.0.1`). За nginx фронтенда в другом контейнере задайте в `.env`
+`FORWARDED_ALLOW_IPS` равным IP или подсети прокси, **никогда `*`**: иначе клиент подделает IP через `X-Forwarded-For`
+и обойдёт лимиты по IP. Пока не задано, все клиенты за прокси делят один IP (лимиты по IP общие на всех).
 
 ## Файлы
 

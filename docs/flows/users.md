@@ -44,11 +44,11 @@ sequenceDiagram
     participant R as Redis
     participant DB as PostgreSQL
     C->>A: POST /api/auth/signin {login, password}
-    A->>U: signin
-    U->>R: INCR rate:signin:{ip}
-    alt больше JWT_SIGNIN_IP_LIMIT за окно
-        U-->>C: 429 rate_limited
+    A->>R: RATE_LIMIT_SCRIPT rate_limit:signin:ip:{ip}, затем signin_login:{login}
+    alt больше SIGNIN_IP или SIGNIN_LOGIN за окно
+        A-->>C: 429 rate_limited + Retry-After
     end
+    A->>U: signin
     U->>DB: users по login
     U->>U: argon2 verify (неизвестный логин — фиктивный хеш)
     alt locked_until в будущем
@@ -97,10 +97,10 @@ JWT несёт `sub`, `user_id`, `role`, `jti`, `iat`, `exp`, `token_type`. Пр
 `429 account_locked` с `retry_after`. Для неизвестного логина тоже проверяется фиктивный argon2-хеш, чтобы по времени
 ответа нельзя было угадать логины.
 
-Кроме блокировки аккаунта вход ограничен по IP: не больше `JWT_SIGNIN_IP_LIMIT` (20) попыток за `JWT_SIGNIN_IP_WINDOW` (60) секунд
-с одного адреса, иначе `429 rate_limited` (подбор паролей сразу по многим логинам). Счётчик — фиксированное окно в Redis
-(`{REDIS_PREFIX}:rate:signin:{ip}`); если Redis недоступен, вход не блокируется (fail open, блокировка аккаунта
-продолжает работать). У всех ответов с `retry_after` в теле есть и заголовок `Retry-After`.
+Кроме блокировки аккаунта вход ограничен в роуте скользящим окном в Redis: по IP — `RATE_LIMIT_SIGNIN_IP` (20 за
+60 с, подбор паролей сразу по многим логинам) и по логину — `RATE_LIMIT_SIGNIN_LOGIN` (10 за 900 с, с любых адресов),
+иначе `429 rate_limited`. Если Redis недоступен, вход не блокируется (fail open, блокировка аккаунта продолжает
+работать). Подробно — security.md, «Rate limiting». У всех ответов с `retry_after` в теле есть и заголовок `Retry-After`.
 
 Ключи RS256 лежат в `certs/jwt-private.pem` и `certs/jwt-public.pem` (`JWT_PRIVATE_KEY_PATH`, `JWT_PUBLIC_KEY_PATH`).
 `make env` создаёт их через openssl, compose монтирует `./certs` read-only в `/certs`. Если сменить ключи, все access-токены

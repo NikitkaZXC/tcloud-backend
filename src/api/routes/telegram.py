@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, status
 
+from src.api.dependencies import rate_limit_by_user
 from src.api.schemas import (
     AuthorizationResponse,
     AuthResponse,
@@ -11,6 +12,7 @@ from src.api.schemas import (
 )
 from src.application.factory import get_service_auth
 from src.application.services import AuthService
+from src.config import settings
 from src.infrastructure.enums import TelegramSession
 
 router = APIRouter(prefix="/telegram", tags=["Telegram"])
@@ -30,6 +32,13 @@ async def auth_status(
 
 @router.post(
     path="/{session}/qr",
+    dependencies=[
+        Depends(
+            rate_limit_by_user(
+                "telegram_login", settings.rate_limit.TELEGRAM_LOGIN_USER
+            )
+        )
+    ],
     name="telegram:qr",
     summary="Start a QR login: render url as a QR code, scan it in Telegram → Settings → Devices",
     status_code=status.HTTP_200_OK,
@@ -42,6 +51,13 @@ async def login_qr(
 
 @router.post(
     path="/{session}/code",
+    dependencies=[
+        Depends(
+            rate_limit_by_user(
+                "telegram_login", settings.rate_limit.TELEGRAM_LOGIN_USER
+            )
+        )
+    ],
     name="telegram:code",
     summary="Start a login by phone: Telegram sends a code to your app",
     status_code=status.HTTP_200_OK,
@@ -56,6 +72,13 @@ async def login_code(
 
 @router.post(
     path="/{session}/sign-in",
+    dependencies=[
+        Depends(
+            rate_limit_by_user(
+                "telegram_login", settings.rate_limit.TELEGRAM_LOGIN_USER
+            )
+        )
+    ],
     name="telegram:sign-in",
     summary="Send the login code",
     status_code=status.HTTP_200_OK,
@@ -70,6 +93,13 @@ async def sign_in(
 
 @router.post(
     path="/{session}/password",
+    dependencies=[
+        Depends(
+            rate_limit_by_user(
+                "telegram_login", settings.rate_limit.TELEGRAM_LOGIN_USER
+            )
+        )
+    ],
     name="telegram:password",
     summary="Send the two-step verification password",
     status_code=status.HTTP_200_OK,

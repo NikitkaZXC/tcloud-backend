@@ -5,7 +5,7 @@ Redis хранит всё быстрое и временное: задачи з�
 Redis не попадают. Все ключи начинаются с `REDIS_PREFIX` (`tcloud`), значения полей задачи — JSON.
 
 Код: `src/infrastructure/cache/tasks.py` (`TaskStore`, Lua `CLAIM`/`REQUEUE`/`CANCEL`/`DISK_SLOT`/`UNLOCK`/`RENEW`),
-`cache/tokens.py` (`TokenBlacklist`), `cache/limits.py` (`RateLimiter`), `background/heartbeat.py` (`Heartbeat`).
+`cache/tokens.py` (`TokenBlacklist`), `cache/limits.py` (`RateLimitStore`), `background/heartbeat.py` (`Heartbeat`).
 Клиент создаёт `cache/factory.py` (`create_redis`, `create_sync_redis` для потока heartbeat).
 
 ```mermaid
@@ -17,6 +17,7 @@ flowchart LR
         fs["FileService / FolderService<br/>download, delete"]
         ss["StorageService<br/>activity, storage_busy"]
         ua["UserAuthService"]
+        rl["RateLimiter<br/>api/dependencies/rate_limit.py"]
     end
     subgraph workers["Celery-воркеры"]
         pl["UploadPipeline"]
@@ -35,7 +36,7 @@ flowchart LR
         worker[("worker:{queue}:{host}")]
         activity[("activity:{storage}:{read|write}")]
         revoked[("revoked:{jti}")]
-        rate[("rate:signin:{ip}")]
+        rate[("rate_limit:{scope}:{ip|user}:{id}<br/>zset")]
         job[("job:{name}")]
     end
     us --> task & batch & owned & path & active & disk & waiting
@@ -46,7 +47,8 @@ flowchart LR
     hb --> worker
     fs --> activity
     ss --> activity & path
-    ua --> revoked & rate
+    ua --> revoked
+    rl --> rate
 ```
 
 ## Ключи
@@ -65,7 +67,7 @@ flowchart LR
 | `tcloud:activity:{storage_id}:{read\|write}` | string | «с хранилищем сейчас работают» для `GET /api/storages/activity` (flows/storages.md) | `mark_activity`; `activity` — один `MGET` | 5 с (`ACTIVITY_TTL`) |
 | `tcloud:job:{name}` | string | одна фоновая задача на имя (`job:previews` — дозаполнение превью), значение — id задачи Celery; `SET NX`, свой ключ продлевается (Lua `RENEW`), снимает только владелец (Lua `UNLOCK`) | `TaskStore.hold_job`, `release_job`; `PreviewBackfill` | 120 с (`JOB_TTL`), продлевается каждые 30 с |
 | `tcloud:revoked:{jti}` | string | отозванный access-токен (logout, refresh, смена пароля) | `TokenBlacklist.revoke/revoked` | `JWT_ACCESS_TOKEN_EXPIRATION_MINUTES` |
-| `tcloud:rate:signin:{ip}` | string | счётчик входов с IP, фиксированное окно; Redis недоступен — вход пропускается (fail open) | `RateLimiter.hit` | `JWT_SIGNIN_IP_WINDOW` (ставится `EXPIRE NX`) |
+| `tcloud:rate_limit:{scope}:ip:{ip}`, `tcloud:rate_limit:{scope}:user:{user_id}`, `tcloud:rate_limit:signin_login:{login}` | zset | скользящее окно: время Redis (мс) каждого принятого запроса, Lua `RATE_LIMIT_SCRIPT`; правила и scope — security.md, «Rate limiting»; Redis недоступен — запрос пропускается (fail open) | `RateLimitStore.hit` (из `api/dependencies/rate_limit.py`) | окно правила (`PEXPIRE` на каждом обращении) |
 
 ## Поля задачи (`task:{id}`)
 

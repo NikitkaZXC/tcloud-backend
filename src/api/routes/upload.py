@@ -5,7 +5,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Header, Query, Request, status
 from fastapi.responses import FileResponse
 
-from src.api.dependencies import get_actor
+from src.api.dependencies import get_actor, rate_limit_by_user
 from src.api.schemas import (
     BatchCreate,
     BatchResponse,
@@ -20,14 +20,24 @@ from src.api.schemas import (
 from src.application.factory import get_service_task, get_service_upload
 from src.application.schemas import Actor, UploadServiceCreate
 from src.application.services import TaskService, UploadService
+from src.config import settings
 from src.infrastructure.archive import MEDIA_TYPES
 from src.utilities.formatters import FileSize
 
 router = APIRouter(tags=["Uploads"])
+stream_router = APIRouter(
+    tags=["Uploads"],
+    dependencies=[
+        Depends(rate_limit_by_user("file_read", settings.rate_limit.FILE_READ_USER))
+    ],
+)
 
 
 @router.post(
     path="/uploads",
+    dependencies=[
+        Depends(rate_limit_by_user("upload", settings.rate_limit.UPLOAD_USER))
+    ],
     name="uploads:create",
     summary="Upload a file: parameters in the query, the file in the body",
     status_code=status.HTTP_202_ACCEPTED,
@@ -45,6 +55,9 @@ async def create_upload(
 
 @router.post(
     path="/uploads/from-url",
+    dependencies=[
+        Depends(rate_limit_by_user("upload", settings.rate_limit.UPLOAD_USER))
+    ],
     name="uploads:from-url",
     summary="Upload a file from a link under its own name",
     status_code=status.HTTP_202_ACCEPTED,
@@ -61,6 +74,11 @@ async def create_url_upload(
 
 @router.post(
     path="/uploads/batch",
+    dependencies=[
+        Depends(
+            rate_limit_by_user("upload_batch", settings.rate_limit.UPLOAD_BATCH_USER)
+        )
+    ],
     name="uploads:batch",
     summary="Queue up to 100 uploads from links; an error in one item does not stop the others",
     status_code=status.HTTP_202_ACCEPTED,
@@ -162,7 +180,7 @@ async def retry_task(
     return await upload_service.retry(actor, task_id)
 
 
-@router.get(
+@stream_router.get(
     path="/tasks/{task_id}/archive",
     name="tasks:archive",
     summary="Download the archive built by the task (Range supported)",

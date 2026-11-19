@@ -5,6 +5,7 @@ from src.config.models import (
     JWTSettings,
     LoggingSettings,
     RabbitMQSettings,
+    RateLimitSettings,
     RedisSettings,
     RootSettings,
     TelegramSettings,
@@ -23,6 +24,7 @@ class Settings:
     logging: LoggingSettings = LoggingSettings()
     jwt: JWTSettings = JWTSettings()
     root: RootSettings = RootSettings()
+    rate_limit: RateLimitSettings = RateLimitSettings()
 
 
 settings = Settings()

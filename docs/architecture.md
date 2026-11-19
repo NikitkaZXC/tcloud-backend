@@ -83,7 +83,7 @@ src/
     background/            Celery-приложение и очереди, enqueue, queue_sizes, DiskBudget (резерв места), AppRuntime (состояние API),
                            WorkerRuntime (event loop, Telethon, БД и Redis воркера), Heartbeat
     cache/                 Redis: TaskStore (задачи, пачки, блокировки, очереди, активность; Lua CLAIM/REQUEUE/CANCEL),
-                           TokenBlacklist, RateLimiter — карта ключей в redis.md
+                           TokenBlacklist, RateLimitStore — карта ключей в redis.md
     archive.py             ArchiveWriter: zip, 7z, tar.*
     enums/, logger/, limits.py
   utilities/

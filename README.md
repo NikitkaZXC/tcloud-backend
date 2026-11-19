@@ -84,7 +84,10 @@ curl -H "X-API-Key: $TCLOUD_KEY" --data-binary @photo.jpg \
 | `JWT_SECURE` | `true` | куки только по HTTPS; `false` для http без TLS |
 | `JWT_PRIVATE_KEY_PATH`, `JWT_PUBLIC_KEY_PATH` | `certs/jwt-*.pem` | ключи RS256 |
 | `JWT_ACCESS_TOKEN_EXPIRATION_MINUTES` / `JWT_REFRESH_TOKEN_EXPIRATION_DAYS` | `15` / `30` | сроки токенов |
-| `JWT_MAX_FAILED_LOGINS`, `JWT_LOCK_MINUTES`, `JWT_SIGNIN_IP_LIMIT`, `JWT_SIGNIN_IP_WINDOW` | `5`, `15`, `20`, `60` | защита входа |
+| `JWT_MAX_FAILED_LOGINS`, `JWT_LOCK_MINUTES` | `5`, `15` | блокировка аккаунта после неверных паролей |
+| `RATE_LIMIT_ENABLED` | `true` | rate limiting (`429 rate_limited` + `Retry-After`), docs/security.md |
+| `RATE_LIMIT_<ПРАВИЛО>__LIMIT`, `RATE_LIMIT_<ПРАВИЛО>__WINDOW` | см. docs/security.md | правило парой; `JWT_SIGNIN_IP_LIMIT`/`JWT_SIGNIN_IP_WINDOW` переименованы в `RATE_LIMIT_SIGNIN_IP__LIMIT`/`__WINDOW` |
+| `FORWARDED_ALLOW_IPS` | `127.0.0.1` | IP/подсеть reverse proxy, которому uvicorn верит в `X-Forwarded-For`; никогда `*` |
 | `POSTGRES_HOST`, `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD` | `tcloud` для БД | PostgreSQL |
 | `RABBITMQ_HOST`, `RABBITMQ_USER`, `RABBITMQ_PASSWORD` | `rabbitmq`, `tcloud` | брокер |
 | `REDIS_HOST`, `REDIS_PASSWORD`, `REDIS_PREFIX` | `redis`, пусто, `tcloud` | Redis ([docs/redis.md](docs/redis.md)) |

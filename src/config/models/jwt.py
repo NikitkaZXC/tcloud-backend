@@ -22,8 +22,6 @@ class JWTSettings(BaseSettings):
     SAME_SITE: Literal["lax", "strict", "none"] = "lax"
     MAX_FAILED_LOGINS: int = 5
     LOCK_MINUTES: int = 15
-    SIGNIN_IP_LIMIT: int = 20
-    SIGNIN_IP_WINDOW: int = 60
 
     @property
     def REFRESH_TOKEN_EXPIRATION_MINUTES(self) -> int:

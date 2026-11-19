@@ -4,6 +4,7 @@ from .database import DatabaseSettings
 from .jwt import JWTSettings
 from .logging import LoggingSettings
 from .rabbitmq import RabbitMQSettings
+from .rate_limit import RateLimitRule, RateLimitSettings
 from .redis import RedisSettings
 from .root import RootSettings
 from .telegram import TelegramSettings
@@ -16,6 +17,8 @@ __all__ = [
     "JWTSettings",
     "LoggingSettings",
     "RabbitMQSettings",
+    "RateLimitRule",
+    "RateLimitSettings",
     "RedisSettings",
     "RootSettings",
     "TelegramSettings",

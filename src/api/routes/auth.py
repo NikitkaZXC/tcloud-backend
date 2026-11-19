@@ -2,7 +2,13 @@ from uuid import UUID
 
 from fastapi import APIRouter, Cookie, Depends, Request, Response, status
 
-from src.api.dependencies import get_actor
+from src.api.dependencies import (
+    RateLimiter,
+    get_actor,
+    get_rate_limiter,
+    rate_limit_api,
+    rate_limit_by_ip,
+)
 from src.api.schemas import PasswordChange, SignIn, UserSessionResponse
 from src.application.exception import InvalidRefreshTokenError
 from src.application.factory import get_service_user_auth
@@ -65,6 +71,7 @@ def delete_auth_cookies(response: Response) -> None:
 
 @router.post(
     path="/signin",
+    dependencies=[Depends(rate_limit_by_ip("signin", settings.rate_limit.SIGNIN_IP))],
     name="auth:signin",
     summary="Sign in with login and password and get auth cookies",
     status_code=status.HTTP_204_NO_CONTENT,
@@ -73,8 +80,12 @@ async def signin(
     data: SignIn,
     request: Request,
     response: Response,
+    limiter: RateLimiter = Depends(get_rate_limiter),
     auth_service: UserAuthService = Depends(get_service_user_auth),
 ) -> None:
+    await limiter.hit(
+        "signin_login", data.login.lower(), settings.rate_limit.SIGNIN_LOGIN
+    )
     pair = await auth_service.signin(
         data.login, data.password.get_secret_value(), client_info(request)
     )
@@ -83,6 +94,7 @@ async def signin(
 
 @router.post(
     path="/refresh",
+    dependencies=[Depends(rate_limit_by_ip("refresh", settings.rate_limit.REFRESH_IP))],
     name="auth:refresh",
     summary="Rotate auth cookies with the refresh token",
     status_code=status.HTTP_204_NO_CONTENT,
@@ -104,6 +116,7 @@ async def refresh(
 
 @router.post(
     path="/logout",
+    dependencies=[Depends(rate_limit_by_ip("logout", settings.rate_limit.REFRESH_IP))],
     name="auth:logout",
     summary="Log out of the current session",
     status_code=status.HTTP_204_NO_CONTENT,
@@ -122,6 +135,7 @@ async def logout(
 
 @router.post(
     path="/logout/all",
+    dependencies=[Depends(rate_limit_api)],
     name="auth:logout-all",
     summary="Log out of all sessions",
     status_code=status.HTTP_204_NO_CONTENT,
@@ -137,6 +151,7 @@ async def logout_all(
 
 @router.get(
     path="/sessions",
+    dependencies=[Depends(rate_limit_api)],
     name="auth:sessions",
     summary="Own active sessions",
     status_code=status.HTTP_200_OK,
@@ -150,6 +165,7 @@ async def get_sessions(
 
 @router.delete(
     path="/sessions/{session_id}",
+    dependencies=[Depends(rate_limit_api)],
     name="auth:session-revoke",
     summary="End one of own sessions",
     status_code=status.HTTP_204_NO_CONTENT,
@@ -166,6 +182,7 @@ async def revoke_session(
 
 @router.post(
     path="/password",
+    dependencies=[Depends(rate_limit_api)],
     name="auth:password",
     summary="Change own password: other sessions are logged out",
     status_code=status.HTTP_204_NO_CONTENT,
