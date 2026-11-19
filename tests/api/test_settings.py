@@ -35,7 +35,7 @@ DEFAULTS = {
         "fx_sounds": False,
         "fx_confetti": False,
         "fx_cursor": False,
-        "fx_easter_eggs": False,
+        "fx_easter_eggs": True,
         "dashboard_layout": [],
         "dashboard_hidden": [],
         "file_columns": {},

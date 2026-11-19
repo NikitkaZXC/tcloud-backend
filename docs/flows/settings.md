@@ -108,7 +108,7 @@ Content-Type: application/json
     "fx_sounds": false,
     "fx_confetti": false,
     "fx_cursor": false,
-    "fx_easter_eggs": false,
+    "fx_easter_eggs": true,
     "dashboard_layout": [],
     "dashboard_hidden": [],
     "file_columns": {}
@@ -155,7 +155,7 @@ Content-Type: application/json
 | `fx_sounds` | `true`, `false` | `false` | звуки |
 | `fx_confetti` | `true`, `false` | `false` | конфетти |
 | `fx_cursor` | `true`, `false` | `false` | эффект курсора |
-| `fx_easter_eggs` | `true`, `false` | `false` | пасхалки |
+| `fx_easter_eggs` | `true`, `false` | `true` | пасхалки |
 | `dashboard_layout` | список id блоков дашборда: `summary`, `previews`, `channels`, `storages`, `tasks`, `activity_map`, `system`, `users` (`DashboardBlock` в `schemas/settings.py`), без повторов, не длиннее числа блоков | `[]` | порядок блоков дашборда; `[]` — порядок по умолчанию. В сохранённых настройках неизвестные id и повторы выбрасываются поштучно (остальной порядок сохраняется), `PATCH` с неизвестным id — `422` |
 | `dashboard_hidden` | список id блоков дашборда (тот же `DashboardBlock`), без повторов, не длиннее числа блоков | `[]` | скрытые блоки дашборда; `[]` — видны все. Чтение и `PATCH` — как у `dashboard_layout` (поштучная чистка сохранённого, `422` на неизвестный id или повтор) |
 | `file_columns` | словарь «колонка → ширина в px»: колонки `name`, `type`, `size`, `modified`, `uploaded` (`FileColumn` в `schemas/settings.py`), ширина — целое `48`…`2000` | `{}` | ширины колонок списка файлов; отсутствующая колонка — ширина по умолчанию фронтенда. В сохранённых настройках неизвестные колонки и невалидные ширины выбрасываются поштучно, `PATCH` с неизвестной колонкой или шириной вне диапазона — `422` |

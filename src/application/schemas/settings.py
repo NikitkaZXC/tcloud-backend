@@ -64,7 +64,7 @@ class InterfaceSettingsServiceRead(SettingsGroup):
     fx_sounds: bool = False
     fx_confetti: bool = False
     fx_cursor: bool = False
-    fx_easter_eggs: bool = False
+    fx_easter_eggs: bool = True
     dashboard_layout: list[DashboardBlock] = Field(
         default_factory=list, max_length=len(get_args(DashboardBlock))
     )
