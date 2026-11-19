@@ -330,13 +330,20 @@ async def test_waiting_tasks_show_queue_position(client, telegram, storage):
         ids[-1],
         lambda task: in_telegram(task) and task["queue_position"] is not None,
     )
-    waiting = [
-        task
-        for task in [(await client.get(f"/tasks/{task_id}")).json() for task_id in ids]
-        if in_telegram(task)
-    ]
-    positions = [task["queue_position"] for task in waiting]
-    assert sorted(positions) == list(range(1, len(waiting) + 1))
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        listed = (await client.get("/tasks", params={"ids": ids})).json()["items"]
+        waiting = [task for task in listed if in_telegram(task)]
+        positions = [task["queue_position"] for task in waiting]
+        if sorted(positions, key=lambda rank: rank or 0) == list(
+            range(1, len(waiting) + 1)
+        ):
+            break
+        await asyncio.sleep(0.01)
+    assert sorted(positions, key=lambda rank: rank or 0) == list(
+        range(1, len(waiting) + 1)
+    ), positions
+    assert waiting
     last = waiting[-1]
     await wait_for(
         client,

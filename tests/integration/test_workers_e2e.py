@@ -291,7 +291,6 @@ async def test_worker_killed_after_send_before_commit(
 
 async def test_queue_positions_match_real_order(workers, store, storage_id):
     await workers.start(UploadQueue.PREPARE, "prepare", concurrency=4)
-    await workers.start(UploadQueue.TELEGRAM, "telegram", WORKER_TELEGRAM_DELAY="0.5")
     levels = [TaskPriority.LOW, TaskPriority.HIGH, TaskPriority.NORMAL] * 2
     ids = [
         await queue_task(store, workers, storage_id, f"t{index}.jpg", level)
@@ -300,7 +299,7 @@ async def test_queue_positions_match_real_order(workers, store, storage_id):
     in_telegram = f"queue:{UploadQueue.TELEGRAM}"
     deadline = time.monotonic() + TIMEOUT
     snapshot = {}
-    while time.monotonic() < deadline and len(snapshot) != len(ids) - 1:
+    while time.monotonic() < deadline and len(snapshot) != len(ids):
         tasks = await store.get_many(ids)
         waiting = [
             task
@@ -309,10 +308,11 @@ async def test_queue_positions_match_real_order(workers, store, storage_id):
         ]
         snapshot = await store.positions(waiting)
         await asyncio.sleep(0.02)
-    assert sorted(snapshot.values()) == list(range(1, len(ids)))
+    assert sorted(snapshot.values()) == list(range(1, len(ids) + 1)), snapshot
+    await workers.start(UploadQueue.TELEGRAM, "telegram")
     names = {task_id: f"t{index}.jpg" for index, task_id in enumerate(ids)}
     expected = [names[task_id] for task_id in sorted(snapshot, key=snapshot.get)]
     for task_id in ids:
         assert (await wait_until(store, task_id, finished))["status"] == "done"
     order = [event["name"] for event in workers.events("send")]
-    assert [name for name in order if name in expected] == expected, (snapshot, order)
+    assert order == expected, (snapshot, order)
