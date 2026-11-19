@@ -73,6 +73,7 @@ flowchart LR
 |---|---|
 | `id`, `batch_id`, `user_id`, `path`, `created_at`, `updated_at` | идентичность и владелец |
 | `status`, `stage`, `priority`, `priority_level`, `generation` | состояние (background-tasks.md, «Статусы и стадии») |
+| `step` | шаг внутри стадии (`TaskStep`, flows/uploads.md «Шаги»); пишется при смене, `step_progress` считается при чтении |
 | `bytes_done`, `bytes_total`, `stage_started` | прогресс; `speed`/`eta` считаются при чтении (`TaskService.render`) |
 | `waiting` | `{"reason": "queue:{queue}" \| "disk_slots" \| "retry" \| "flood_wait", "until"?}`; код для API — часть `reason` до `:` |
 | `params` | параметры загрузки (`source`, `send_as`, `on_conflict`, `encrypt`, `callback_url`, `url`, `limit`, `file`) или архива (`storage_id`, `folder`, `format`, `file_ids`, `file`) |

@@ -41,6 +41,8 @@ class TaskServiceRead(BaseModel):
     user_id: UUID | None = None
     status: str
     stage: str
+    step: str | None = None
+    step_progress: float | None = None
     priority: str
     path: str
     bytes_done: int

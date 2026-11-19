@@ -1,5 +1,5 @@
 import os
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 
 from cryptography.exceptions import InvalidTag
@@ -51,7 +51,9 @@ def _nonce(prefix: bytes, index: int, last: bool) -> bytes:
     return prefix + index.to_bytes(4, "big") + bytes([last])
 
 
-def encrypt_file(source: Path, target: Path) -> bytes:
+def encrypt_file(
+    source: Path, target: Path, progress: Callable[[int], None] | None = None
+) -> bytes:
     dek, wrap_nonce, prefix = (
         AESGCM.generate_key(256),
         os.urandom(NONCE),
@@ -67,6 +69,8 @@ def encrypt_file(source: Path, target: Path) -> bytes:
             following = plain.read(BLOCK)
             last = not following
             output.write(cipher.encrypt(_nonce(prefix, index, last), block, None))
+            if progress:
+                progress(index * BLOCK + len(block))
             if last:
                 return header
             index, block = index + 1, following

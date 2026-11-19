@@ -33,7 +33,7 @@ background-tasks.md («Путь загрузки целиком», «Стату�
 
 | Запрос | Что |
 |---|---|
-| `POST /api/tasks/{id}/cancel` | отмена: из очереди — сразу, во время работы — в течение пары секунд; `409 task_finished` для завершённых |
+| `POST /api/tasks/{id}/cancel` | отмена на любом шаге: из очереди — сразу, во время работы — не позже ~1 с, итог `cancelled`, временные файлы и неподтверждённое сообщение в Telegram удаляются; `409 task_finished` для завершённых (background-tasks.md, «Отмена») |
 | `POST /api/tasks/{id}/priority {"priority": "high"}` | новый приоритет задачи, которая ждёт в очереди; иначе `409 task_not_queued` |
 | `POST /api/tasks/{id}/retry` | повтор упавшей или отменённой загрузки по ссылке; с устройства — `409 task_not_retryable` |
 
@@ -92,7 +92,7 @@ DEK файла и ложится в `files.thumbnail`; `/thumb` его расш�
 
 ## Прогресс
 
-`GET /api/tasks/{id}`: `status` (`queued/running/done/failed/cancelled`), `stage`, `priority`, `bytes_done`/`bytes_total`,
+`GET /api/tasks/{id}`: `status` (`queued/running/done/failed/cancelled`), `stage`, `step`, `step_progress`, `priority`, `bytes_done`/`bytes_total`,
 `progress`, `speed`, `eta`, `queue_position` (номер в очереди, 1 — следующая), `waiting` (очередь, FloodWait, повтор),
 `cancel_requested`, `error`, `warnings`, `warning_details`, `file`.
 Задача хранится 7 дней (`UPLOAD_TASK_TTL`). Вебхук описан в background-tasks.md.
@@ -105,6 +105,31 @@ DEK файла и ложится в `files.thumbnail`; `/thumb` его расш�
 `GET /api/tasks/counts` → `{total, by_status: {"done": 12, "failed": 1, …}}` — ваши задачи (загрузки и архивы,
 созданные вами, у admin тоже только свои) за `UPLOAD_TASK_TTL`; статусы без задач в `by_status` не попадают. Индекс —
 sorted set `user_tasks:{user_id}` в Redis, подсчёт — один `HGET status` на задачу в pipeline.
+
+### Шаги
+
+`step` — что задача делает сейчас (или на чём остановилась, если завершена). `step_progress` — доля 0..1 у шагов с
+«да», пока задача `running`; `bytes_done`/`bytes_total`/`progress`/`speed`/`eta` в это время тоже про текущий шаг.
+
+| `step` | Стадия | Что | `step_progress` |
+|---|---|---|---|
+| `queued_for_download` | `downloading` | ждёт `worker-download` (по ссылке) | нет |
+| `downloading` | `downloading` | скачивание по ссылке (и ожидание слота `disk_slots`) | да, если сервер прислал размер |
+| `queued_for_prepare` | `scanning` | ждёт `worker-prepare` | нет |
+| `analyzing` | `scanning` | определение типа, ffprobe/Pillow, SHA-256 | да |
+| `scanning` | `scanning` | проверка ClamAV (и паузы `retry`) | да |
+| `converting` | `scanning` | фото не jpeg/png → jpeg для `media`, кадр-превью видео | нет |
+| `encrypting` | `scanning` | AES-256-GCM | да |
+| `previewing` | `scanning` | своё превью зашифрованного фото/GIF/видео | нет |
+| `queued_for_telegram` | `uploading_tg` | ждёт `worker-telegram` | нет |
+| `sending` | `uploading_tg` | отправка в Telegram (и пауза `flood_wait`) | да |
+| `finishing` | `uploading_tg` | запись в БД | нет |
+| `queued_for_archive` | `archiving` | архив ждёт `worker-telegram` | нет |
+| `archiving` | `archiving` | сборка архива | да |
+
+Шага `receiving` нет: тело `POST /api/uploads` принимается до создания задачи (ответ приходит, когда файл уже на
+сервере), прогресс приёма видит сам клиент. `null` — у задач `done` с `on_conflict=skip` и у задач, созданных до
+появления поля.
 
 ### Коды ожидания и предупреждений
 

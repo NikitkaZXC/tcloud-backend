@@ -199,6 +199,9 @@ class TaskStore:
     async def cancel(self, task_id: UUID) -> str:
         return await self._redis.eval(CANCEL, 1, self._key("task", task_id))
 
+    async def cancel_requested(self, task_id: UUID | str) -> bool:
+        return await self._redis.hget(self._key("task", task_id), "cancel") == "true"
+
     async def lock_path(self, path: str, task_id: UUID) -> bool:
         return bool(
             await self._redis.set(

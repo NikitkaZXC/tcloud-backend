@@ -24,7 +24,7 @@ from src.application.schemas import (
 )
 from src.infrastructure.cache import TaskStore
 from src.infrastructure.database.repositories import FileRepository
-from src.infrastructure.enums import TaskStatus
+from src.infrastructure.enums import TaskStatus, TaskStep
 
 
 class TaskService:
@@ -69,6 +69,12 @@ class TaskService:
             view.progress = 100.0
         elif view.bytes_total:
             view.progress = round(100 * view.bytes_done / view.bytes_total, 1)
+        if (
+            task["status"] == TaskStatus.RUNNING
+            and view.step in TaskStep.measured()
+            and view.bytes_total
+        ):
+            view.step_progress = round(min(1, view.bytes_done / view.bytes_total), 3)
         elapsed = time.time() - (task.get("stage_started") or time.time())
         if task["status"] == TaskStatus.RUNNING and not view.waiting and elapsed > 0:
             if view.bytes_done:

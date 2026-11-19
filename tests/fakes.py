@@ -63,6 +63,9 @@ class FakeTelegram:
         self.flood_once: int | None = None
         self.fail_times = 0
         self.delay = 0.0
+        self.part_delay = 0.0
+        self.parts = 2
+        self.sent_hook = None
         self.sending = 0
         self.max_sending = 0
         self.on_deleted = None
@@ -227,8 +230,9 @@ class FakeTelegram:
         finally:
             self.sending -= 1
         data = Path(path).read_bytes()
-        for done in (0, len(data) // 2, len(data)):
-            progress(done, len(data))
+        for part in range(self.parts + 1):
+            progress(len(data) * part // self.parts, len(data))
+            await asyncio.sleep(self.part_delay)
         message_id = self.next_message
         self.next_message += 1
         self.chats[chat_id]["messages"][message_id] = {
@@ -244,6 +248,8 @@ class FakeTelegram:
         if compressed:
             self.chats[chat_id]["messages"][message_id]["sizes"] = photo_sizes(data)
         mime = "image/jpeg" if compressed else media.mime
+        if self.sent_hook:
+            await self.sent_hook()
         return SentFile(
             message_id,
             len(body(self.chats[chat_id]["messages"][message_id])),
@@ -336,14 +342,20 @@ class FakeLogin:
 class FakeScanner:
     def __init__(self) -> None:
         self.available = True
+        self.delay = 0.0
+        self.parts = 2
 
     async def ping(self) -> bool:
         return self.available
 
-    async def scan(self, path: Path) -> None:
+    async def scan(self, path: Path, progress=None) -> None:
         if not self.available:
             raise ScannerUnavailableError("antivirus is not available, upload rejected")
         data = Path(path).read_bytes()
+        for part in range(1, self.parts + 1):
+            await asyncio.sleep(self.delay)
+            if progress:
+                progress(len(data) * part // self.parts)
         if b"EICAR" in data:
             raise InfectedFileError("antivirus found Eicar-Signature, file rejected")
         if b"ENCRYPTED" in data:

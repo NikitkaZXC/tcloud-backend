@@ -110,10 +110,10 @@ async def test_scanner_restart_retried(client, scanner, storage):
     calls = []
     original = scanner.scan
 
-    async def flaky(target):
+    async def flaky(target, progress=None):
         calls.append(1)
         scanner.available = len(calls) > 1
-        await original(target)
+        await original(target, progress)
 
     scanner.scan = flaky
     assert (await upload(client, path(storage, "a.jpg"), make_image()))[

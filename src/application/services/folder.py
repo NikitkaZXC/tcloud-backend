@@ -241,6 +241,7 @@ class FolderService:
             "user_id": actor.user_id,
             "status": TaskStatus.QUEUED,
             "stage": TaskStage.ARCHIVING,
+            "step": UploadQueue.ARCHIVE.step,
             "priority": level,
             "priority_level": level.level,
             "path": join_path(storage_id, base),

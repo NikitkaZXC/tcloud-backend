@@ -1,5 +1,6 @@
 import asyncio
 import struct
+from collections.abc import Callable
 from pathlib import Path
 
 from src.infrastructure.integrations.antivirus.exception import (
@@ -21,7 +22,12 @@ class ClamAVClient:
     def __init__(self, host: str, port: int, timeout: float = 900) -> None:
         self.host, self.port, self.timeout = host, port, timeout
 
-    async def _command(self, command: bytes, path: Path | None = None) -> str:
+    async def _command(
+        self,
+        command: bytes,
+        path: Path | None = None,
+        progress: Callable[[int], None] | None = None,
+    ) -> str:
         try:
             reader, writer = await asyncio.wait_for(
                 asyncio.open_connection(self.host, self.port), 10
@@ -31,10 +37,14 @@ class ClamAVClient:
         try:
             writer.write(command)
             if path:
+                done = 0
                 with open(path, "rb") as file:
                     while chunk := file.read(CHUNK):
                         writer.write(struct.pack(">I", len(chunk)) + chunk)
                         await writer.drain()
+                        done += len(chunk)
+                        if progress:
+                            progress(done)
                 writer.write(struct.pack(">I", 0))
             await writer.drain()
             reply = await asyncio.wait_for(reader.read(), self.timeout)
@@ -50,8 +60,10 @@ class ClamAVClient:
         except ScannerUnavailableError:
             return False
 
-    async def scan(self, path: Path) -> None:
-        reply = await self._command(b"zINSTREAM\0", path)
+    async def scan(
+        self, path: Path, progress: Callable[[int], None] | None = None
+    ) -> None:
+        reply = await self._command(b"zINSTREAM\0", path, progress)
         if reply.endswith("FOUND"):
             virus = reply.removeprefix("stream:").removesuffix("FOUND").strip()
             if virus.startswith(UNSCANNABLE):

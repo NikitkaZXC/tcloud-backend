@@ -29,6 +29,7 @@ from src.infrastructure.enums import (
     MediaKind,
     TaskStage,
     TaskStatus,
+    TaskStep,
     UploadQueue,
 )
 from src.infrastructure.integrations import (
@@ -54,6 +55,7 @@ from src.utilities.parsers import split_file
 
 TELEGRAM_PHOTO_SUFFIXES = {"image/jpeg": ".jpg", "image/png": ".png"}
 DISK_SLOT_POLL = 1.0
+CANCEL_POLL = 1.0
 PREVIEW_KINDS = {MediaKind.PHOTO, MediaKind.ANIMATION, MediaKind.VIDEO}
 
 
@@ -65,11 +67,14 @@ def describe(error: BaseException) -> dict:
     return {"code": "internal", "message": "internal error"}
 
 
-def sha256_of(path: Path) -> str:
+def sha256_of(path: Path, progress: Callable[[int], None]) -> str:
     digest = hashlib.sha256()
+    done = 0
     with open(path, "rb") as file:
         while chunk := file.read(1024 * 1024):
             digest.update(chunk)
+            done += len(chunk)
+            progress(done)
     return digest.hexdigest()
 
 
@@ -79,6 +84,7 @@ class UploadPipeline:
         self._progress_at: dict[str, float] = {}
         self._progress_save: dict[str, asyncio.Task] = {}
         self._cancelled: set[str] = set()
+        self._loop: asyncio.AbstractEventLoop | None = None
 
     @property
     def _store(self) -> TaskStore:
@@ -90,6 +96,7 @@ class UploadPipeline:
         if not await self._store.claim(task_id, queue, generation, redelivered):
             logger.info("Task {} skipped in {}: stale or cancelled", task_id, queue)
             return
+        self._loop = asyncio.get_running_loop()
         task = await self._store.get(task_id)
         step = {
             UploadQueue.DOWNLOAD: self._download,
@@ -98,6 +105,7 @@ class UploadPipeline:
             UploadQueue.ARCHIVE: self._archive,
         }[queue]
         beat = self._runtime.spawn(self._beat(task_id))
+        watch = self._runtime.spawn(self._watch(task["id"]))
         kind = {UploadQueue.TELEGRAM: "write", UploadQueue.ARCHIVE: "read"}.get(queue)
         activity = kind and self._runtime.spawn(self._activity(task["path"], kind))
         try:
@@ -110,6 +118,7 @@ class UploadPipeline:
                 raise
         finally:
             beat.cancel()
+            watch.cancel()
             if activity:
                 activity.cancel()
 
@@ -117,6 +126,15 @@ class UploadPipeline:
         while True:
             await self._store.touch(task_id)
             await asyncio.sleep(settings.upload.HEARTBEAT_INTERVAL)
+
+    async def _watch(self, task_id: str) -> None:
+        while not await self._store.cancel_requested(task_id):
+            await asyncio.sleep(CANCEL_POLL)
+        self._cancelled.add(task_id)
+
+    def _check_cancel(self, task_id: str) -> None:
+        if task_id in self._cancelled:
+            raise TaskCancelledError("task was cancelled")
 
     async def _activity(self, path: str, kind: str) -> None:
         storage_id = path.split("/")[1]
@@ -133,7 +151,9 @@ class UploadPipeline:
         self, task: dict, queue: UploadQueue, stage: TaskStage, total: int | None
     ) -> None:
         await self._checkpoint(task)
-        await self.stage(task, stage, total, waiting={"reason": f"queue:{queue}"})
+        await self.stage(
+            task, stage, total, waiting={"reason": f"queue:{queue}"}, step=queue.step
+        )
         current = await self._store.get(task["id"])
         async with self._runtime.handoff_lock:
             await self._store.join_queue(task["id"], queue, current["priority_level"])
@@ -146,7 +166,7 @@ class UploadPipeline:
 
     async def _download(self, task: dict) -> None:
         params = task["params"]
-        await self.stage(task, TaskStage.DOWNLOADING, None)
+        await self.stage(task, TaskStage.DOWNLOADING, None, step=TaskStep.DOWNLOADING)
         await self._disk_slot(task)
         reservation = self._runtime.disk.reserve(0)
 
@@ -178,8 +198,14 @@ class UploadPipeline:
             prepared.get("encryption_header") and Path(prepared["send_path"]).exists()
         )
         if not encrypted:
-            await self.stage(task, TaskStage.SCANNING, task.get("bytes_total"))
-            prepared = await self._scan(task, Path(task["params"]["file"]))
+            source = Path(task["params"]["file"])
+            await self.stage(
+                task,
+                TaskStage.SCANNING,
+                source.stat().st_size,
+                step=TaskStep.ANALYZING,
+            )
+            prepared = await self._scan(task, source)
             if task["params"].get("encrypt"):
                 prepared = await self._encrypt(task, prepared)
             await self._store.update(task["id"], prepared=prepared)
@@ -198,9 +224,15 @@ class UploadPipeline:
         target = temp_path("file.bin")
         prepared = {**prepared, "send_path": str(target), "plain_size": plain_size}
         await self._store.update(task["id"], prepared=prepared)
+        await self.step(task, TaskStep.ENCRYPTING, plain_size)
         reservation = self._runtime.disk.reserve(cipher_size(plain_size))
         try:
-            header = await asyncio.to_thread(encrypt_file, source, target)
+            header = await asyncio.to_thread(
+                encrypt_file,
+                source,
+                target,
+                lambda done: self.progress(task["id"], done, plain_size),
+            )
         finally:
             reservation.release()
         return {
@@ -217,6 +249,7 @@ class UploadPipeline:
             source = prepared["thumb"] and Path(prepared["thumb"])
         if kind not in PREVIEW_KINDS or not source:
             return None
+        await self.step(task, TaskStep.PREVIEWING)
         try:
             data = await asyncio.to_thread(preview, source)
         except Exception as error:
@@ -251,19 +284,31 @@ class UploadPipeline:
             task["id"], waiting={"reason": reason, "until": time.time() + seconds}
         )
         self.hook(task)
+        deadline = time.monotonic() + seconds
         try:
-            await asyncio.sleep(seconds)
+            while (left := deadline - time.monotonic()) > 0:
+                self._check_cancel(task["id"])
+                await asyncio.sleep(min(left, CANCEL_POLL))
         finally:
             await self._store.update(task["id"], waiting=None)
 
     async def _scan(self, task: dict, path: Path) -> dict:
         _, _, name = split_file(task["path"])
+        size = path.stat().st_size
         media = await asyncio.to_thread(probe, path, name)
-        sha256 = await asyncio.to_thread(sha256_of, path)
+        self._check_cancel(task["id"])
+        sha256 = await asyncio.to_thread(
+            sha256_of, path, lambda done: self.progress(task["id"], done, size)
+        )
+        await self.step(task, TaskStep.SCANNING, size)
         warnings: list[dict] = []
         try:
             await self._retry(
-                task, lambda: self._runtime.scanner.scan(path), ScannerUnavailableError
+                task,
+                lambda: self._runtime.scanner.scan(
+                    path, lambda done: self.progress(task["id"], done, size)
+                ),
+                ScannerUnavailableError,
             )
         except UnscannableFileError as error:
             if not task["params"].get("allow_unscannable"):
@@ -294,6 +339,7 @@ class UploadPipeline:
                     )
                 )
             elif media.mime not in TELEGRAM_PHOTO_SUFFIXES:
+                await self.step(task, TaskStep.CONVERTING)
                 send_path = temp_path("photo.jpg")
                 prepared["send_path"] = str(send_path)
                 await self._store.update(task["id"], prepared=prepared)
@@ -312,6 +358,7 @@ class UploadPipeline:
                 )
             )
         if media.kind == MediaKind.VIDEO:
+            await self.step(task, TaskStep.CONVERTING)
             thumb = temp_path("thumb.jpg")
             prepared["thumb"] = str(thumb)
             await self._store.update(task["id"], prepared=prepared)
@@ -357,7 +404,7 @@ class UploadPipeline:
                 )
 
     async def _send(self, task: dict) -> None:
-        await self._store.update(task["id"], stage_started=time.time())
+        await self.step(task, TaskStep.SENDING, task.get("bytes_total"))
         prepared = task["prepared"]
         on_conflict = task["params"]["on_conflict"]
         storage_id, folder, name = split_file(task["path"])
@@ -405,6 +452,7 @@ class UploadPipeline:
                 sent={"file_id": file_id, "chat_id": chat_id, "message": asdict(sent)},
             )
             await self._checkpoint(task)
+        await self.step(task, TaskStep.FINISHING)
         compressed = media.kind == MediaKind.PHOTO and not as_file
         values = dict(
             folder_path=folder,
@@ -445,7 +493,9 @@ class UploadPipeline:
 
     async def _archive(self, task: dict) -> None:
         params = task["params"]
-        await self.stage(task, TaskStage.ARCHIVING, task["bytes_total"])
+        await self.stage(
+            task, TaskStage.ARCHIVING, task["bytes_total"], step=TaskStep.ARCHIVING
+        )
         async with self._runtime.session_factory() as session:
             found = await FileRepository(session).get_many_with_chat(
                 [UUID(file_id) for file_id in params["file_ids"]]
@@ -513,11 +563,13 @@ class UploadPipeline:
         stage: TaskStage,
         total: int | None,
         waiting: dict | None = None,
+        step: TaskStep | None = None,
     ) -> None:
         await self._flush_progress(task["id"])
         await self._store.update(
             task["id"],
             stage=stage,
+            step=step,
             bytes_done=0,
             bytes_total=total,
             waiting=waiting,
@@ -525,9 +577,16 @@ class UploadPipeline:
         )
         self.hook(task)
 
+    async def step(self, task: dict, step: TaskStep, total: int | None = None) -> None:
+        await self._flush_progress(task["id"])
+        values = {"step": step}
+        if step in TaskStep.measured():
+            values.update(bytes_done=0, bytes_total=total, stage_started=time.time())
+        await self._store.update(task["id"], **values)
+        self.hook(task)
+
     def progress(self, task_id: str, done: int, total: int | None = None) -> None:
-        if task_id in self._cancelled:
-            raise TaskCancelledError("task was cancelled")
+        self._check_cancel(task_id)
         now = time.monotonic()
         if now - self._progress_at.get(task_id, 0) < settings.upload.WEBHOOK_INTERVAL:
             return
@@ -535,6 +594,14 @@ class UploadPipeline:
         values = {"bytes_done": done}
         if total:
             values["bytes_total"] = total
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            self._loop.call_soon_threadsafe(self._save_later, task_id, values)
+        else:
+            self._save_later(task_id, values)
+
+    def _save_later(self, task_id: str, values: dict) -> None:
         self._progress_save[task_id] = self._runtime.spawn(
             self._save_progress(task_id, values)
         )
@@ -555,9 +622,9 @@ class UploadPipeline:
 
     async def _close(self, task: dict, **values) -> None:
         await self._flush_progress(task["id"])
+        remove_task_files(await self._store.get(task["id"]) or task)
         await self._store.update(task["id"], waiting=None, **values)
         await self._store.release(task["id"], task["path"])
-        remove_task_files(await self._store.get(task["id"]) or task)
         self.hook(task)
 
     async def finish(self, task: dict, file_id: UUID, warnings: list[dict]) -> None:

@@ -187,10 +187,28 @@ RabbitMQ по умолчанию закрывает канал, если зад�
 `POST /api/tasks/{id}/cancel`:
 - задача ждёт в очереди — сразу `cancelled`, путь освобождается, временные файлы удаляются; сообщение в очереди воркер
   пропустит;
-- задача выполняется — ставится флаг `cancel`, ответ `running` с `cancel_requested: true`. Воркер проверяет флаг между
-  стадиями, перед и после отправки в Telegram и на каждом сохранении прогресса (раз в `UPLOAD_WEBHOOK_INTERVAL`).
-  Если сообщение уже ушло в канал, оно удаляется;
+- задача выполняется — ставится флаг `cancel`, ответ `running` с `cancel_requested: true`. Воркер замечает его не позже
+  чем через `CANCEL_POLL` (1 с): `UploadPipeline._watch` раз в секунду читает `cancel` (`HGET`) и помечает задачу, а
+  каждый колбэк прогресса (`progress` — скачивание, SHA-256, отправка в ClamAV, шифрование, отправка в Telegram,
+  сборка архива) и каждое ожидание (`_disk_slot`, `_retry`, пауза FloodWait — сон кусками по `CANCEL_POLL`) бросает
+  `TaskCancelledError`. Работа в потоке (SHA-256, шифрование) прерывается на следующем блоке. Дальше `fail` удаляет
+  уже ушедшее, но не закоммиченное сообщение Telegram (`sent`), освобождает путь и слот диска, удаляет временные
+  файлы задачи (`params.file`, `prepared.send_path`, `prepared.thumb`) и ставит `cancelled`. Отмена посреди
+  отправки файла рвёт загрузку частей: сообщения ещё нет, удалять нечего;
 - задача завершена — `409 task_finished`.
+
+Тело запроса `POST /api/uploads` пишется во временный файл до создания задачи, поэтому браузер, оборвавший поток
+посреди тела, не оставляет ни задачи, ни файла, ни занятого слота диска (`UploadService.upload` удаляет файл и снимает
+блокировку пути на любом исключении).
+
+| Где была задача | Как останавливается | Что убирается |
+|---|---|---|
+| в очереди (`queued_for_*`) | сразу в API (`CANCEL`) | путь, временные файлы, место в индексе очереди |
+| `downloading`, ожидание `disk_slots` | колбэк прогресса / опрос слота | недокачанный файл, слот диска |
+| `analyzing`, `scanning`, ожидание `retry` | колбэк SHA-256 / ClamAV, сон кусками | файл, превью видео |
+| `encrypting`, `previewing`, `converting` | колбэк шифрования / проверка перед следующим шагом | исходник и частичный шифротекст |
+| `sending`, пауза `flood_wait` | колбэк частей Telethon / сон кусками | файлы; отправленное сообщение удаляется |
+| `finishing` | проверка после отправки | сообщение в Telegram, если коммита в БД ещё не было |
 
 Вебхук `cancelled` уходит в обоих случаях: из очереди его отправляет API в фоне (при остановке API дожидается отправки),
 во время работы — воркер.
@@ -207,6 +225,13 @@ RabbitMQ по умолчанию закрывает канал, если зад�
 `→ scanning → uploading_tg → done`, у архива `archiving → done` (`TaskStage`, `src/infrastructure/enums`). `queued`
 бывает только до первого `CLAIM`: между стадиями задача остаётся `running`, а в очереди её видно по `waiting`.
 
+`step` (`TaskStep`) — шаг внутри стадии, для подписи в UI; коды стабильны, таблица — в flows/uploads.md
+(«Шаги»). `step_progress` (0..1) — `bytes_done / bytes_total` у измеряемых шагов во время `running`, иначе `null`.
+Каждый измеряемый шаг сбрасывает `bytes_done`, `bytes_total` и `stage_started`, так что `progress`, `speed` и `eta`
+относятся к текущему шагу. Шаг пишется в Redis один раз при смене, прогресс — не чаще раза в `UPLOAD_WEBHOOK_INTERVAL`
+(тот же троттлинг, что был у прогресса). У завершённой задачи `step` — последний пройденный шаг (видно, где её
+отменили или где она упала).
+
 ```mermaid
 stateDiagram-v2
     direction LR
@@ -217,14 +242,25 @@ stateDiagram-v2
     queued --> failed: queue_unavailable или lost
     state running {
         [*] --> downloading: по ссылке
-        [*] --> scanning: с устройства
+        [*] --> analyzing: с устройства
         [*] --> archiving: архив
-        downloading --> scanning: uploads.prepare
-        scanning --> uploading_tg: uploads.telegram
+        downloading --> queued_for_prepare
+        queued_for_prepare --> analyzing
+        analyzing --> scanning
+        scanning --> converting: фото не jpeg/png или видео
+        scanning --> encrypting: encrypt
+        converting --> encrypting: encrypt
+        encrypting --> previewing: фото, GIF, видео
+        scanning --> queued_for_telegram
+        converting --> queued_for_telegram
+        encrypting --> queued_for_telegram
+        previewing --> queued_for_telegram
+        queued_for_telegram --> sending
+        sending --> finishing
     }
     running --> done
     running --> failed: ошибка или lost
-    running --> cancelled: cancel
+    running --> cancelled: cancel на любом шаге
     failed --> queued: retry, только по ссылке
     cancelled --> queued: retry, только по ссылке
 ```

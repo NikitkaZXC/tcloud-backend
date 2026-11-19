@@ -56,3 +56,18 @@ def test_waiting_renders_code_and_params():
         _task(waiting={"reason": "flood_wait", "until": 0}), None
     )
     assert (flood.waiting.code, flood.waiting.params) == ("flood_wait", {})
+
+
+def test_step_progress_only_for_measured_running_steps():
+    def render(**values):
+        return TaskService.render(_task(**values), None).step_progress
+
+    assert render(step="sending", bytes_done=50, bytes_total=200) == 0.25
+    assert render(step="scanning", bytes_done=200, bytes_total=200) == 1
+    assert render(step="downloading", bytes_done=50, bytes_total=None) is None
+    assert render(step="finishing", bytes_done=200, bytes_total=200) is None
+    assert render(step="queued_for_telegram", bytes_total=200) is None
+    assert render(step=None, bytes_done=50, bytes_total=200) is None
+    assert (
+        render(status="done", step="sending", bytes_done=200, bytes_total=200) is None
+    )

@@ -175,6 +175,7 @@ class UploadService:
             "user_id": actor.user_id,
             "status": TaskStatus.QUEUED,
             "stage": TaskStage.DOWNLOADING if data.url else TaskStage.SCANNING,
+            "step": queue.step,
             "priority": priority,
             "priority_level": priority.level,
             "path": path,
@@ -201,6 +202,7 @@ class UploadService:
             task.update(
                 status=TaskStatus.DONE,
                 stage=TaskStage.DONE,
+                step=None,
                 file_id=existing.id,
                 waiting=None,
                 warnings=[SKIPPED],
@@ -309,6 +311,7 @@ class UploadService:
             task_id,
             status=TaskStatus.QUEUED,
             stage=TaskStage.DOWNLOADING,
+            step=UploadQueue.DOWNLOAD.step,
             waiting={"reason": f"queue:{UploadQueue.DOWNLOAD}"},
             generation=generation,
             bytes_done=0,
