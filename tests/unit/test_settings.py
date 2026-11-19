@@ -181,3 +181,20 @@ def test_from_stored_keeps_known_hidden_blocks():
     )
     assert value.interface.dashboard_hidden == ["users", "tasks"]
     assert dropped == ["interface.dashboard_hidden"]
+
+
+def test_from_stored_drops_removed_fx_silently():
+    value, dropped = SettingsServiceRead.from_stored(
+        {
+            "interface": {
+                "fx_pet": True,
+                "fx_confetti": True,
+                "fx_cursor": "junk",
+                "fx_sounds": True,
+            }
+        }
+    )
+    assert value.model_dump(mode="json", exclude_unset=True) == {
+        "interface": {"fx_sounds": True}
+    }
+    assert dropped == []

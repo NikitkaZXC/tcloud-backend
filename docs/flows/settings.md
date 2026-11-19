@@ -22,17 +22,18 @@
 и имя ключа, без значений). Вход и `/users/me` не ломаются. Очищенные настройки записываются в колонку при следующем
 `PATCH` (`DELETE` пишет `{}`). Входящий `PATCH` остаётся строгим: неизвестный ключ или значение → `422 validation_error`.
 
-Удалённые ключи `interface` из `LEGACY_INTERFACE` (`schemas/settings.py`) при чтении отбрасываются молча, без
-предупреждения. Бывший `interface.activity_map` переносится: сохранённое `false` добавляет `"activity_map"` в
-`dashboard_hidden` (если его там нет), `true` и прочие значения просто исчезают. `PATCH` с таким ключом — `422`, как с
-любым неизвестным.
+Удалённые ключи `interface` из `LEGACY_INTERFACE` (`schemas/settings.py`: `activity_map`, `fx_pet`, `fx_confetti`,
+`fx_cursor`) при чтении отбрасываются молча, без предупреждения. Бывший `interface.activity_map` переносится:
+сохранённое `false` добавляет `"activity_map"` в `dashboard_hidden` (если его там нет), `true` и прочие значения
+просто исчезают. `PATCH` с таким ключом — `422`, как с любым неизвестным. Достижений (achievements) сервер не хранит и
+не отдаёт.
 
 ```mermaid
 flowchart TD
     subgraph load["Чтение: на каждый запрос, терпимо"]
         db[("users.settings JSONB<br/>только заданные ключи")]
         fs["SettingsServiceRead.from_stored<br/>в UserAuthService.actor"]
-        db --> legacy["LEGACY_INTERFACE: молча убрать;<br/>activity_map=false → dashboard_hidden"]
+        db --> legacy["LEGACY_INTERFACE: activity_map, fx_pet,<br/>fx_confetti, fx_cursor — молча убрать;<br/>activity_map=false → dashboard_hidden"]
         legacy --> fs
         fs -->|"неизвестная группа или ключ,<br/>невалидное значение"| warn["warning в лог: id и ключ,<br/>ключ отброшен"]
         fs -->|"список или словарь<br/>с невалидными элементами"| items["warning в лог,<br/>остаются валидные элементы<br/>(у списка — без повторов)"]
@@ -104,10 +105,7 @@ Content-Type: application/json
     "confirm_delete": true,
     "start_page": "dashboard",
     "tasks_filter": "all",
-    "fx_pet": false,
     "fx_sounds": false,
-    "fx_confetti": false,
-    "fx_cursor": false,
     "fx_easter_eggs": true,
     "dashboard_layout": [],
     "dashboard_hidden": [],
@@ -151,10 +149,7 @@ Content-Type: application/json
 | `confirm_delete` | `true`, `false` | `true` | спрашивать перед удалением |
 | `start_page` | `dashboard`, `storages`, `tasks` | `dashboard` | страница после входа |
 | `tasks_filter` | `all`, `active_and_failed` | `all` | фильтр списка задач |
-| `fx_pet` | `true`, `false` | `false` | питомец |
 | `fx_sounds` | `true`, `false` | `false` | звуки |
-| `fx_confetti` | `true`, `false` | `false` | конфетти |
-| `fx_cursor` | `true`, `false` | `false` | эффект курсора |
 | `fx_easter_eggs` | `true`, `false` | `true` | пасхалки |
 | `dashboard_layout` | список id блоков дашборда: `summary`, `previews`, `channels`, `storages`, `tasks`, `activity_map`, `system`, `users` (`DashboardBlock` в `schemas/settings.py`), без повторов, не длиннее числа блоков | `[]` | порядок блоков дашборда; `[]` — порядок по умолчанию. В сохранённых настройках неизвестные id и повторы выбрасываются поштучно (остальной порядок сохраняется), `PATCH` с неизвестным id — `422` |
 | `dashboard_hidden` | список id блоков дашборда (тот же `DashboardBlock`), без повторов, не длиннее числа блоков | `[]` | скрытые блоки дашборда; `[]` — видны все. Чтение и `PATCH` — как у `dashboard_layout` (поштучная чистка сохранённого, `422` на неизвестный id или повтор) |

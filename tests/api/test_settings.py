@@ -31,10 +31,7 @@ DEFAULTS = {
         "confirm_delete": True,
         "start_page": "dashboard",
         "tasks_filter": "all",
-        "fx_pet": False,
         "fx_sounds": False,
-        "fx_confetti": False,
-        "fx_cursor": False,
         "fx_easter_eggs": True,
         "dashboard_layout": [],
         "dashboard_hidden": [],
@@ -122,10 +119,10 @@ async def test_partial_patch_keeps_other_keys(client):
 
 
 async def test_settings_in_me(client):
-    await patch(client, {"interface": {"language": "en", "fx_pet": True}})
+    await patch(client, {"interface": {"language": "en", "fx_sounds": True}})
     me = (await client.get("/users/me")).json()
     assert me["settings"]["interface"]["language"] == "en"
-    assert me["settings"]["interface"]["fx_pet"] is True
+    assert me["settings"]["interface"]["fx_sounds"] is True
     assert me["settings"]["uploads"] == DEFAULTS["uploads"]
 
 
@@ -157,6 +154,9 @@ async def test_language_back_to_browser(client):
         {"uploads": {"colour": "red"}},
         {"interface": {"fx_rainbow": True}},
         {"interface": {"activity_map": False}},
+        {"interface": {"fx_pet": True}},
+        {"interface": {"fx_confetti": True}},
+        {"interface": {"fx_cursor": True}},
         {"uploads": {"send_as": "photo"}},
         {"uploads": {"priority": "urgent"}},
         {"uploads": {"on_conflict": "overwrite"}},
@@ -412,6 +412,8 @@ STALE = {
         "theme": "retired-theme",
         "folder_view": "grid",
         "activity_map": False,
+        "fx_pet": True,
+        "fx_cursor": "junk",
     },
     "old_group": {"x": 1},
 }

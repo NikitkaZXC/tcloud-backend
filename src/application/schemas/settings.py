@@ -18,7 +18,7 @@ DashboardBlock = Literal[
 
 FileColumn = Literal["name", "type", "size", "modified", "uploaded"]
 
-LEGACY_INTERFACE = {"activity_map"}
+LEGACY_INTERFACE = {"activity_map", "fx_pet", "fx_confetti", "fx_cursor"}
 
 
 class SettingsGroup(BaseModel):
@@ -60,10 +60,7 @@ class InterfaceSettingsServiceRead(SettingsGroup):
     confirm_delete: bool = True
     start_page: Literal["dashboard", "storages", "tasks"] = "dashboard"
     tasks_filter: Literal["all", "active_and_failed"] = "all"
-    fx_pet: bool = False
     fx_sounds: bool = False
-    fx_confetti: bool = False
-    fx_cursor: bool = False
     fx_easter_eggs: bool = True
     dashboard_layout: list[DashboardBlock] = Field(
         default_factory=list, max_length=len(get_args(DashboardBlock))
