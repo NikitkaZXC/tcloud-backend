@@ -14,6 +14,14 @@ class UserRepository:
     async def get_by_id(self, user_id: UUID) -> UserDB | None:
         return await self._session.get(UserDB, user_id, populate_existing=True)
 
+    async def get_for_update(self, user_id: UUID) -> UserDB | None:
+        return await self._session.scalar(
+            select(UserDB)
+            .where(UserDB.id == user_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+
     async def get_by_login(self, login: str) -> UserDB | None:
         return await self._session.scalar(select(UserDB).where(UserDB.login == login))
 

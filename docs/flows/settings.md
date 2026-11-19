@@ -42,17 +42,23 @@ flowchart TD
     end
     subgraph write["PATCH /api/account/settings: строго"]
         body["тело JSON"] --> strict["SettingsServiceRead, extra=forbid<br/>ошибка → 422 validation_error"]
-        strict --> merge["actor.settings.merged(patch):<br/>по группам, exclude_unset"]
+        strict --> lock["SELECT users … FOR UPDATE<br/>from_stored(users.settings)"]
+        lock --> merge["current.merged(patch):<br/>по группам, exclude_unset"]
         merge --> wh["check_webhook(webhook_url)<br/>→ 422 unsafe_url"]
         wh --> save["users.settings = model_dump(exclude_unset)<br/>отброшенные ключи уходят из колонки"]
         save --> chg{"root и chat_folder изменился?"}
         chg -->|да| sync["StorageService.sync_folder"]
     end
-    reset["DELETE /api/account/settings"] --> zero["users.settings = {}"] --> chg
-    actor --> merge
+    reset["DELETE /api/account/settings"] --> lock2["SELECT users … FOR UPDATE"] --> zero["users.settings = {}"] --> chg
     actor --> use["значения по умолчанию:<br/>UploadServiceCreate.with_defaults,<br/>FolderService.create_archive / create_selection_archive"]
     actor --> me["GET /api/account/settings, GET /api/users/me"]
 ```
+
+`PATCH` сливает тело не с `Actor.settings` (прочитаны в начале запроса и могут устареть), а с колонкой, перечитанной
+под `SELECT … FOR UPDATE` строки пользователя в той же транзакции (`UserRepository.get_for_update`, по первичному
+ключу — индекс не нужен). Поэтому параллельные `PATCH` с разными ключами (две вкладки, API-клиенты) выполняются по
+очереди и не теряют изменения друг друга; `DELETE` берёт ту же блокировку. Сравнение `chat_folder` для
+`sync_folder` тоже идёт с перечитанным значением.
 
 Код: `src/application/schemas/settings.py` (`SettingsServiceRead`, `merged`, `from_stored`),
 `src/application/services/settings.py` (`SettingsService`), `src/api/routes/settings.py`.

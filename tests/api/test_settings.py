@@ -118,6 +118,16 @@ async def test_partial_patch_keeps_other_keys(client):
     assert await patch(client, {}) == expected
 
 
+async def test_concurrent_patches_keep_every_key(client):
+    keys = ["fx_sounds", "animations", "confirm_delete", "folders_first"]
+    for flag in (True, False) * 5:
+        await asyncio.gather(
+            *(patch(client, {"interface": {key: flag}}) for key in keys)
+        )
+        saved = (await client.get("/account/settings")).json()["interface"]
+        assert {key: saved[key] for key in keys} == dict.fromkeys(keys, flag)
+
+
 async def test_settings_in_me(client):
     await patch(client, {"interface": {"language": "en", "fx_sounds": True}})
     me = (await client.get("/users/me")).json()
