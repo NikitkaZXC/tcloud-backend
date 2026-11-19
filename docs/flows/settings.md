@@ -22,10 +22,18 @@
 и имя ключа, без значений). Вход и `/users/me` не ломаются. Очищенные настройки записываются в колонку при следующем
 `PATCH` (`DELETE` пишет `{}`). Входящий `PATCH` остаётся строгим: неизвестный ключ или значение → `422 validation_error`.
 
+Удалённые ключи `interface` из `LEGACY_INTERFACE` (`schemas/settings.py`) при чтении отбрасываются молча, без
+предупреждения. Бывший `interface.activity_map` переносится: сохранённое `false` добавляет `"activity_map"` в
+`dashboard_hidden` (если его там нет), `true` и прочие значения просто исчезают. `PATCH` с таким ключом — `422`, как с
+любым неизвестным.
+
 ```mermaid
 flowchart TD
     subgraph load["Чтение: на каждый запрос, терпимо"]
-        db[("users.settings JSONB<br/>только заданные ключи")] --> fs["SettingsServiceRead.from_stored<br/>в UserAuthService.actor"]
+        db[("users.settings JSONB<br/>только заданные ключи")]
+        fs["SettingsServiceRead.from_stored<br/>в UserAuthService.actor"]
+        db --> legacy["LEGACY_INTERFACE: молча убрать;<br/>activity_map=false → dashboard_hidden"]
+        legacy --> fs
         fs -->|"неизвестная группа или ключ,<br/>невалидное значение"| warn["warning в лог: id и ключ,<br/>ключ отброшен"]
         fs -->|"список или словарь<br/>с невалидными элементами"| items["warning в лог,<br/>остаются валидные элементы<br/>(у списка — без повторов)"]
         items --> actor
@@ -93,7 +101,6 @@ Content-Type: application/json
     "sort_order": "asc",
     "folders_first": true,
     "animations": true,
-    "activity_map": true,
     "confirm_delete": true,
     "start_page": "dashboard",
     "tasks_filter": "all",
@@ -103,6 +110,7 @@ Content-Type: application/json
     "fx_cursor": false,
     "fx_easter_eggs": false,
     "dashboard_layout": [],
+    "dashboard_hidden": [],
     "file_columns": {}
   },
   "telegram": {"chat_folder": true}
@@ -140,7 +148,6 @@ Content-Type: application/json
 | `sort_order` | `asc`, `desc` | `asc` | направление сортировки |
 | `folders_first` | `true`, `false` | `true` | папки перед файлами |
 | `animations` | `true`, `false` | `true` | анимации интерфейса |
-| `activity_map` | `true`, `false` | `true` | карта загрузок (тепловая карта активности) на дашборде |
 | `confirm_delete` | `true`, `false` | `true` | спрашивать перед удалением |
 | `start_page` | `dashboard`, `storages`, `tasks` | `dashboard` | страница после входа |
 | `tasks_filter` | `all`, `active_and_failed` | `all` | фильтр списка задач |
@@ -150,6 +157,7 @@ Content-Type: application/json
 | `fx_cursor` | `true`, `false` | `false` | эффект курсора |
 | `fx_easter_eggs` | `true`, `false` | `false` | пасхалки |
 | `dashboard_layout` | список id блоков дашборда: `summary`, `previews`, `channels`, `storages`, `tasks`, `activity_map`, `system`, `users` (`DashboardBlock` в `schemas/settings.py`), без повторов, не длиннее числа блоков | `[]` | порядок блоков дашборда; `[]` — порядок по умолчанию. В сохранённых настройках неизвестные id и повторы выбрасываются поштучно (остальной порядок сохраняется), `PATCH` с неизвестным id — `422` |
+| `dashboard_hidden` | список id блоков дашборда (тот же `DashboardBlock`), без повторов, не длиннее числа блоков | `[]` | скрытые блоки дашборда; `[]` — видны все. Чтение и `PATCH` — как у `dashboard_layout` (поштучная чистка сохранённого, `422` на неизвестный id или повтор) |
 | `file_columns` | словарь «колонка → ширина в px»: колонки `name`, `type`, `size`, `modified`, `uploaded` (`FileColumn` в `schemas/settings.py`), ширина — целое `48`…`2000` | `{}` | ширины колонок списка файлов; отсутствующая колонка — ширина по умолчанию фронтенда. В сохранённых настройках неизвестные колонки и невалидные ширины выбрасываются поштучно, `PATCH` с неизвестной колонкой или шириной вне диапазона — `422` |
 
 ### `telegram` — аккаунт Telegram, учитывается только у root

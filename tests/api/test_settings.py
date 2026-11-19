@@ -28,7 +28,6 @@ DEFAULTS = {
         "sort_order": "asc",
         "folders_first": True,
         "animations": True,
-        "activity_map": True,
         "confirm_delete": True,
         "start_page": "dashboard",
         "tasks_filter": "all",
@@ -38,6 +37,7 @@ DEFAULTS = {
         "fx_cursor": False,
         "fx_easter_eggs": False,
         "dashboard_layout": [],
+        "dashboard_hidden": [],
         "file_columns": {},
     },
     "telegram": {"chat_folder": True},
@@ -129,14 +129,19 @@ async def test_settings_in_me(client):
     assert me["settings"]["uploads"] == DEFAULTS["uploads"]
 
 
-async def test_activity_map_toggle(client):
+async def test_dashboard_hidden(client):
+    saved = await patch(
+        client, {"interface": {"dashboard_hidden": ["activity_map", "users"]}}
+    )
+    assert saved["interface"]["dashboard_hidden"] == ["activity_map", "users"]
+    for hidden in (["nope"], ["users", "users"], ["users"] * 9, "users"):
+        response = await client.patch(
+            "/account/settings", json={"interface": {"dashboard_hidden": hidden}}
+        )
+        assert response.status_code == 422 and code(response) == "validation_error"
     assert (await client.get("/account/settings")).json()["interface"][
-        "activity_map"
-    ] is True
-    await patch(client, {"interface": {"activity_map": False}})
-    assert (await client.get("/account/settings")).json()["interface"][
-        "activity_map"
-    ] is False
+        "dashboard_hidden"
+    ] == ["activity_map", "users"]
 
 
 async def test_language_back_to_browser(client):
@@ -151,6 +156,7 @@ async def test_language_back_to_browser(client):
         {"unknown": {}},
         {"uploads": {"colour": "red"}},
         {"interface": {"fx_rainbow": True}},
+        {"interface": {"activity_map": False}},
         {"uploads": {"send_as": "photo"}},
         {"uploads": {"priority": "urgent"}},
         {"uploads": {"on_conflict": "overwrite"}},
@@ -402,7 +408,11 @@ async def test_theme_values(client, theme):
 
 STALE = {
     "uploads": {"priority": "high", "removed_key": 1},
-    "interface": {"theme": "retired-theme", "folder_view": "grid"},
+    "interface": {
+        "theme": "retired-theme",
+        "folder_view": "grid",
+        "activity_map": False,
+    },
     "old_group": {"x": 1},
 }
 
@@ -429,6 +439,7 @@ async def test_stale_stored_settings_do_not_break_login(engine, make_user, login
     expected = json.loads(json.dumps(DEFAULTS))
     expected["uploads"]["priority"] = "high"
     expected["interface"]["folder_view"] = "grid"
+    expected["interface"]["dashboard_hidden"] = ["activity_map"]
     assert me.json()["settings"] == expected
     assert (await again.get("/account/settings")).json() == expected
     assert await stored(engine, alice.user_id) == STALE
@@ -438,5 +449,5 @@ async def test_stale_stored_settings_do_not_break_login(engine, make_user, login
     assert await stored(engine, alice.user_id) == {
         "uploads": {"priority": "high"},
         "archives": {"priority": "low"},
-        "interface": {"folder_view": "grid"},
+        "interface": {"folder_view": "grid", "dashboard_hidden": ["activity_map"]},
     }

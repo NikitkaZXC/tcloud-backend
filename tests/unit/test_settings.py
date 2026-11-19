@@ -150,3 +150,34 @@ def test_from_stored_keeps_valid_file_columns():
     )
     assert value.interface.file_columns == {"name": 300}
     assert dropped == ["interface.file_columns", "interface.gone"]
+
+
+@pytest.mark.parametrize(
+    ("interface", "hidden"),
+    [
+        ({"activity_map": False}, ["activity_map"]),
+        ({"activity_map": True}, []),
+        ({"activity_map": "junk"}, []),
+        (
+            {"activity_map": False, "dashboard_hidden": ["users"]},
+            ["users", "activity_map"],
+        ),
+        (
+            {"activity_map": False, "dashboard_hidden": ["activity_map"]},
+            ["activity_map"],
+        ),
+    ],
+)
+def test_from_stored_migrates_activity_map_silently(interface, hidden):
+    value, dropped = SettingsServiceRead.from_stored({"interface": interface})
+    assert value.interface.dashboard_hidden == hidden
+    assert "activity_map" not in value.interface.model_dump()
+    assert dropped == []
+
+
+def test_from_stored_keeps_known_hidden_blocks():
+    value, dropped = SettingsServiceRead.from_stored(
+        {"interface": {"dashboard_hidden": ["users", "gone", "users", "tasks"]}}
+    )
+    assert value.interface.dashboard_hidden == ["users", "tasks"]
+    assert dropped == ["interface.dashboard_hidden"]

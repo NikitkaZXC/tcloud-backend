@@ -18,6 +18,8 @@ DashboardBlock = Literal[
 
 FileColumn = Literal["name", "type", "size", "modified", "uploaded"]
 
+LEGACY_INTERFACE = {"activity_map"}
+
 
 class SettingsGroup(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -55,7 +57,6 @@ class InterfaceSettingsServiceRead(SettingsGroup):
     sort_order: Literal["asc", "desc"] = "asc"
     folders_first: bool = True
     animations: bool = True
-    activity_map: bool = True
     confirm_delete: bool = True
     start_page: Literal["dashboard", "storages", "tasks"] = "dashboard"
     tasks_filter: Literal["all", "active_and_failed"] = "all"
@@ -67,12 +68,15 @@ class InterfaceSettingsServiceRead(SettingsGroup):
     dashboard_layout: list[DashboardBlock] = Field(
         default_factory=list, max_length=len(get_args(DashboardBlock))
     )
+    dashboard_hidden: list[DashboardBlock] = Field(
+        default_factory=list, max_length=len(get_args(DashboardBlock))
+    )
 
     file_columns: dict[FileColumn, Annotated[int, Field(ge=48, le=2000)]] = Field(
         default_factory=dict
     )
 
-    @field_validator("dashboard_layout")
+    @field_validator("dashboard_layout", "dashboard_hidden")
     @classmethod
     def unique_blocks(cls, value: list[str]) -> list[str]:
         if len(set(value)) != len(value):
@@ -111,6 +115,21 @@ class SettingsServiceRead(SettingsGroup):
     @classmethod
     def from_stored(cls, raw: dict) -> tuple["SettingsServiceRead", list[str]]:
         kept, dropped = {}, []
+        interface = raw.get("interface")
+        if isinstance(interface, dict) and LEGACY_INTERFACE & interface.keys():
+            cleaned = {
+                key: value
+                for key, value in interface.items()
+                if key not in LEGACY_INTERFACE
+            }
+            hidden = cleaned.get("dashboard_hidden", [])
+            if (
+                interface.get("activity_map") is False
+                and isinstance(hidden, list)
+                and "activity_map" not in hidden
+            ):
+                cleaned["dashboard_hidden"] = [*hidden, "activity_map"]
+            raw = {**raw, "interface": cleaned}
         for group, values in raw.items():
             field = cls.model_fields.get(group)
             if field is None or not isinstance(values, dict):
