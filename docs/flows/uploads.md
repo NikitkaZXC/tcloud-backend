@@ -42,8 +42,12 @@ background-tasks.md («Путь загрузки целиком», «Стату�
 
 ## Типы файлов
 
-Медиа (`kind`: `photo`, `video`, `audio`, `animation`) и всё остальное (`kind = document`, MIME по содержимому или
-`application/octet-stream`). Исполняемые файлы, скрипты и установщики — `415 blocked_file_type`, в том числе внутри zip.
+Медиа (`kind`: `photo`, `video`, `audio`, `animation`) и всё остальное (`kind = document`, MIME по содержимому; если
+содержимое не узнано (`filetype` не знает текст) — по расширению из встроенной таблицы Python `mimetypes`
+(`MimeTypes(filenames=())`, не зависит от `/etc/mime.types`): `.txt` → `text/plain`, `.md` → `text/markdown`, `.csv`,
+`.json` …; `image/*`, `audio/*`, `video/*` по имени не присваиваются; иначе `application/octet-stream`). MIME документа —
+только метаданные (поиск, фильтры): отдаются документы всегда как `application/octet-stream` + `attachment`. Миграция
+`0014` один раз проставила такие типы старым документам с `application/octet-stream` по расширению. Исполняемые файлы, скрипты и установщики — `415 blocked_file_type`, в том числе внутри zip.
 Все проверки — в security.md.
 
 ## `allow_unscannable`

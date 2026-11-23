@@ -1,5 +1,6 @@
 import io
 import json
+import mimetypes
 import subprocess
 import warnings
 import zipfile
@@ -81,6 +82,8 @@ EXECUTABLE_MAGIC = (
     b"dex\n",
 )
 DOCUMENT_MIME = "application/octet-stream"
+NAME_TYPES = mimetypes.MimeTypes(filenames=())
+MEDIA_PREFIXES = ("image/", "audio/", "video/")
 PREVIEW_MAX = 20 * 1024
 SNIFF_BYTES = 8192
 TIMEOUT = 120
@@ -124,6 +127,11 @@ def sniff(head: bytes) -> str | None:
     return mime
 
 
+def mime_by_name(name: str | None) -> str | None:
+    guess = NAME_TYPES.guess_type(f"x.{extension(name)}")[0] if name else None
+    return None if not guess or guess.startswith(MEDIA_PREFIXES) else guess
+
+
 def probe(path: Path, name: str | None) -> Media:
     with open(path, "rb") as file:
         mime = sniff(file.read(SNIFF_BYTES))
@@ -133,7 +141,7 @@ def probe(path: Path, name: str | None) -> Media:
         media = _audio_video(path, mime)
     else:
         _check_archive(path)
-        media = Media(mime or DOCUMENT_MIME, MediaKind.DOCUMENT)
+        media = Media(mime or mime_by_name(name) or DOCUMENT_MIME, MediaKind.DOCUMENT)
     if name is not None and not _name_fits(media.kind, extension(name)):
         raise ExtensionMismatchError(
             f"file content is {media.kind} ({media.mime}), but the name ends with .{extension(name)}"

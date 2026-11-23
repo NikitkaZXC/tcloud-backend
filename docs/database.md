@@ -137,6 +137,7 @@ erDiagram
 | `0011` | частичный индекс `ix_files_missing_preview` для дозаполнения превью |
 | `0012` | частичный индекс `ix_files_preview` для очистки превью |
 | `0013` | keyset-индексы `ix_files_list_*` для постраничного листинга папок |
+| `0014` | данные: MIME по расширению (`text/plain`, `text/markdown`, …) для документов, сохранённых как `application/octet-stream` |
 
 Новая ревизия: `uv run alembic revision --autogenerate -m "..."`. Существующие файлы не правим.
 `tests/integration/test_migrations.py` проверяет, что модели совпадают с миграциями и что всё откатывается до `base` и обратно.

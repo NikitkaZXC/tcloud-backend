@@ -136,7 +136,12 @@ def test_executable_content_blocked(tmp_path, data, name):
     "data,name,mime",
     [
         (PDF, "report.pdf", "application/pdf"),
-        (b"just text", "notes.txt", "application/octet-stream"),
+        (b"just text", "notes.txt", "text/plain"),
+        (b"# title", "README.MD", "text/markdown"),
+        (b"a,b", "table.csv", "text/csv"),
+        (b"{}", "data.json", "application/json"),
+        (b"<svg/>", "icon.svg", "application/octet-stream"),
+        (b"\x00\x01", "blob.unknownext", "application/octet-stream"),
         (b"", "empty", "application/octet-stream"),
         (make_zip({"a.txt": b"x", "dir/b.csv": b"y"}), "a.zip", "application/zip"),
     ],
