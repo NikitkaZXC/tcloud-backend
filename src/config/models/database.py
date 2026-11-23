@@ -16,7 +16,7 @@ class DatabaseSettings(BaseSettings):
     POOL_SIZE: int = 10
     POOL_OVERFLOW: int = 10
     TIMEOUT: int = 5
-    POOL_PRE_PING: bool = True
+    POOL_RECYCLE: int = 1800
 
     @property
     def ASYNC_URL(self) -> SecretStr:

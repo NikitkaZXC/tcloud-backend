@@ -22,7 +22,11 @@ from src.application.schemas import (
 )
 from src.config import settings
 from src.infrastructure.background import AppRuntime
-from src.infrastructure.database.models import RefreshTokenDB, UserDB
+from src.infrastructure.database.models import (
+    FolderGrantDB,
+    RefreshTokenDB,
+    UserDB,
+)
 from src.infrastructure.database.repositories import (
     ApiKeyRepository,
     GrantRepository,
@@ -186,15 +190,16 @@ class UserAuthService:
         logger.info("User {} changed the password", user.id)
         return pair
 
-    async def actor(self, user: UserDB, jti: UUID | None = None) -> Actor:
-        grants = (
-            []
-            if user.role in (UserRole.ROOT, UserRole.ADMIN)
-            else [
-                GrantServiceRead.from_db(grant)
-                for grant in await self._grants.get_by_user(user.id)
-            ]
-        )
+    async def actor(
+        self,
+        user: UserDB,
+        jti: UUID | None = None,
+        grants: list[FolderGrantDB] | None = None,
+    ) -> Actor:
+        if user.role in (UserRole.ROOT, UserRole.ADMIN):
+            grants = []
+        elif grants is None:
+            grants = await self._grants.get_by_user(user.id)
         stored, dropped = SettingsServiceRead.from_stored(user.settings)
         for key in dropped:
             logger.warning("User {}: stored setting {} ignored", user.id, key)
@@ -203,7 +208,7 @@ class UserAuthService:
             login=user.login,
             role=user.role,
             jti=jti,
-            grants=grants,
+            grants=[GrantServiceRead.from_db(grant) for grant in grants],
             settings=stored,
         )
 
@@ -211,22 +216,23 @@ class UserAuthService:
         payload = decode_access_token(access_token)
         if await self._blacklist.revoked(payload.jti):
             raise TokenInvalidError("access token is revoked")
-        user = await self._users.get_by_id(payload.user_id)
-        if not user:
+        found = await self._users.get_with_grants(payload.user_id)
+        if not found:
             raise TokenInvalidError("user no longer exists")
+        user, grants = found
         if user.blocked:
             raise UserBlockedError("user is blocked")
-        return await self.actor(user, payload.jti)
+        return await self.actor(user, payload.jti, grants)
 
     async def authenticate_key(self, raw_key: str) -> Actor:
         key = await self._keys.get_by_hash(hash_secret(raw_key))
         if not key:
             raise NotAuthenticatedError("invalid API key")
-        user = await self._users.get_by_id(key.user_id)
+        user, grants = await self._users.get_with_grants(key.user_id)
         if user.blocked:
             raise UserBlockedError("user is blocked")
         now = datetime.now(UTC)
         if not key.last_used_at or now - key.last_used_at > KEY_TOUCH_INTERVAL:
             await self._keys.touch(key.id)
             await self._session.commit()
-        return await self.actor(user)
+        return await self.actor(user, grants=grants)

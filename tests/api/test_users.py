@@ -4,6 +4,7 @@ import zipfile
 import pytest
 from httpx import ASGITransport, AsyncClient
 from pydantic import SecretStr
+from sqlalchemy import text
 
 import main
 from src.application.bootstrap.startup import prepare
@@ -463,3 +464,16 @@ async def test_cors_allows_configured_frontend(client):
         },
     )
     assert "access-control-allow-origin" not in foreign.headers
+
+
+async def test_first_request_after_postgres_restart_succeeds(client, engine):
+    assert (await client.get("/account")).status_code == 200
+    async with engine.connect() as admin:
+        await admin.execute(
+            text(
+                "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
+                "WHERE datname = current_database() AND pid <> pg_backend_pid()"
+            )
+        )
+    assert (await client.get("/account")).status_code == 200
+    assert (await client.get("/storages")).status_code == 200

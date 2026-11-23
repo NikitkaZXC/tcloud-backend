@@ -82,14 +82,15 @@ flowchart TD
     k -->|нет| c{"кука access?"}
     c -->|нет| e["401 unauthorized"]
     c -->|да| jwt["проверка RS256 и срока → 401 token_invalid / token_expired<br/>revoked:{jti} в Redis → 401 token_invalid"]
-    key --> user["users по user_id<br/>blocked → 403 user_blocked"]
+    key --> user["users LEFT JOIN folder_grants по user_id одним запросом<br/>(get_with_grants), blocked → 403 user_blocked"]
     jwt --> user
     user --> actor["UserAuthService.actor: гранты (только у user),<br/>settings через from_stored → Actor"]
     actor --> svc["сервисы проверяют права: services/access.py"]
 ```
 
 JWT несёт `sub`, `user_id`, `role`, `jti`, `iat`, `exp`, `token_type`. Права берутся не из токена: на каждый запрос
-пользователь и гранты читаются из БД, поэтому блокировка, смена роли и изменение грантов действуют сразу.
+пользователь и гранты читаются из БД (один `SELECT users LEFT JOIN folder_grants`, `UserRepository.get_with_grants`,
+по `UNIQUE(user_id, storage_id, path)`), поэтому блокировка, смена роли и изменение грантов действуют сразу.
 Отозванные access-токены хранятся в Redis (`{REDIS_PREFIX}:revoked:{jti}`) до конца их срока, в refresh-таблице лежит
 только HMAC-SHA256 от `APP_SECRET_KEY`.
 

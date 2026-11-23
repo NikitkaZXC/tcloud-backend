@@ -3,7 +3,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.infrastructure.database.models import UserDB
+from src.infrastructure.database.models import FolderGrantDB, UserDB
 from src.infrastructure.enums import UserRole
 
 
@@ -13,6 +13,22 @@ class UserRepository:
 
     async def get_by_id(self, user_id: UUID) -> UserDB | None:
         return await self._session.get(UserDB, user_id, populate_existing=True)
+
+    async def get_with_grants(
+        self, user_id: UUID
+    ) -> tuple[UserDB, list[FolderGrantDB]] | None:
+        rows = (
+            await self._session.execute(
+                select(UserDB, FolderGrantDB)
+                .outerjoin(FolderGrantDB, FolderGrantDB.user_id == UserDB.id)
+                .where(UserDB.id == user_id)
+                .order_by(FolderGrantDB.storage_id, FolderGrantDB.path)
+                .execution_options(populate_existing=True)
+            )
+        ).all()
+        if not rows:
+            return None
+        return rows[0][0], [grant for _, grant in rows if grant is not None]
 
     async def get_for_update(self, user_id: UUID) -> UserDB | None:
         return await self._session.scalar(

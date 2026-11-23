@@ -29,10 +29,16 @@ flowchart LR
 - **API** (`main.py`): HTTP, приём тел загрузок в `tmp`, постановка задач, отдача файлов из Telegram с `Range`,
   вход в Telegram, `TaskSweeper` (потерянные задачи, уборка `tmp`) и чистка старых Telegram-сессий в фоне.
   Состояние процесса — `AppRuntime` (`src/infrastructure/background/runtime.py`): клиенты Telegram `telegram` (сессия
-  `api`, `receive_updates=True`) и `download`, сканер, `TaskStore`, кеши Premium и числа каналов, логины в процессе.
+  `api`, `receive_updates=True`) и `download`, сканер, `TaskStore`, кеш сообщений Telegram `media` (`MediaCache`), логины в процессе (Premium и число каналов — в Redis).
 - **Воркеры** (`src/application/tasks/upload.py`): один образ, Celery `--pool threads`; `WorkerRuntime`
   (`background/worker.py`) — свой event loop, движок БД с `NullPool`, Redis и ленивый клиент Telegram сессии `upload`
   (его открывает только `worker-telegram`). Подробно — background-tasks.md.
+- **Пул PostgreSQL API** (`database/engine.py`): без `pool_pre_ping` (лишний `SELECT 1` на каждую выдачу
+  соединения), `pool_recycle` = `POSTGRES_POOL_RECYCLE` (1800 с). Если первый запрос транзакции падает на
+  разорванном соединении (Postgres перезапущен), SQLAlchemy помечает весь пул недействительным, а
+  `ReconnectingSession` (`database/session.py`, `sync_session_class` у `session_factory`) откатывает сессию и
+  повторяет этот запрос один раз на новом соединении — первый запрос после рестарта БД не отвечает `500`. Внутри уже
+  начатой транзакции повтора нет (ошибка уходит как раньше).
 - **Хранилища данных**: PostgreSQL — database.md, Redis — redis.md, RabbitMQ — очереди с `x-max-priority=9`.
 - **Telegram**: три сессии одного аккаунта (integrations.md, flows/auth.md).
 - **ClamAV**: `clamav/clamav:*-debian`, строгий `docker/clamd.conf` (security.md).
