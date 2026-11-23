@@ -2,9 +2,11 @@ import asyncio
 import time
 import uuid
 from collections import defaultdict
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
+from loguru import logger
 from starlette.requests import ClientDisconnect
 
 import main
@@ -244,6 +246,20 @@ async def test_cancel_after_message_sent_deletes_it(client, telegram, storage, w
     assert page["items"] == []
 
 
+@contextmanager
+def logger_messages():
+    messages: list[tuple[str, str]] = []
+    sink = logger.add(
+        lambda message: messages.append(
+            (message.record["level"].name, message.record["message"])
+        )
+    )
+    try:
+        yield messages
+    finally:
+        logger.remove(sink)
+
+
 async def test_client_disconnect_mid_body_leaves_nothing(client, storage, monkeypatch):
     monkeypatch.setattr(settings.upload, "MAX_FILES_ON_DISK", 1)
     data = make_image()
@@ -253,13 +269,17 @@ async def test_client_disconnect_mid_body_leaves_nothing(client, storage, monkey
         raise ClientDisconnect()
 
     target = path(storage, "a.jpg")
-    with pytest.raises(ClientDisconnect):
-        await client.post(
+    with logger_messages() as messages:
+        response = await client.post(
             "/uploads",
             params={"path": target},
             content=chunks(),
             headers={"Content-Length": str(len(data))},
         )
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "client_disconnected"
+    assert [level for level, text in messages if "disconnected" in text] == ["INFO"]
+    assert not [level for level, _ in messages if level == "ERROR"]
     assert list(settings.upload.TMP_DIR.iterdir()) == []
     assert (await client.get("/tasks/counts")).json()["total"] == 0
     assert (await upload(client, target, data))["status"] == "done"

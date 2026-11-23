@@ -2,7 +2,9 @@ from fastapi import FastAPI, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from loguru import logger
 from starlette.exceptions import HTTPException
+from starlette.requests import ClientDisconnect
 
 from src.api.exception.errors import status_for
 from src.utilities.errors import TCloudError
@@ -36,7 +38,15 @@ async def validation_error(_: Request, error: RequestValidationError) -> JSONRes
     )
 
 
+async def client_disconnect(request: Request, _: ClientDisconnect) -> JSONResponse:
+    logger.info("Client disconnected during {} {}", request.method, request.url.path)
+    return error_response(
+        400, {"code": "client_disconnected", "message": "the client went away"}
+    )
+
+
 def register_exception_handlers(app: FastAPI) -> None:
+    app.add_exception_handler(ClientDisconnect, client_disconnect)
     app.add_exception_handler(TCloudError, tcloud_error)
     app.add_exception_handler(HTTPException, http_error)
     app.add_exception_handler(RequestValidationError, validation_error)
