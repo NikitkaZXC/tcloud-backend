@@ -138,3 +138,40 @@ async def test_cancelled_build_leaves_no_parts(tmp_path, monkeypatch):
             checkpoint,
         )
     assert [path.name for path in tmp_path.iterdir()] == ["out.zip"]
+
+
+@pytest.mark.parametrize("archive_format", list(ArchiveFormat))
+async def test_failed_build_closes_the_writer(archive_format, tmp_path, monkeypatch):
+    monkeypatch.setattr(settings.upload, "TMP_DIR", tmp_path)
+    aborted: list[ArchiveWriter] = []
+    original = ArchiveWriter.abort
+
+    def abort(self) -> None:
+        original(self)
+        aborted.append(self)
+
+    monkeypatch.setattr(ArchiveWriter, "abort", abort)
+    calls = 0
+
+    async def checkpoint() -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise RuntimeError("telegram died")
+
+    with pytest.raises(RuntimeError):
+        await build_archive(
+            Download(),
+            1,
+            archived_files(),
+            "",
+            archive_format,
+            tmp_path / "out",
+            lambda done: None,
+            checkpoint,
+        )
+    [writer] = aborted
+    if writer._zip:
+        assert writer._zip.fp is None
+    if writer._tar:
+        assert writer._tar.closed

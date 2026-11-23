@@ -27,7 +27,9 @@ flowchart LR
 приоритет, отмена, место в очереди, heartbeat, `TaskSweeper`), со стадией `archiving` и `params.source = archive`.
 Она занимает поток `worker-telegram`: при двух потоках два больших архива задержат выгрузку в Telegram, поднимите
 `TELEGRAM_CONCURRENCY`, если это мешает. Готовый архив лежит в `tmp` `UPLOAD_ARCHIVE_TTL` (24 ч): путь и срок — в
-Redis (`archives`), уборка `TaskSweeper` их не трогает до срока и удаляет после.
+Redis (`archives`), уборка `TaskSweeper` их не трогает до срока и удаляет после. Ошибка или отмена посреди сборки закрывает
+архиватор (`ArchiveWriter.abort`) до закрытия файла, поэтому `ZipFile`/`TarFile` не пытаются дописать оглавление в
+уже закрытый файл при сборке мусора.
 
 ## Дозаполнение превью
 

@@ -36,61 +36,69 @@ async def build_archive(
     with target.open("wb") as output:
         target.chmod(0o600)
         writer = ArchiveWriter(archive_format, output)
-        for file in files:
-            await checkpoint()
-            name = entry_name(base, file)
-            part = temp_path(file.name)
-            try:
+        try:
+            for file in files:
+                await checkpoint()
+                name = entry_name(base, file)
+                part = temp_path(file.name)
                 try:
-                    media, size = await telegram.message_media(
-                        chat_id, file.tg_message_id
-                    )
-                except TelegramMessageGoneError:
-                    logger.warning(
-                        "File {} is gone from Telegram, not archived", file.id
-                    )
-                    warnings.append(
-                        task_warning(
-                            "archive_file_gone",
-                            f"{name}: gone from Telegram, not archived",
-                            name=name,
+                    try:
+                        media, size = await telegram.message_media(
+                            chat_id, file.tg_message_id
                         )
-                    )
-                    continue
-                if size != stored_size(file):
-                    logger.warning("File {} changed in Telegram, not archived", file.id)
-                    warnings.append(
-                        task_warning(
-                            "archive_file_changed",
-                            f"{name}: changed in Telegram, not archived",
-                            name=name,
+                    except TelegramMessageGoneError:
+                        logger.warning(
+                            "File {} is gone from Telegram, not archived", file.id
                         )
-                    )
-                    continue
-                offset = done
-                try:
-                    await write_body(
-                        file_body(telegram, media, file, 0, file.size - 1),
-                        part,
-                        file.size,
-                        lambda written: progress(offset + written),
-                    )
-                except DecryptionError as error:
-                    logger.warning("File {} not archived: {}", file.id, error.message)
-                    warnings.append(
-                        task_warning(
-                            "archive_file_undecryptable",
-                            f"{name}: {error.message}, not archived",
-                            name=name,
+                        warnings.append(
+                            task_warning(
+                                "archive_file_gone",
+                                f"{name}: gone from Telegram, not archived",
+                                name=name,
+                            )
                         )
+                        continue
+                    if size != stored_size(file):
+                        logger.warning(
+                            "File {} changed in Telegram, not archived", file.id
+                        )
+                        warnings.append(
+                            task_warning(
+                                "archive_file_changed",
+                                f"{name}: changed in Telegram, not archived",
+                                name=name,
+                            )
+                        )
+                        continue
+                    offset = done
+                    try:
+                        await write_body(
+                            file_body(telegram, media, file, 0, file.size - 1),
+                            part,
+                            file.size,
+                            lambda written: progress(offset + written),
+                        )
+                    except DecryptionError as error:
+                        logger.warning(
+                            "File {} not archived: {}", file.id, error.message
+                        )
+                        warnings.append(
+                            task_warning(
+                                "archive_file_undecryptable",
+                                f"{name}: {error.message}, not archived",
+                                name=name,
+                            )
+                        )
+                        continue
+                    await asyncio.to_thread(
+                        writer.add, part, name, file.updated_at.timestamp()
                     )
-                    continue
-                await asyncio.to_thread(
-                    writer.add, part, name, file.updated_at.timestamp()
-                )
-            finally:
-                part.unlink(missing_ok=True)
-            done += file.size
-            progress(done)
-        await asyncio.to_thread(writer.close)
+                finally:
+                    part.unlink(missing_ok=True)
+                done += file.size
+                progress(done)
+            await asyncio.to_thread(writer.close)
+        except BaseException:
+            writer.abort()
+            raise
     return warnings

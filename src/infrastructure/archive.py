@@ -1,3 +1,4 @@
+import contextlib
 import lzma
 import os
 import shutil
@@ -76,3 +77,7 @@ class ArchiveWriter:
     def close(self) -> None:
         (self._zip or self._tar or self._seven_z).close()
         self._target.flush()
+
+    def abort(self) -> None:
+        with contextlib.suppress(Exception):
+            (self._zip or self._tar or self._seven_z).close()
