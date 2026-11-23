@@ -66,6 +66,10 @@ class MimeCountResponse(MimeCountServiceRead):
     pass
 
 
+class PreviewsBackfillResponse(BaseModel):
+    status: Literal["queued"]
+
+
 class PreviewsClearResponse(PreviewsClearServiceRead):
     pass
 

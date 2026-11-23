@@ -31,6 +31,7 @@ async def previews(engine) -> dict[str, bool]:
 async def backfill(client, redis, engine, expected: dict[str, bool]) -> None:
     response = await client.post("/files/previews/backfill")
     assert response.status_code == 202, response.text
+    assert response.json() == {"status": "queued"}
     for _ in range(200):
         if await previews(engine) == expected and not await redis.keys("*:job:*"):
             return

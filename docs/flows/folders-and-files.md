@@ -219,7 +219,7 @@ sequenceDiagram
   по открытому файлу, из Telegram запрашиваются только нужные блоки по 64 КиБ. Ключ сервера не открывает файл →
   `409 decryption_failed`. Подменённый или обрезанный блок обрывает поток (статус уже отправлен), в архиве такой файл
   пропускается с предупреждением в задаче.
-- `POST /api/files/previews/backfill` — только root, `202`: фоновая задача строит недостающие превью зашифрованных
+- `POST /api/files/previews/backfill` — только root, `202 {"status": "queued"}`: фоновая задача строит недостающие превью зашифрованных
   фото, GIF и видео (background-tasks.md, «Дозаполнение превью»); `503 queue_unavailable`, если брокер недоступен;
   `409 previews_disabled`, если root выключил `uploads.previews` (flows/settings.md).
 - `DELETE /api/files/previews` — только root (`403 forbidden` остальным), `200 {cleared, bytes}`: стирает все наши

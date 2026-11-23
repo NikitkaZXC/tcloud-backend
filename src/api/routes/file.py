@@ -12,6 +12,7 @@ from src.api.schemas import (
     FileSearchParams,
     FileSearchResponse,
     MimeCountResponse,
+    PreviewsBackfillResponse,
     PreviewsClearResponse,
 )
 from src.application.factory import get_runtime, get_service_file
@@ -193,8 +194,9 @@ async def get_thumbnail(
 async def backfill_previews(
     actor: Actor = Depends(get_root),
     file_service: FileService = Depends(get_service_file),
-) -> None:
+) -> PreviewsBackfillResponse:
     await file_service.backfill_previews(actor)
+    return PreviewsBackfillResponse(status="queued")
 
 
 @router.delete(

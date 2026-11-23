@@ -33,7 +33,7 @@ Redis (`archives`), уборка `TaskSweeper` их не трогает до с�
 
 ## Дозаполнение превью
 
-`POST /api/files/previews/backfill` (только root, `202`; при выключенной у root настройке `uploads.previews` —
+`POST /api/files/previews/backfill` (только root, `202 {"status": "queued"}`; при выключенной у root настройке `uploads.previews` —
 `409 previews_disabled`) кладёт в `archives.build` с низким приоритетом сообщение
 задачи Celery `previews.backfill` (`FileService.backfill_previews`); его выполняет `worker-telegram`
 (`PreviewBackfill` в `services/previews.py`). Записи задачи в Redis у неё нет: прогресс — в логах воркера. Задача ищет
