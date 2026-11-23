@@ -29,3 +29,9 @@ class EmptySearchError(TCloudError):
     """Raised when a search has neither a query nor any filter."""
 
     code = "empty_search"
+
+
+class PreviewsDisabledError(TCloudError):
+    """Raised when previews are turned off by root."""
+
+    code = "previews_disabled"

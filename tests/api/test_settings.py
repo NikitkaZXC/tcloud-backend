@@ -18,6 +18,7 @@ DEFAULTS = {
         "on_conflict": "error",
         "allow_unscannable": False,
         "webhook_url": None,
+        "previews": True,
     },
     "archives": {"format": "zip", "priority": "normal"},
     "interface": {

@@ -7,6 +7,7 @@ class AccountServiceRead(BaseModel):
     file_limit: int | None
     channels_used: int | None
     channels_limit: int | None
+    previews_enabled: bool
 
 
 class HealthDetailServiceRead(BaseModel):

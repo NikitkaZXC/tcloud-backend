@@ -263,3 +263,14 @@ async def test_client_disconnect_mid_body_leaves_nothing(client, storage, monkey
     assert list(settings.upload.TMP_DIR.iterdir()) == []
     assert (await client.get("/tasks/counts")).json()["total"] == 0
     assert (await upload(client, target, data))["status"] == "done"
+
+
+async def test_previews_off_skips_previewing(client, storage, steps):
+    off = await client.patch("/account/settings", json={"uploads": {"previews": False}})
+    assert off.status_code == 200, off.text
+    task = await upload(client, path(storage, "a.jpg"), make_image())
+    assert task["status"] == "done"
+    assert "previewing" not in steps[task["id"]]
+    assert "encrypting" in steps[task["id"]]
+    thumb = await client.get(f"/files/{task['file']['uuid']}/thumb")
+    assert thumb.status_code == 404

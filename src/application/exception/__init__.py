@@ -10,6 +10,7 @@ from .file import (
     EmptySearchError,
     FileChangedError,
     PathConflictError,
+    PreviewsDisabledError,
     StoredFileNotFoundError,
     ThumbnailNotFoundError,
 )
@@ -70,6 +71,7 @@ __all__ = [
     "StorageMismatchError",
     "TooManyItemsError",
     "PathConflictError",
+    "PreviewsDisabledError",
     "SizeMismatchError",
     "StorageBusyError",
     "StorageNotFoundError",

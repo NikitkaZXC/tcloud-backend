@@ -93,6 +93,7 @@ async def test_account_limit(client, telegram, monkeypatch):
         "file_limit": limits.FILE_MAX,
         "channels_used": 3,
         "channels_limit": limits.CHANNELS_MAX,
+        "previews_enabled": True,
     }
     telegram.premium = True
     assert (await client.get("/account")).json() == {
@@ -101,6 +102,7 @@ async def test_account_limit(client, telegram, monkeypatch):
         "file_limit": limits.FILE_MAX_PREMIUM,
         "channels_used": 3,
         "channels_limit": limits.CHANNELS_MAX_PREMIUM,
+        "previews_enabled": True,
     }
 
 
@@ -114,6 +116,7 @@ async def test_account_before_telegram_login(client, telegram):
         "file_limit": None,
         "channels_used": None,
         "channels_limit": None,
+        "previews_enabled": True,
     }
 
 

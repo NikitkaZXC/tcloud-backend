@@ -77,7 +77,9 @@ flowchart TD
 
 ## Сколько каналов ещё можно создать
 
-`GET /api/account` → `{telegram_connected, premium, file_limit, channels_used, channels_limit}`. `channels_used` — сколько каналов и
+`GET /api/account` → `{telegram_connected, premium, file_limit, channels_used, channels_limit, previews_enabled}`.
+`previews_enabled` — настройка root `uploads.previews` (flows/settings.md), всегда есть, не зависит от Telegram; фронтенд
+прячет по ней блок «Превью» дашборда. `channels_used` — сколько каналов и
 супергрупп, в которых состоит аккаунт API-сессии: все диалоги из всех папок, включая архив (`iter_dialogs` без `folder`),
 у которых сущность — `Channel` (вещательные каналы, супергруппы и гигагруппы, свои и чужие, хранилища tcloud и любые
 другие). Не считаются обычные группы (`Chat`), личные чаты, боты, каналы, из которых аккаунт вышел или забанен

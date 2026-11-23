@@ -11,6 +11,7 @@ from src.application.exception import (
     FileChangedError,
     FolderNotFoundError,
     ForbiddenError,
+    PreviewsDisabledError,
     SessionNotAuthorizedError,
     StoredFileNotFoundError,
     ThumbnailNotFoundError,
@@ -271,6 +272,8 @@ class FileService:
 
     async def backfill_previews(self, actor: Actor) -> None:
         require_root(actor)
+        if not actor.settings.uploads.previews:
+            raise PreviewsDisabledError("previews are turned off in root settings")
         await enqueue(UploadQueue.ARCHIVE, TaskPriority.LOW.level, BACKFILL_TASK)
         logger.info("Preview backfill queued by {}", actor.login)
 

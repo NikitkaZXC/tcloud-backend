@@ -1,8 +1,10 @@
 import time
 
 from loguru import logger
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.application.schemas import AccountServiceRead
+from src.application.services.storage import root_settings
 from src.config import settings
 from src.infrastructure.background import AppRuntime
 from src.infrastructure.limits import CHANNELS_MAX, CHANNELS_MAX_PREMIUM, file_limit
@@ -10,7 +12,8 @@ from src.utilities.errors import TCloudError
 
 
 class AccountService:
-    def __init__(self, runtime: AppRuntime) -> None:
+    def __init__(self, session: AsyncSession, runtime: AppRuntime) -> None:
+        self._session = session
         self._runtime = runtime
 
     async def is_premium(self, fresh: bool = False) -> bool:
@@ -42,6 +45,7 @@ class AccountService:
         return used
 
     async def get_account(self) -> AccountServiceRead:
+        previews = (await root_settings(self._session)).uploads.previews
         if not self._runtime.telegram.authorized:
             return AccountServiceRead(
                 telegram_connected=False,
@@ -49,6 +53,7 @@ class AccountService:
                 file_limit=None,
                 channels_used=None,
                 channels_limit=None,
+                previews_enabled=previews,
             )
         premium = await self.is_premium(fresh=True)
         return AccountServiceRead(
@@ -57,4 +62,5 @@ class AccountService:
             file_limit=file_limit(premium),
             channels_used=await self.channels_used(),
             channels_limit=CHANNELS_MAX_PREMIUM if premium else CHANNELS_MAX,
+            previews_enabled=previews,
         )

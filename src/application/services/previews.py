@@ -7,6 +7,7 @@ from loguru import logger
 from src.application.exception import FileChangedError
 from src.application.services.file import file_body, stored_size, tracked
 from src.application.services.pipeline import PREVIEW_KINDS
+from src.application.services.storage import root_settings
 from src.application.services.temp import temp_path, write_body
 from src.infrastructure.background import WorkerRuntime
 from src.infrastructure.database.models import FileDB
@@ -39,6 +40,9 @@ class PreviewBackfill:
         try:
             while True:
                 async with self._runtime.session_factory() as session:
+                    if not (await root_settings(session)).uploads.previews:
+                        logger.info("Preview backfill stopped: previews are off")
+                        break
                     batch = await FileRepository(session).get_missing_previews(
                         [kind.value for kind in PREVIEW_KINDS], after, BATCH
                     )

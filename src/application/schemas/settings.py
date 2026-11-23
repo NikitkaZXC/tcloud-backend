@@ -40,6 +40,7 @@ class UploadSettingsServiceRead(SettingsGroup):
     on_conflict: OnConflict = "error"
     allow_unscannable: bool = False
     webhook_url: str | None = Field(default=None, max_length=2048)
+    previews: bool = True
 
 
 class ArchiveSettingsServiceRead(SettingsGroup):

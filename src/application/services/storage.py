@@ -40,6 +40,11 @@ CHAT_FOLDER = "TCloud"
 NO_STATS = (0, 0, 0, 0)
 
 
+async def root_settings(session: AsyncSession) -> SettingsServiceRead:
+    root = await UserRepository(session).get_root()
+    return SettingsServiceRead.from_stored(root.settings if root else {})[0]
+
+
 class StorageService:
     def __init__(self, session: AsyncSession, runtime: AppRuntime) -> None:
         self._session = session
@@ -191,8 +196,7 @@ class StorageService:
 
     async def sync_folder(self) -> None:
         try:
-            root = await UserRepository(self._session).get_root()
-            stored, _ = SettingsServiceRead.from_stored(root.settings if root else {})
+            stored = await root_settings(self._session)
             chat_ids = (
                 [storage.tg_chat_id for storage in await self._repo.get_all()]
                 if stored.telegram.chat_folder

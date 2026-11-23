@@ -97,7 +97,8 @@ Content-Type: application/json
     "priority": "high",
     "on_conflict": "error",
     "allow_unscannable": false,
-    "webhook_url": "https://hooks.example.com/tcloud"
+    "webhook_url": "https://hooks.example.com/tcloud",
+    "previews": true
   },
   "archives": {"format": "zip", "priority": "normal"},
   "interface": {
@@ -133,6 +134,7 @@ Content-Type: application/json
 | `on_conflict` | `error`, `replace`, `keep_both`, `skip` | `error` | что делать, если путь занят (uploads.md, `on_conflict`); `replace` по-прежнему требует права на удаление |
 | `allow_unscannable` | `true`, `false` | `false` | принимать файлы, которые ClamAV не может проверить полностью |
 | `webhook_url` | `http(s)`-ссылка до 2048 символов или `null` | `null` | вебхук задач (background-tasks.md, «Вебхуки») |
+| `previews` | `true`, `false` | `true` | **учитывается только у root, действует на всех**: делать ли превью зашифрованных фото, GIF и видео. `false` — шаг `previewing` пропускается у всех загрузок (новые `files.thumbnail` не пишутся), `POST /api/files/previews/backfill` → `409 previews_disabled`, идущее дозаполнение останавливается перед следующей пачкой; уже сохранённые превью остаются (очистка — `DELETE /api/files/previews`). Итоговое значение видят все в `GET /api/account` → `previews_enabled`. У admin и user ключ просто хранится |
 
 ### `archives` — архивы (`POST /api/folders/archive`, `/folders/archive/selection`)
 

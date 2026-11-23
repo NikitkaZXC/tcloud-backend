@@ -14,6 +14,7 @@ from loguru import logger
 from src.application.exception import PathConflictError, TaskCancelledError
 from src.application.schemas import SKIPPED, caption_token, task_warning
 from src.application.services.archive import build_archive
+from src.application.services.storage import root_settings
 from src.application.services.temp import remove_task_files, temp_path
 from src.application.services.webhook import send_hook
 from src.config import settings
@@ -249,6 +250,9 @@ class UploadPipeline:
             source = prepared["thumb"] and Path(prepared["thumb"])
         if kind not in PREVIEW_KINDS or not source:
             return None
+        async with self._runtime.session_factory() as session:
+            if not (await root_settings(session)).uploads.previews:
+                return None
         await self.step(task, TaskStep.PREVIEWING)
         try:
             data = await asyncio.to_thread(preview, source)

@@ -29,6 +29,7 @@ STATUS_BY_CODE = {
     "file_not_found": status.HTTP_404_NOT_FOUND,
     "empty_search": status.HTTP_422_UNPROCESSABLE_CONTENT,
     "thumbnail_not_found": status.HTTP_404_NOT_FOUND,
+    "previews_disabled": status.HTTP_409_CONFLICT,
     "file_changed": status.HTTP_409_CONFLICT,
     "decryption_failed": status.HTTP_409_CONFLICT,
     "encrypt_requires_file": status.HTTP_422_UNPROCESSABLE_CONTENT,
