@@ -36,6 +36,7 @@ flowchart LR
         waiting[("waiting:{queue}<br/>zset")]
         archives[("archives<br/>zset")]
         worker[("worker:{queue}:{host}")]
+        workers[("workers<br/>zset")]
         activity[("activity:{storage}:{read|write}")]
         revoked[("revoked:{jti}")]
         rate[("rate_limit:{scope}:{ip|user}:{id}<br/>zset")]
@@ -52,7 +53,7 @@ flowchart LR
     sw --> active & task & archives & path & disk & waiting
     pl --> task & waiting & disk & path & active & archives & activity
     bf --> job & activity
-    hb --> worker
+    hb --> worker & workers
     fs --> activity & thumb
     ss --> activity & path & channel & photo
     ua --> revoked
@@ -72,6 +73,7 @@ flowchart LR
 | `tcloud:waiting:{queue}` | zset | задачи, ждущие в очереди; score `(10 − уровень) × 10¹³ + мкс` — порядок RabbitMQ; ранг = `queue_position` | `join_queue`, `CLAIM` (выход), `leave_queues`, `positions` | — |
 | `tcloud:archives` | zset | путь готового архива в `tmp` → срок (`UPLOAD_ARCHIVE_TTL`); `TaskSweeper.clean_tmp` не трогает до срока и удаляет после | `keep_archive`, `archives`, `forget_archive` | — |
 | `tcloud:worker:{queue}:{host}` | string | heartbeat воркера, значение — JSON `{"at": unix-время удара, "telegram": true/false/null}` (`telegram` — ping клиента Telegram воркера, `null` — клиента ещё нет; `health.workers`, `health.details.{queue}.last_seen_s`, `health.telegram_upload`) | `Heartbeat` раз в `UPLOAD_HEARTBEAT_INTERVAL`; `TaskStore.workers` | 3 × `UPLOAD_HEARTBEAT_INTERVAL` |
+| `tcloud:workers` | zset | реестр ключей heartbeat: член — `tcloud:worker:{queue}:{host}`, score — unix-время, когда ключ истечёт; `TaskStore.workers` удаляет просроченные (`ZREMRANGEBYSCORE`) и читает живые `MGET`, без `SCAN` по Redis; остановка воркера удаляет свои члены | `Heartbeat` (`ZADD` с каждым ударом); `TaskStore.workers` | — (чистится при чтении) |
 | `tcloud:activity:{storage_id}:{read\|write}` | zset | «с хранилищем сейчас работают» для `GET /api/storages/activity` (flows/storages.md): член — id операции, score — unix-время «живо до» (идёт: сейчас + 5 с, продлевается раз в секунду; закончилась: сейчас + 1 с) | `TaskStore.active` (контекст операции); `activity` — `ZCOUNT (now, +inf)` конвейером | 5 с с последней записи (`ACTIVITY_TTL`, `PEXPIRE`) |
 | `tcloud:channel:{chat_id}` | string | JSON `{title, about, has_photo}` канала хранилища из `GetFullChannel` (flows/storages.md, «Кеш сведений о каналах») | `TaskStore.channel_infos`, `keep_channel_infos`, `forget_channel` (`PATCH`, фото, удаление хранилища); `StorageService.channel_infos` | `REDIS_CACHE_TTL` (180 с) |
 | `tcloud:channel_photo:{chat_id}` | string | JSON-строка base64 с байтами аватарки канала (`""` — фото нет) для `GET /api/storages/{id}/photo` | `TaskStore.cached`/`keep`; `StorageService.get_photo`; `forget_channel` удаляет вместе с `channel:{chat_id}` (наши изменения и события Telegram, flows/storages.md) | `REDIS_CACHE_TTL` (180 с) |

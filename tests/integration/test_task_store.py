@@ -5,6 +5,7 @@ from uuid import uuid7
 import pytest
 
 from src.config import settings
+from src.infrastructure.background.heartbeat import Heartbeat
 from src.infrastructure.cache import TaskStore, tasks
 
 
@@ -301,3 +302,32 @@ async def test_get_reads_only_asked_fields(store):
     assert await store.get_many([str(uuid7()), str(task_id)], ("status",)) == [
         {"id": str(task_id), "status": "running"}
     ]
+
+
+async def test_workers_come_from_the_registry_not_a_keyspace_scan(
+    store, redis, monkeypatch
+):
+    monkeypatch.setattr(settings.upload, "HEARTBEAT_INTERVAL", 0.05)
+    beat = Heartbeat()
+    beat.start(["uploads.prepare"], "w1@host", lambda: True)
+    try:
+        deadline = asyncio.get_running_loop().time() + 5
+        while not await store.workers():
+            assert asyncio.get_running_loop().time() < deadline
+            await asyncio.sleep(0.02)
+    finally:
+        beat.stop()
+
+    async def no_scan(*args, **kwargs):
+        raise AssertionError("workers() must not SCAN")
+
+    await redis.zadd("tcloud:workers", {"tcloud:worker:uploads.download:old": 1})
+    await redis.set("tcloud:worker:uploads.telegram:w2", '{"at": 5, "telegram": null}')
+    await redis.zadd("tcloud:workers", {"tcloud:worker:uploads.telegram:w2": 1e12})
+    monkeypatch.setattr(redis, "scan_iter", no_scan)
+    beats = await store.workers()
+    assert beats == {"uploads.telegram": (5, None)}
+    assert (
+        await redis.zscore("tcloud:workers", "tcloud:worker:uploads.download:old")
+        is None
+    )

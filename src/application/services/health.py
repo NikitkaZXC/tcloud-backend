@@ -1,3 +1,4 @@
+import asyncio
 import inspect
 import time
 from collections.abc import Awaitable, Callable
@@ -29,14 +30,14 @@ class HealthService:
             )
             return result
 
-        db = await probe("db", self._db)
-        telegram = await probe("telegram", self._runtime.telegram.ping)
-        telegram_download = await probe(
-            "telegram_download", self._runtime.download.ping
+        db, telegram, telegram_download, antivirus, redis, queue = await asyncio.gather(
+            probe("db", self._db),
+            probe("telegram", self._runtime.telegram.ping),
+            probe("telegram_download", self._runtime.download.ping),
+            probe("antivirus", self._runtime.scanner.ping),
+            probe("redis", self._runtime.store.ping),
+            probe("queue", broker_alive),
         )
-        antivirus = await probe("antivirus", self._runtime.scanner.ping)
-        redis = await probe("redis", self._runtime.store.ping)
-        queue = await probe("queue", broker_alive)
         beats = await self._runtime.store.workers() if redis else {}
         worker_telegram = beats.get(UploadQueue.TELEGRAM.value, (0.0, None))[1]
         telegram_upload = await probe(

@@ -694,3 +694,16 @@ async def test_telegram_event_handler_survives_redis_errors(
     monkeypatch.setattr(main.app.state.runtime.store, "forget_account", broken)
     await telegram.on_channel(-100123)
     await telegram.on_account()
+
+
+async def test_health_probes_run_concurrently(client, telegram, scanner, monkeypatch):
+    async def slow() -> bool:
+        await asyncio.sleep(0.3)
+        return True
+
+    monkeypatch.setattr(telegram, "ping", slow)
+    monkeypatch.setattr(scanner, "ping", slow)
+    started = time.monotonic()
+    health = (await client.get("/health")).json()
+    assert time.monotonic() - started < 0.55
+    assert health["telegram"] and health["antivirus"]

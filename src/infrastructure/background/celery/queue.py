@@ -1,4 +1,5 @@
 import asyncio
+import time
 
 from kombu.exceptions import KombuError
 from loguru import logger
@@ -6,6 +7,9 @@ from loguru import logger
 from src.infrastructure.background.celery.app import app
 from src.infrastructure.background.exception import QueueUnavailableError
 from src.infrastructure.enums import UploadQueue
+
+BROKER_TTL = 5.0
+_alive: tuple[float, bool] | None = None
 
 
 async def enqueue(
@@ -41,4 +45,8 @@ async def queue_sizes() -> dict[str, int] | None:
 
 
 async def broker_alive() -> bool:
-    return await queue_sizes() is not None
+    global _alive
+    if _alive and time.monotonic() - _alive[0] < BROKER_TTL:
+        return _alive[1]
+    _alive = (time.monotonic(), await queue_sizes() is not None)
+    return _alive[1]

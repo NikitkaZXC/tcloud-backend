@@ -361,7 +361,11 @@ RabbitMQ позицию не сообщает, поэтому её считае�
   `telegram_download`, `antivirus`, `redis`, `queue` и имена очередей): `latency_ms` — сколько шла сама проверка
   (замер вокруг уже идущих `SELECT 1`, ping Redis, проверки брокера, ping ClamAV, проверки клиентов Telegram),
   `last_seen_s` — секунд с последнего heartbeat самого свежего воркера очереди; где неприменимо — `null`. Без входа
-  ответ по-прежнему только `{status}`.
+  ответ по-прежнему только `{status}`. Проверки БД, обоих клиентов Telegram, ClamAV, Redis и брокера идут
+  параллельно (`asyncio.gather`), ответ ждёт самую медленную, а не их сумму. Брокер (`broker_alive`: соединение с
+  RabbitMQ и `queue_declare` пассивно) и ClamAV (`zPING`) кешируют ответ на 5 с, как Telegram. Воркеры не ищутся
+  `SCAN` по всему Redis: heartbeat вместе со своим ключом пишет его в zset `workers` (score — когда ключ истечёт),
+  `TaskStore.workers` выкидывает истёкшие и читает живые одним `MGET`.
 - Проверки Telegram — настоящий запрос, а не `is_connected()`: `TelegramClient.ping` шлёт `updates.GetState`
   (таймаут 5 с, `PING_TIMEOUT`; перед ним `ensure_connected`, так что проверка заодно переподключает упавший клиент)
   и кеширует ответ на 5 с (`PING_TTL`), чтобы частый опрос `/health` не нагружал Telegram. `telegram` и
@@ -373,8 +377,10 @@ RabbitMQ позицию не сообщает, поэтому её считае�
 ```mermaid
 flowchart LR
     hb["heartbeat воркера"] -->|telegram_state: ping в цикле воркера| key[("worker:{queue}:{host}<br/>{at, telegram}")]
-    api["GET /api/health"] --> p1["ping api, download<br/>GetState, кеш 5 с"]
-    api --> key
+    hb -->|ZADD ключ, срок| reg[("workers<br/>zset")]
+    api["GET /api/health"] --> p1["параллельно: SELECT 1, ping api, download,<br/>ClamAV, Redis, брокер (кеш 5 с)"]
+    api --> reg
+    reg -->|живые ключи, MGET| key
     key -->|telegram = null| file["файл сессии upload есть?"]
     key -->|true / false| up["telegram_upload"]
     file --> up

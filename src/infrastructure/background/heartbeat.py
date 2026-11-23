@@ -43,12 +43,19 @@ class Heartbeat:
                     beat = json.dumps(
                         {"at": time.time(), "telegram": telegram and telegram()}
                     )
-                    for key in keys:
-                        redis.set(key, beat, ex=ttl)
+                    with redis.pipeline(transaction=False) as pipe:
+                        for key in keys:
+                            pipe.set(key, beat, ex=ttl)
+                        pipe.zadd(
+                            f"{settings.redis.PREFIX}:workers",
+                            {key: time.time() + ttl for key in keys},
+                        )
+                        pipe.execute()
                 except Exception as error:
                     logger.warning("Worker heartbeat failed: {!r}", error)
                 self._stop.wait(settings.upload.HEARTBEAT_INTERVAL)
             redis.delete(*keys)
+            redis.zrem(f"{settings.redis.PREFIX}:workers", *keys)
         finally:
             redis.close()
 

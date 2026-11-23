@@ -457,7 +457,9 @@ class TaskStore:
         return await self._redis.zrange(self._key("active"), 0, -1)
 
     async def workers(self) -> dict[str, tuple[float, bool | None]]:
-        keys = [key async for key in self._redis.scan_iter(self._key("worker", "*"))]
+        known = self._key("workers")
+        await self._redis.zremrangebyscore(known, "-inf", time.time())
+        keys = await self._redis.zrange(known, 0, -1)
         beats: dict[str, tuple[float, bool | None]] = {}
         for key, value in zip(keys, await self._redis.mget(keys) if keys else []):
             if value is None:

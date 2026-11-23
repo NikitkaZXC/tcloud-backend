@@ -1,5 +1,6 @@
 import asyncio
 import struct
+import time
 from collections.abc import Callable
 from pathlib import Path
 
@@ -16,9 +17,12 @@ UNSCANNABLE = (
     "Heuristics.OLE2.ContainsMacros",
 )
 UNAVAILABLE = "antivirus is not available, upload rejected"
+PING_TTL = 5.0
 
 
 class ClamAVClient:
+    _pinged: tuple[float, bool] | None = None
+
     def __init__(self, host: str, port: int, timeout: float = 900) -> None:
         self.host, self.port, self.timeout = host, port, timeout
 
@@ -55,10 +59,14 @@ class ClamAVClient:
         return reply.rstrip(b"\0").decode(errors="replace").strip()
 
     async def ping(self) -> bool:
+        if self._pinged and time.monotonic() - self._pinged[0] < PING_TTL:
+            return self._pinged[1]
         try:
-            return await self._command(b"zPING\0") == "PONG"
+            alive = await self._command(b"zPING\0") == "PONG"
         except ScannerUnavailableError:
-            return False
+            alive = False
+        self._pinged = (time.monotonic(), alive)
+        return alive
 
     async def scan(
         self, path: Path, progress: Callable[[int], None] | None = None

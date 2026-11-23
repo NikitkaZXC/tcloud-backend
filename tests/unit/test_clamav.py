@@ -10,6 +10,7 @@ from src.infrastructure.integrations.antivirus import (
     ScannerUnavailableError,
     UnscannableFileError,
 )
+from src.infrastructure.integrations.antivirus import clamav as clamav_module
 from src.infrastructure.integrations.antivirus.clamav import CHUNK
 
 ROOT = Path(__file__).parents[2]
@@ -64,6 +65,22 @@ async def test_infected(clamav, tmp_path):
 
 async def test_ping(clamav):
     assert await clamav.ping() is True
+
+
+async def test_ping_is_cached_for_five_seconds(monkeypatch):
+    scanner = ClamAVClient("127.0.0.1", 1)
+    calls = []
+
+    async def command(raw, path=None, progress=None):
+        calls.append(raw)
+        return "PONG"
+
+    now = [100.0]
+    monkeypatch.setattr(clamav_module.time, "monotonic", lambda: now[0])
+    monkeypatch.setattr(scanner, "_command", command)
+    assert await scanner.ping() and await scanner.ping() and len(calls) == 1
+    now[0] += 5
+    assert await scanner.ping() and len(calls) == 2
 
 
 async def test_unavailable_fails_closed(tmp_path):
