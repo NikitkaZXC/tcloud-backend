@@ -43,7 +43,9 @@ async def test_photo_thumbnail(client, telegram, photo):
     assert response.headers["x-content-type-options"] == "nosniff"
 
 
-async def test_thumbnail_not_modified_skips_telegram(client, download_telegram, photo):
+async def test_thumbnail_not_modified_skips_telegram(
+    client, download_telegram, photo, redis
+):
     tag = (await client.get(f"/files/{photo['uuid']}/thumb")).headers["etag"]
     download_telegram.authorized = False
     response = await client.get(
@@ -51,10 +53,36 @@ async def test_thumbnail_not_modified_skips_telegram(client, download_telegram, 
     )
     assert response.status_code == 304 and response.content == b""
     assert response.headers["etag"] == tag
+    cached = await client.get(
+        f"/files/{photo['uuid']}/thumb", headers={"If-None-Match": '"0"'}
+    )
+    assert cached.status_code == 200 and cached.content
+    await redis.delete(
+        f"tcloud:thumb:{photo['uuid']}:{photo['telegram']['message_id']}"
+    )
     stale = await client.get(
         f"/files/{photo['uuid']}/thumb", headers={"If-None-Match": '"0"'}
     )
     assert stale.status_code == 503 and code(stale) == "telegram_unauthorized"
+
+
+async def test_open_thumbnail_cached_in_redis(
+    client, download_telegram, photo, redis, monkeypatch
+):
+    calls = []
+    original = download_telegram.thumbnail
+
+    async def thumbnail(media):
+        calls.append(media)
+        return await original(media)
+
+    monkeypatch.setattr(download_telegram, "thumbnail", thumbnail)
+    first = await client.get(f"/files/{photo['uuid']}/thumb")
+    second = await client.get(f"/files/{photo['uuid']}/thumb")
+    assert first.content == second.content and len(calls) == 1
+    key = f"tcloud:thumb:{photo['uuid']}:{photo['telegram']['message_id']}"
+    assert 0 < await redis.ttl(key) <= 180
+    assert int(await redis.get("tcloud:thumbs:bytes")) == len(await redis.get(key))
 
 
 async def test_photo_sent_as_file_has_thumbnail(client, storage):

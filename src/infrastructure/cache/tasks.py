@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import json
 import time
 from collections.abc import AsyncIterator
@@ -93,6 +94,33 @@ redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', ARGV[3])
 local limit = tonumber(ARGV[2])
 if limit > 0 and redis.call('ZCARD', KEYS[1]) >= limit then return 0 end
 redis.call('ZADD', KEYS[1], ARGV[4], ARGV[1])
+return 1
+"""
+
+KEEP_THUMB = """
+local now, ttl, cap = tonumber(ARGV[2]), tonumber(ARGV[3]), tonumber(ARGV[4])
+local size = string.len(ARGV[1])
+if size > cap then return 0 end
+local total = tonumber(redis.call('GET', KEYS[3]) or '0')
+local function drop(member)
+    total = total - tonumber(redis.call('HGET', KEYS[2], member) or '0')
+    redis.call('HDEL', KEYS[2], member)
+    redis.call('ZREM', KEYS[1], member)
+    redis.call('DEL', member)
+end
+for _, member in ipairs(redis.call('ZRANGEBYSCORE', KEYS[1], '-inf', now - ttl)) do
+    drop(member)
+end
+if redis.call('ZSCORE', KEYS[1], KEYS[4]) then drop(KEYS[4]) end
+while total + size > cap do
+    local oldest = redis.call('ZRANGE', KEYS[1], 0, 0)[1]
+    if not oldest then total = 0 break end
+    drop(oldest)
+end
+redis.call('SET', KEYS[4], ARGV[1], 'EX', ttl)
+redis.call('ZADD', KEYS[1], now, KEYS[4])
+redis.call('HSET', KEYS[2], KEYS[4], size)
+redis.call('SET', KEYS[3], total + size)
 return 1
 """
 
@@ -346,6 +374,26 @@ class TaskStore:
     async def keep(self, value, *parts: object) -> None:
         await self._redis.set(
             self._key(*parts), encode(value), ex=settings.redis.CACHE_TTL
+        )
+
+    async def thumb(self, file_id: UUID, message_id: int) -> bytes | None:
+        value = await self._redis.get(self._key("thumb", file_id, message_id))
+        return None if value is None else base64.b64decode(value)
+
+    async def keep_thumb(self, file_id: UUID, message_id: int, data: bytes) -> bool:
+        return bool(
+            await self._redis.eval(
+                KEEP_THUMB,
+                4,
+                self._key("thumbs"),
+                self._key("thumbs", "size"),
+                self._key("thumbs", "bytes"),
+                self._key("thumb", file_id, message_id),
+                base64.b64encode(data).decode(),
+                time.time(),
+                settings.redis.CACHE_TTL,
+                settings.redis.THUMB_CACHE_MB * 1024 * 1024,
+            )
         )
 
     async def forget_account(self) -> None:

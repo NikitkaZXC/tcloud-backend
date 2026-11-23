@@ -1,8 +1,9 @@
 # Redis: карта ключей
 
 Redis хранит всё быстрое и временное: задачи загрузок и архивов (таблицы задач в PostgreSQL нет), блокировки путей,
-индексы очередей, heartbeat воркеров, метки активности хранилищ, отозванные access-токены и счётчик входов. Файлы в
-Redis не попадают. Все ключи начинаются с `REDIS_PREFIX` (`tcloud`), значения полей задачи — JSON.
+индексы очередей, heartbeat воркеров, метки активности хранилищ, отозванные access-токены и счётчик входов, а также
+короткие (`REDIS_CACHE_TTL`, 180 с) кеши сведений из Telegram: каналы, аккаунт, аватарки каналов и превью открытых
+файлов (у превью общий потолок `REDIS_THUMB_CACHE_MB`). Сами файлы в Redis не попадают. Все ключи начинаются с `REDIS_PREFIX` (`tcloud`), значения полей задачи — JSON.
 
 Код: `src/infrastructure/cache/tasks.py` (`TaskStore`, Lua `CLAIM`/`REQUEUE`/`CANCEL`/`DISK_SLOT`/`UNLOCK`/`RENEW`),
 `cache/tokens.py` (`TokenBlacklist`), `cache/limits.py` (`RateLimitStore`), `background/heartbeat.py` (`Heartbeat`).
@@ -41,6 +42,7 @@ flowchart LR
         job[("job:{name}")]
         channel[("channel:{chat_id}")]
         photo[("channel_photo:{chat_id}")]
+        thumb[("thumb:{file}:{message}<br/>thumbs zset, thumbs:size, thumbs:bytes")]
         account[("account:premium<br/>account:channels")]
     end
     acs --> account
@@ -51,7 +53,7 @@ flowchart LR
     pl --> task & waiting & disk & path & active & archives & activity
     bf --> job & activity
     hb --> worker
-    fs --> activity
+    fs --> activity & thumb
     ss --> activity & path & channel & photo
     ua --> revoked
     rl --> rate
@@ -73,6 +75,8 @@ flowchart LR
 | `tcloud:activity:{storage_id}:{read\|write}` | zset | «с хранилищем сейчас работают» для `GET /api/storages/activity` (flows/storages.md): член — id операции, score — unix-время «живо до» (идёт: сейчас + 5 с, продлевается раз в секунду; закончилась: сейчас + 1 с) | `TaskStore.active` (контекст операции); `activity` — `ZCOUNT (now, +inf)` конвейером | 5 с с последней записи (`ACTIVITY_TTL`, `PEXPIRE`) |
 | `tcloud:channel:{chat_id}` | string | JSON `{title, about, has_photo}` канала хранилища из `GetFullChannel` (flows/storages.md, «Кеш сведений о каналах») | `TaskStore.channel_infos`, `keep_channel_infos`, `forget_channel` (`PATCH`, фото, удаление хранилища); `StorageService.channel_infos` | `REDIS_CACHE_TTL` (180 с) |
 | `tcloud:channel_photo:{chat_id}` | string | JSON-строка base64 с байтами аватарки канала (`""` — фото нет) для `GET /api/storages/{id}/photo` | `TaskStore.cached`/`keep`; `StorageService.get_photo`; `forget_channel` удаляет вместе с `channel:{chat_id}` | `REDIS_CACHE_TTL` (180 с) |
+| `tcloud:thumb:{file_id}:{message_id}` | string | base64 превью открытого файла из Telegram для `GET /api/files/{id}/thumb` (`""` — превью нет) | `TaskStore.thumb`, `keep_thumb` (Lua `KEEP_THUMB`); `FileService.get_thumbnail` | `REDIS_CACHE_TTL` (180 с) |
+| `tcloud:thumbs`, `tcloud:thumbs:size`, `tcloud:thumbs:bytes` | zset, hash, string | учёт потолка кеша превью: zset ключ `thumb:…` → время записи, hash ключ → длина base64, сумма длин. `KEEP_THUMB` атомарно выкидывает записи старше TTL (их ключи уже истекли), прежнюю копию того же ключа и самые старые, пока новая не влезет в `REDIS_THUMB_CACHE_MB` (64 МБ); запись больше потолка не кешируется, `0` выключает кеш | `TaskStore.keep_thumb` | — (чистятся при каждой записи) |
 | `tcloud:account:premium`, `tcloud:account:channels` | string | JSON: Premium API-аккаунта (`true`/`false`, от него лимит размера файла) и `channels_used` (flows/storages.md, «Сколько каналов ещё можно создать») | `TaskStore.cached`/`keep`; `AccountService.is_premium`, `channels_used`; `forget_account` — создание/удаление хранилища, `TELEGRAM_CHATS`, вход в API-сессию, события Telegram | `REDIS_CACHE_TTL` (180 с) |
 | `tcloud:job:{name}` | string | одна фоновая задача на имя (`job:previews` — дозаполнение превью), значение — id задачи Celery; `SET NX`, свой ключ продлевается (Lua `RENEW`), снимает только владелец (Lua `UNLOCK`) | `TaskStore.hold_job`, `release_job`; `PreviewBackfill` | 120 с (`JOB_TTL`), продлевается каждые 30 с |
 | `tcloud:revoked:{jti}` | string | отозванный access-токен (logout, refresh, смена пароля) | `TokenBlacklist.revoke/revoked` | `JWT_ACCESS_TOKEN_EXPIRATION_MINUTES` |

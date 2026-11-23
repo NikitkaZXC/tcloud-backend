@@ -251,7 +251,11 @@ sequenceDiagram
   делается при загрузке, flows/uploads.md), расшифровывается ключом файла, в Telegram не ходим; ключ сервера не
   открывает → `409 decryption_failed`. Берётся самый большой размер, у которого обе стороны ≤ 320 px (если таких нет — самый маленький);
   размытое встроенное превью (`PhotoStrippedSize`, ~40 px) не отдаётся. Читает сессия `download`, права — как у
-  скачивания (cookie или `X-API-Key`, `403 forbidden` без чтения папки). Ответы:
+  скачивания (cookie или `X-API-Key`, `403 forbidden` без чтения папки). Превью открытых файлов (и «превью нет»)
+  кешируются в Redis `thumb:{file_id}:{message_id}` на `REDIS_CACHE_TTL` (180 с) с общим потолком памяти
+  `REDIS_THUMB_CACHE_MB` (64 МБ base64, при переполнении выбрасываются самые старые; `0` — кеш выключен, redis.md):
+  повторный запрос в течение 3 мин в Telegram не ходит. `replace` меняет `message_id`, поэтому старое превью не
+  отдаётся. Ответы:
   - `200` — байты JPEG, заголовки `ETag: "{telegram message_id}"`, `Cache-Control: private, max-age=86400`, `nosniff`;
   - `304` — пришёл `If-None-Match` с тем же `ETag` (в Telegram не ходим);
   - `404 thumbnail_not_found` — у открытого файла нет превью в Telegram; у зашифрованного нет `files.thumbnail`

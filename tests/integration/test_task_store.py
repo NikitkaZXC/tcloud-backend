@@ -1,10 +1,11 @@
 import asyncio
+from types import SimpleNamespace
 from uuid import uuid7
 
 import pytest
 
 from src.config import settings
-from src.infrastructure.cache import TaskStore
+from src.infrastructure.cache import TaskStore, tasks
 
 
 @pytest.fixture
@@ -258,3 +259,29 @@ async def test_activity_of_crashed_operation_expires(store, monkeypatch):
     assert (await flags(store, storage_id))["read"]
     await asyncio.sleep(0.6)
     assert not (await flags(store, storage_id))["read"]
+
+
+async def test_thumb_cache_ttl_and_memory_cap(store, redis, monkeypatch):
+    monkeypatch.setattr(settings.redis, "THUMB_CACHE_MB", 1)
+    clock = SimpleNamespace(time=lambda: 1000.0)
+    monkeypatch.setattr(tasks, "time", clock)
+    data = [bytes([index]) * 250_000 for index in range(4)]
+    files = [uuid7() for _ in data]
+    for file_id, body in zip(files[:3], data[:3]):
+        assert await store.keep_thumb(file_id, 1, body)
+    assert [await store.thumb(file_id, 1) for file_id in files[:3]] == data[:3]
+    assert 0 < await redis.ttl(f"tcloud:thumb:{files[0]}:1") <= 180
+    assert await store.keep_thumb(files[3], 1, data[3])
+    assert await store.thumb(files[0], 1) is None
+    assert await store.thumb(files[3], 1) == data[3]
+    assert int(await redis.get("tcloud:thumbs:bytes")) == 3 * 333_336
+    assert await redis.zcard("tcloud:thumbs") == 3
+    assert await store.keep_thumb(files[3], 1, b"")
+    assert int(await redis.get("tcloud:thumbs:bytes")) == 2 * 333_336
+    clock.time = lambda: 1181.0
+    assert await store.keep_thumb(files[0], 2, b"x")
+    assert await redis.zcard("tcloud:thumbs") == 1
+    assert int(await redis.get("tcloud:thumbs:bytes")) == 4
+    assert not await store.keep_thumb(files[1], 2, bytes(800_000))
+    monkeypatch.setattr(settings.redis, "THUMB_CACHE_MB", 0)
+    assert not await store.keep_thumb(files[1], 3, b"x")

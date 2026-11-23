@@ -13,3 +13,4 @@ class RedisSettings(BaseSettings):
     DB: int = 0
     PREFIX: str = "tcloud"
     CACHE_TTL: int = 180
+    THUMB_CACHE_MB: int = 64

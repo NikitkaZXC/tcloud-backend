@@ -297,7 +297,13 @@ class FileService:
             return tag, unseal(file.encryption_header, sealed)
         if if_none_match == tag:
             return tag, None
-        data = await self._runtime.download.thumbnail(await self._media(file, chat_id))
+        data = await self._runtime.store.thumb(file.id, file.tg_message_id)
+        if data is None:
+            data = (
+                await self._runtime.download.thumbnail(await self._media(file, chat_id))
+                or b""
+            )
+            await self._runtime.store.keep_thumb(file.id, file.tg_message_id, data)
         if not data:
             raise ThumbnailNotFoundError("Telegram has no thumbnail for this file")
         return tag, data
