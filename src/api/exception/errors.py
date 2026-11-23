@@ -23,6 +23,7 @@ STATUS_BY_CODE = {
     "channels_limit": status.HTTP_409_CONFLICT,
     "photo_not_found": status.HTTP_404_NOT_FOUND,
     "folder_not_found": status.HTTP_404_NOT_FOUND,
+    "invalid_cursor": status.HTTP_422_UNPROCESSABLE_CONTENT,
     "empty_selection": status.HTTP_422_UNPROCESSABLE_CONTENT,
     "too_many_items": status.HTTP_422_UNPROCESSABLE_CONTENT,
     "storage_mismatch": status.HTTP_422_UNPROCESSABLE_CONTENT,

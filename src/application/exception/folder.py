@@ -7,6 +7,12 @@ class FolderNotFoundError(TCloudError):
     code = "folder_not_found"
 
 
+class InvalidCursorError(TCloudError):
+    """Raised when a listing cursor is malformed or made for another sort."""
+
+    code = "invalid_cursor"
+
+
 class StorageRootError(TCloudError):
     """Raised when creating or deleting the storage root as a folder."""
 

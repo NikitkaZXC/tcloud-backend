@@ -8,7 +8,14 @@ from pydantic import SecretStr
 import main
 from src.application.bootstrap.startup import prepare
 from src.config import settings
-from tests.api.conftest import build_archive, path, start_upload, upload, wait_task
+from tests.api.conftest import (
+    build_archive,
+    listing,
+    path,
+    start_upload,
+    upload,
+    wait_task,
+)
 from tests.factories import PDF, make_image
 
 
@@ -221,13 +228,11 @@ async def test_grants_limit_files_and_folders(client, storage, make_user):
     assert [item["id"] for item in (await reader.get("/storages")).json()] == [
         storage["id"]
     ]
-    root = (await reader.get("/folders", params={"path": path(storage)})).json()
+    root = await listing(reader, path(storage))
     assert [folder["path"] for folder in root["folders"]] == [path(storage, "shared")]
     assert root["files"] == []
-    listing = await reader.get(
-        "/folders", params={"path": path(storage, "shared/deep")}
-    )
-    assert [file["name"] for file in listing.json()["files"]] == ["b.pdf"]
+    deep = await listing(reader, path(storage, "shared/deep"))
+    assert [file["name"] for file in deep["files"]] == ["b.pdf"]
     response = await reader.get("/folders", params={"path": path(storage, "secret")})
     assert response.status_code == 403
     assert (await reader.get(f"/files/{secret['uuid']}")).status_code == 403
@@ -262,12 +267,8 @@ async def test_folder_only_grant_with_upload_and_delete(client, storage, make_us
     )
     task = await upload(writer, path(storage, "inbox/mine.jpg"), make_image())
     assert task["status"] == "done", task
-    listing = (
-        await writer.get("/folders", params={"path": path(storage, "inbox")})
-    ).json()
-    assert listing["folders"] == [] and [f["name"] for f in listing["files"]] == [
-        "mine.jpg"
-    ]
+    page = await listing(writer, path(storage, "inbox"))
+    assert page["folders"] == [] and [f["name"] for f in page["files"]] == ["mine.jpg"]
     response = await writer.post(
         "/uploads", params={"path": path(storage, "inbox/sub/x.pdf")}, content=PDF
     )

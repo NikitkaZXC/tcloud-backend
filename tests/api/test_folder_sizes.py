@@ -1,4 +1,4 @@
-from tests.api.conftest import path, upload
+from tests.api.conftest import path, split, upload
 from tests.factories import PDF
 
 A = b"a" * 100
@@ -13,9 +13,11 @@ async def put(client, storage, rest: str, data: bytes, **options) -> dict:
 
 
 async def listing(client, storage, rest: str = "") -> dict:
-    response = await client.get("/folders", params={"path": path(storage, rest)})
+    response = await client.get(
+        "/folders", params={"path": path(storage, rest), "limit": 200}
+    )
     assert response.status_code == 200, response.text
-    return response.json()
+    return split(response.json())
 
 
 def sizes(result: dict) -> dict[str, tuple[int, int]]:

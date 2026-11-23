@@ -1,3 +1,4 @@
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -17,6 +18,19 @@ class FolderCreate(BaseModel):
 
 class FolderResponse(FolderServiceRead):
     pass
+
+
+LIST_LIMIT_MAX = 200
+
+
+class FolderListParams(BaseModel):
+    path: str
+    sort_by: Literal["name", "modified", "uploaded", "type", "size"] | None = None
+    sort_order: Literal["asc", "desc"] | None = None
+    folders_first: bool | None = None
+    lang: Literal["ru", "en"] | None = None
+    limit: int = Field(20, ge=1, le=LIST_LIMIT_MAX)
+    cursor: str | None = Field(None, max_length=4096)
 
 
 class FolderListingResponse(FolderListingServiceRead):

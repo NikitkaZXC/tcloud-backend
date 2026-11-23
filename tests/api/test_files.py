@@ -10,7 +10,7 @@ import pytest
 from src.application.services import TaskSweeper
 from src.config import settings
 from src.infrastructure.cache import TaskStore
-from tests.api.conftest import build_archive, path, upload, wait_task
+from tests.api.conftest import build_archive, listing, path, upload, wait_task
 from tests.factories import PDF, make_image
 
 
@@ -132,17 +132,19 @@ async def test_create_and_list_folder(client, storage):
         "/folders", json={"path": path(storage, "Отпуск/2026")}
     )
     assert response.status_code == 201 and response.json()["name"] == "2026"
-    root = (await client.get("/folders", params={"path": path(storage)})).json()
+    root = await listing(client, path(storage))
     assert root["path"] == path(storage) and [
         item["path"] for item in root["folders"]
     ] == [path(storage, "Отпуск")]
-    nested = (
-        await client.get("/folders", params={"path": path(storage, "Отпуск/2026")})
-    ).json()
+    nested = await listing(client, path(storage, "Отпуск/2026"))
     assert nested == {
         "path": path(storage, "Отпуск/2026"),
         "size": 0,
         "total_files": 0,
+        "total_folders": 0,
+        "direct_files": 0,
+        "items": [],
+        "next_cursor": None,
         "folders": [],
         "files": [],
     }
@@ -172,9 +174,9 @@ async def test_listing_shows_only_direct_children(client, storage):
     await upload(client, path(storage, "a/1.jpg"), make_image())
     await upload(client, path(storage, "a/b/2.jpg"), make_image())
     await upload(client, path(storage, "ab/3.jpg"), make_image())
-    listing = (await client.get("/folders", params={"path": path(storage, "a")})).json()
-    assert [item["name"] for item in listing["files"]] == ["1.jpg"]
-    assert [item["name"] for item in listing["folders"]] == ["b"]
+    page = await listing(client, path(storage, "a"))
+    assert [item["name"] for item in page["files"]] == ["1.jpg"]
+    assert [item["name"] for item in page["folders"]] == ["b"]
 
 
 async def test_like_wildcards_in_names_are_literal(client, storage):
@@ -182,9 +184,7 @@ async def test_like_wildcards_in_names_are_literal(client, storage):
     await client.post("/folders", json={"path": path(storage, "a%")})
     await client.post("/folders", json={"path": path(storage, "axb/c")})
     await upload(client, path(storage, "axb/c/1.jpg"), make_image())
-    assert (await client.get("/folders", params={"path": path(storage, "a_b")})).json()[
-        "folders"
-    ] == []
+    assert (await listing(client, path(storage, "a_b")))["folders"] == []
     assert (
         await client.delete("/folders", params={"path": path(storage, "a_b")})
     ).json()["deleted_files"] == 0

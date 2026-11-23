@@ -1,4 +1,4 @@
-from tests.api.conftest import path, upload
+from tests.api.conftest import listing, path, upload
 from tests.factories import PDF, make_image
 
 
@@ -15,8 +15,8 @@ async def test_deleted_in_telegram_removes_record(client, telegram, storage):
     await telegram.delete_by_hand(chat_id, [gone["telegram"]["message_id"]])
     assert (await client.get(f"/files/{gone['uuid']}")).status_code == 404
     assert (await client.get(f"/files/{kept['uuid']}")).status_code == 200
-    listing = (await client.get("/folders", params={"path": path(storage, "a")})).json()
-    assert [file["name"] for file in listing["files"]] == ["kept.pdf"]
+    page = await listing(client, path(storage, "a"))
+    assert [file["name"] for file in page["files"]] == ["kept.pdf"]
 
 
 async def test_many_deleted_at_once(client, telegram, storage):

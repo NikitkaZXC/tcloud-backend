@@ -1,3 +1,7 @@
+import base64
+import binascii
+import json
+from datetime import datetime
 from uuid import UUID, uuid7
 
 from loguru import logger
@@ -7,6 +11,7 @@ from src.application.exception import (
     EmptySelectionError,
     FolderNotFoundError,
     ForbiddenError,
+    InvalidCursorError,
     SessionNotAuthorizedError,
     StorageMismatchError,
     StorageRootError,
@@ -15,11 +20,13 @@ from src.application.exception import (
 )
 from src.application.schemas import (
     Actor,
+    FileEntryServiceRead,
     FileServiceRead,
     FolderDeleteServiceRead,
+    FolderEntryServiceRead,
+    FolderListingServiceCreate,
     FolderListingServiceRead,
     FolderServiceRead,
-    FolderSizeServiceRead,
     TaskServiceRead,
 )
 from src.application.services.access import (
@@ -59,6 +66,42 @@ def common_folder(paths: list[str]) -> str:
     return "/".join(common)
 
 
+def encode_cursor(sort: list, group: int, keys: list, ident: UUID) -> str:
+    raw = json.dumps(
+        {
+            "s": sort,
+            "g": group,
+            "k": [
+                key.isoformat() if isinstance(key, datetime) else key for key in keys
+            ],
+            "i": str(ident),
+        },
+        ensure_ascii=False,
+    )
+    return base64.urlsafe_b64encode(raw.encode()).decode().rstrip("=")
+
+
+def decode_cursor(cursor: str, sort: list) -> tuple[int, list, UUID]:
+    try:
+        raw = json.loads(base64.urlsafe_b64decode(cursor + "=" * (-len(cursor) % 4)))
+        if raw["s"] != sort or raw["g"] not in (0, 1):
+            raise ValueError("cursor of another sort")
+        keys = raw["k"]
+        if sort[0] in ("modified", "uploaded"):
+            keys = [datetime.fromisoformat(keys[0])]
+        elif sort[0] == "size":
+            keys = [int(keys[0])]
+        elif not all(isinstance(key, str) for key in keys):
+            raise ValueError("bad cursor keys")
+        if len(keys) != (2 if sort[0] == "type" else 1):
+            raise ValueError("bad cursor keys")
+        return raw["g"], keys, UUID(raw["i"])
+    except (ValueError, KeyError, TypeError, binascii.Error) as error:
+        raise InvalidCursorError(
+            "the cursor is invalid or belongs to another sort, start from the first page"
+        ) from error
+
+
 class FolderService:
     def __init__(
         self,
@@ -85,13 +128,22 @@ class FolderService:
         return FolderServiceRead.from_db(await self._repo.get_by_path(storage_id, path))
 
     async def get_listing(
-        self, actor: Actor, raw_path: str
+        self, actor: Actor, raw_path: str, params: FolderListingServiceCreate
     ) -> FolderListingServiceRead:
+        ui = actor.settings.interface
+        sort_by = params.sort_by or ui.sort_by
+        sort_order = params.sort_order or ui.sort_order
+        folders_first = (
+            ui.folders_first if params.folders_first is None else params.folders_first
+        )
+        lang = params.lang or ui.language or "en"
+        sort = [sort_by, sort_order, folders_first, lang]
+        after = decode_cursor(params.cursor, sort) if params.cursor else None
         storage_id, path = split_folder(raw_path)
         readable = allowed(actor, storage_id, path, Permission.READ)
         if not readable and not leads_to_grant(actor, storage_id, path):
             raise ForbiddenError("no read access to this folder")
-        storage = await self._storage_service.get_db(storage_id)
+        await self._storage_service.get_db(storage_id)
         if not await self._repo.exists(storage_id, path):
             raise FolderNotFoundError("folder not found")
         folders = [
@@ -100,24 +152,61 @@ class FolderService:
             if allowed(actor, storage_id, folder.path, Permission.READ)
             or leads_to_grant(actor, storage_id, folder.path)
         ]
-        files = await self._files.get_in_folder(storage_id, path) if readable else []
         sizes = await self._files.sizes_below(
             storage_id, path, read_scopes(actor, storage_id)
+        )
+        entries = {
+            folder.id: FolderEntryServiceRead(
+                **FolderServiceRead.from_db(folder).model_dump(),
+                files=sizes.get(name, (0, 0))[0],
+                size=sizes.get(name, (0, 0))[1],
+            )
+            for folder in folders
+            for name in [folder.path.rpartition("/")[2]]
+        }
+        rows = await self._files.list_page(
+            storage_id=storage_id,
+            folder=path,
+            files=readable,
+            folders=[
+                (entry.id, entry.name, entry.size, entry.updated_at, entry.created_at)
+                for entry in entries.values()
+            ],
+            sort_by=sort_by,
+            lang=lang,
+            descending=sort_order == "desc",
+            folders_first=folders_first,
+            after=after,
+            limit=params.limit + 1,
+        )
+        page = rows[: params.limit]
+        files = await self._files.get_many_with_chat(
+            [ident for group, ident, _ in page if group == 1]
         )
         return FolderListingServiceRead(
             path=join_path(storage_id, path),
             size=sum(size for _, size in sizes.values()),
             total_files=sum(count for count, _ in sizes.values()),
-            folders=[
-                FolderSizeServiceRead(
-                    **FolderServiceRead.from_db(folder).model_dump(),
-                    files=sizes.get(name, (0, 0))[0],
-                    size=sizes.get(name, (0, 0))[1],
+            total_folders=len(entries),
+            direct_files=(
+                await self._files.count_in_folder(storage_id, path) if readable else 0
+            ),
+            items=[
+                (
+                    entries[ident]
+                    if group == 0
+                    else FileEntryServiceRead(
+                        **FileServiceRead.from_db(*files[ident]).model_dump()
+                    )
                 )
-                for folder in folders
-                for name in [folder.path.rpartition("/")[2]]
+                for group, ident, _ in page
+                if group == 0 or ident in files
             ],
-            files=[FileServiceRead.from_db(file, storage.tg_chat_id) for file in files],
+            next_cursor=(
+                encode_cursor(sort, page[-1][0], page[-1][2], page[-1][1])
+                if len(rows) > params.limit
+                else None
+            ),
         )
 
     async def create_archive(

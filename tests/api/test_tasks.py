@@ -85,8 +85,8 @@ async def test_cancel_running_upload_deletes_sent_message(client, telegram, stor
     task = await wait_task(client, task_id)
     assert task["status"] == "cancelled" and task["error"]["code"] == "cancelled"
     assert telegram.messages() == []
-    listing = (await client.get("/folders", params={"path": path(storage)})).json()
-    assert listing["files"] == []
+    page = (await client.get("/folders", params={"path": path(storage)})).json()
+    assert page["items"] == []
 
 
 async def test_cancel_finished_and_unknown(client, storage):

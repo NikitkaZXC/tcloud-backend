@@ -10,6 +10,7 @@ from src.infrastructure.background import MiB
 from tests.api.conftest import (
     TELEGRAM_CONCURRENCY,
     Remote,
+    listing,
     path,
     start_upload,
     upload,
@@ -40,10 +41,8 @@ async def test_hundred_parallel_uploads_respect_telegram_limit(
     ][:3]
     assert telegram.max_sending <= TELEGRAM_CONCURRENCY
     assert len(telegram.messages()) == 100
-    listing = (
-        await client.get("/folders", params={"path": path(storage, "many")})
-    ).json()
-    assert len(listing["files"]) == 100
+    page = await listing(client, path(storage, "many"))
+    assert len(page["files"]) == 100
 
 
 async def test_waiting_tasks_show_telegram_queue(client, telegram, storage):

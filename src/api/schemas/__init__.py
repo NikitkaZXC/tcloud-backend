@@ -19,6 +19,7 @@ from .folder import (
     FolderCreate,
     FolderDeleteResponse,
     FolderListingResponse,
+    FolderListParams,
     FolderResponse,
     SelectionArchiveCreate,
 )
@@ -74,6 +75,7 @@ __all__ = [
     "FolderCreate",
     "FolderDeleteResponse",
     "FolderListingResponse",
+    "FolderListParams",
     "FolderResponse",
     "SelectionArchiveCreate",
     "SettingsResponse",

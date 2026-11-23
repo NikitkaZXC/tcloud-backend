@@ -1,7 +1,24 @@
 from datetime import date, datetime
 from uuid import UUID
 
-from sqlalchemy import ColumnElement, case, delete, func, select, tuple_, update
+from sqlalchemy import (
+    BigInteger,
+    ColumnElement,
+    DateTime,
+    Text,
+    Uuid,
+    case,
+    column,
+    delete,
+    func,
+    literal,
+    literal_column,
+    select,
+    tuple_,
+    union_all,
+    update,
+    values,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.infrastructure.database.models import FileDB, StorageDB
@@ -27,6 +44,28 @@ def contains(column: ColumnElement[str], query: str) -> ColumnElement[bool]:
     return func.lower(column).like(
         func.lower("%" + escape_like(query) + "%"), escape="\\"
     )
+
+
+FOLDER_TYPE = {"ru": "папка", "en": "folder"}
+
+
+def file_type(name: ColumnElement[str], kind: ColumnElement[str]) -> ColumnElement:
+    pattern = literal_column(r"'\.([^.]*)$'", Text)
+    extension = func.nullif(
+        func.lower(func.substring(name, pattern)), literal_column("''", Text)
+    )
+    return func.coalesce(extension, kind)
+
+
+def list_keys(sort_by: str, lang: str, name, kind, size, updated, created) -> list:
+    collation = f"tcloud_{lang}"
+    return {
+        "name": [name.collate(collation)],
+        "type": [kind.collate(collation), name.collate(collation)],
+        "size": [size],
+        "modified": [updated],
+        "uploaded": [created],
+    }[sort_by]
 
 
 class FileRepository:
@@ -117,13 +156,103 @@ class FileRepository:
         )
         return await self._session.scalar(statement)
 
-    async def get_in_folder(self, storage_id: UUID, folder: str) -> list[FileDB]:
-        statement = (
-            select(FileDB)
-            .where(FileDB.storage_id == storage_id, FileDB.folder_path == folder)
-            .order_by(FileDB.name)
+    async def count_in_folder(self, storage_id: UUID, folder: str) -> int:
+        statement = select(func.count()).where(
+            FileDB.storage_id == storage_id, FileDB.folder_path == folder
         )
-        return list((await self._session.scalars(statement)).all())
+        return await self._session.scalar(statement) or 0
+
+    async def list_page(
+        self,
+        *,
+        storage_id: UUID,
+        folder: str,
+        files: bool,
+        folders: list[tuple[UUID, str, int, datetime, datetime]],
+        sort_by: str,
+        lang: str,
+        descending: bool,
+        folders_first: bool,
+        after: tuple[int, list, UUID] | None,
+        limit: int,
+    ) -> list[tuple[int, UUID, list]]:
+        def branch(group: int, keys: list, ident, source, conditions: list):
+            statement = (
+                select(
+                    literal(group).label("grp"),
+                    ident.label("id"),
+                    *(key.label(f"k{index}") for index, key in enumerate(keys)),
+                )
+                .select_from(source)
+                .where(*conditions)
+            )
+            if after and not (folders_first and after[0] != group):
+                bound = tuple_(
+                    *(literal(value, key.type) for value, key in zip(after[1], keys)),
+                    literal(after[2], Uuid),
+                )
+                row = tuple_(*keys, ident)
+                statement = statement.where(row < bound if descending else row > bound)
+            statement = statement.order_by(
+                *(item.desc() if descending else item.asc() for item in [*keys, ident])
+            ).limit(limit)
+            return select(statement.subquery())
+
+        branches = []
+        if folders and not (folders_first and after and after[0] == 1):
+            rows = values(
+                column("id", Uuid),
+                column("name", Text),
+                column("size", BigInteger),
+                column("updated_at", DateTime(timezone=True)),
+                column("created_at", DateTime(timezone=True)),
+                name="listed_folders",
+            ).data(folders)
+            keys = list_keys(
+                sort_by,
+                lang,
+                rows.c.name,
+                literal(FOLDER_TYPE[lang], Text),
+                rows.c.size,
+                rows.c.updated_at,
+                rows.c.created_at,
+            )
+            branches.append(branch(0, keys, rows.c.id, rows, []))
+        if files:
+            keys = list_keys(
+                sort_by,
+                lang,
+                FileDB.name,
+                file_type(FileDB.name, FileDB.kind),
+                FileDB.size,
+                FileDB.updated_at,
+                FileDB.created_at,
+            )
+            conditions = [FileDB.storage_id == storage_id, FileDB.folder_path == folder]
+            branches.append(branch(1, keys, FileDB.id, FileDB, conditions))
+        if not branches:
+            return []
+        page = union_all(*branches).subquery()
+        collation = f"tcloud_{lang}" if sort_by in ("name", "type") else None
+        keys = [
+            page.c[f"k{index}"].collate(collation) if collation else page.c[f"k{index}"]
+            for index in range(len(page.c) - 2)
+        ]
+        statement = (
+            select(page)
+            .order_by(
+                *([page.c.grp] if folders_first else []),
+                *(
+                    item.desc() if descending else item.asc()
+                    for item in [*keys, page.c.id]
+                ),
+            )
+            .limit(limit)
+        )
+        return [
+            (row["grp"], row["id"], [row[f"k{index}"] for index in range(len(keys))])
+            for row in (await self._session.execute(statement)).mappings().all()
+        ]
 
     async def get_below(self, storage_id: UUID, folder: str) -> list[FileDB]:
         statement = (

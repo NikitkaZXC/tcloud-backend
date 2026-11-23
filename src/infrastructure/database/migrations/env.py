@@ -18,7 +18,14 @@ from src.infrastructure.database.models import (
 
 target_metadata = Base.metadata
 MODELS = (ApiKeyDB, FileDB, FolderDB, FolderGrantDB, RefreshTokenDB, StorageDB, UserDB)
-COLLATED_INDEXES = {"ix_files_name_ru", "ix_files_name_en"}
+COLLATED_INDEXES = {
+    "ix_files_name_ru",
+    "ix_files_name_en",
+    "ix_files_list_name_ru",
+    "ix_files_list_name_en",
+    "ix_files_list_type_ru",
+    "ix_files_list_type_en",
+}
 
 
 def include_object(obj, name, type_, reflected, compare_to) -> bool:

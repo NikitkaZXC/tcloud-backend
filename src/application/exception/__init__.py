@@ -17,6 +17,7 @@ from .file import (
 from .folder import (
     EmptySelectionError,
     FolderNotFoundError,
+    InvalidCursorError,
     StorageMismatchError,
     StorageRootError,
     TooManyItemsError,
@@ -68,6 +69,7 @@ __all__ = [
     "FileTooLargeError",
     "EmptySelectionError",
     "FolderNotFoundError",
+    "InvalidCursorError",
     "StorageMismatchError",
     "TooManyItemsError",
     "PathConflictError",

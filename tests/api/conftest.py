@@ -219,6 +219,22 @@ async def storage(client: AsyncClient) -> dict:
     return response.json()
 
 
+def split(data: dict) -> dict:
+    return {
+        **data,
+        "folders": [item for item in data["items"] if item["type"] == "folder"],
+        "files": [item for item in data["items"] if item["type"] == "file"],
+    }
+
+
+async def listing(client: AsyncClient, target: str, **params) -> dict:
+    response = await client.get(
+        "/folders", params={"path": target, "limit": 200, **params}
+    )
+    assert response.status_code == 200, response.text
+    return split(response.json())
+
+
 def path(storage: dict, rest: str = "") -> str:
     return f"tcloud/{storage['id']}" + (f"/{rest}" if rest else "")
 

@@ -9,24 +9,75 @@
 ## Папки
 
 Папки есть только в БД. Создаются явно (`POST /api/folders`) или автоматически вместе с родителями при загрузке файла;
-существующие объединяются. `GET /api/folders?path=` — прямые подпапки и файлы. `DELETE /api/folders?path=` —
+существующие объединяются. `GET /api/folders?path=` — прямые подпапки и файлы постранично («Листинг папки» ниже).
+`DELETE /api/folders?path=` —
 рекурсивно: сначала сообщения в Telegram (пачками по 100), потом записи в БД. Корень удалить нельзя.
 
-### Размеры папок в листинге
+### Листинг папки: страницы, сортировка, курсор
+
+`GET /api/folders` — одна страница содержимого папки, отсортированная на сервере. Параметры query:
+
+| Параметр | Значения | По умолчанию | Что |
+|---|---|---|---|
+| `path` | `tcloud/{storage}/…` | — | папка |
+| `sort_by` | `name`, `modified` (`updated_at`), `uploaded` (`created_at`), `type`, `size` | `interface.sort_by` пользователя | ключ сортировки |
+| `sort_order` | `asc`, `desc` | `interface.sort_order` | направление |
+| `folders_first` | `true`, `false` | `interface.folders_first` | сначала все папки, потом файлы; `false` — папки и файлы вперемешку по ключу |
+| `lang` | `ru`, `en` | `interface.language`, иначе `en` | правило сравнения имён и типов (`tcloud_ru`/`tcloud_en`, числа по значению: `b2` перед `b10`) |
+| `limit` | `1`…`200` | `20` | размер страницы |
+| `cursor` | строка из `next_cursor` | — | продолжить с места, где кончилась прошлая страница |
 
 ```json
 {
   "path": "tcloud/{storage}/trip",
-  "size": 12345, "total_files": 3,
-  "folders": [{"id": "…", "path": "tcloud/{storage}/trip/day 1", "name": "day 1",
-               "created_at": "…", "updated_at": "…", "size": 12000, "files": 2}],
-  "files": [/* как в GET /api/files/{id} */]
+  "size": 12345, "total_files": 3, "total_folders": 1, "direct_files": 1,
+  "items": [
+    {"type": "folder", "id": "…", "path": "tcloud/{storage}/trip/day 1", "name": "day 1",
+     "created_at": "…", "updated_at": "…", "size": 12000, "files": 2},
+    {"type": "file", "uuid": "…", "name": "map.png" /* остальное как в GET /api/files/{id} */}
+  ],
+  "next_cursor": "eyJzIjpb…"
 }
 ```
 
-- `folders[].size` / `folders[].files` — сумма размеров и число файлов во всём поддереве подпапки; `size` /
-  `total_files` верхнего уровня — то же для самой папки (её файлы плюс все подпапки). Поле самой папки названо
-  `total_files`, потому что `files` — уже список файлов.
+- `items` — папки (`type: "folder"`) и файлы (`type: "file"`) одной лентой в порядке сортировки; `next_cursor` —
+  `null` на последней странице. `total_folders` — сколько подпапок видно (все страницы), `direct_files` — сколько
+  файлов прямо в папке (0, если папку видно только как путь к гранту); `total_files` и `size` — как раньше, всё
+  поддерево. Вместе `total_folders + direct_files` — длина всей ленты.
+- Ключи: `name` — имя; `type` — расширение в нижнем регистре после последней точки, без расширения — `kind` файла
+  (так же, как колонка «Тип» фронтенда), у папок — слово `папка`/`folder` по `lang`; потом имя; `size` — размер
+  (у папки — поддерева); `modified`/`uploaded` — `updated_at`/`created_at`. Последний ключ всегда `id` (UUIDv7):
+  порядок полный и стабильный. Для `size`/`modified`/`uploaded` равные значения упорядочены по `id`, а не по имени.
+  `desc` переворачивает весь кортеж, папки при `folders_first` всё равно сверху.
+- Курсор — непрозрачная строка (base64url JSON: параметры сортировки, группа папка/файл, ключи и `id` последнего
+  элемента). Keyset: следующая страница — строки строго после этого кортежа, поэтому вставки и удаления между
+  страницами не дают дублей и пропусков уже показанного (новый файл до курсора просто не попадёт в эту прокрутку,
+  после — попадёт). Курсор от другой сортировки, `lang` или битый — `422 invalid_cursor` (начните с первой
+  страницы); `limit` вне `1…200` — `422 validation_error`.
+- Как считается: видимые подпапки (`get_children` + права) с размерами из одного агрегата `sizes_below` уходят в
+  запрос как `VALUES`, файлы — из `files`; каждая ветка берёт `limit + 1` строк после курсора по своему индексу,
+  `UNION ALL`, общая сортировка и `LIMIT`. Индексы ключей (миграция `0013`): `(storage_id, folder_path, name COLLATE
+  tcloud_{ru|en}, id)`, `(storage_id, folder_path, тип COLLATE …, name COLLATE …, id)`, `(storage_id, folder_path,
+  size|updated_at|created_at, id)`. На папке из 50 000 файлов (postgres:18, `plan_cache_mode = force_generic_plan`)
+  каждая страница — `Index Only Scan` (для `type` — `Index Scan`) с условием по кортежу в `Index Cond`, 21 строка,
+  ≈ 0,1–0,2 мс; подпапок в папке обычно мало, их сортировка — в памяти.
+
+```mermaid
+flowchart TD
+    req["GET /api/folders?path&sort_by&sort_order&folders_first&lang&limit&cursor"] --> cur{"cursor?"}
+    cur -->|битый или другая сортировка| bad["422 invalid_cursor"]
+    cur -->|нет или ок| acc["права на папку, папка есть"]
+    acc --> sub["видимые подпапки + sizes_below"]
+    sub --> fb["ветка папок: VALUES, ключи > курсора, limit+1"]
+    acc --> ff["ветка файлов: индекс ix_files_list_*, ключи > курсора, limit+1"]
+    fb & ff --> u["UNION ALL → ORDER BY [grp,] ключи, id → LIMIT limit+1"]
+    u --> page["items = первые limit; next_cursor, если пришло больше"]
+```
+
+### Размеры папок в листинге
+
+- `items[].size` / `items[].files` у папок — сумма размеров и число файлов во всём поддереве подпапки; `size` /
+  `total_files` верхнего уровня — то же для самой папки (её файлы плюс все подпапки).
 - Размер — открытый (`files.size`): у зашифрованных файлов не размер шифротекста в Telegram.
 - Точные числа, один агрегатный запрос на листинг: `GROUP BY` первого сегмента `folder_path` под папкой по индексу
   `(storage_id, folder_path text_pattern_ops)`.

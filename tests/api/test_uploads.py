@@ -10,7 +10,7 @@ from src.config import settings
 from src.infrastructure import limits
 from src.infrastructure.media import analyze as probe_module
 from src.infrastructure.security import plain_limit
-from tests.api.conftest import Remote, path, start_upload, upload, wait_task
+from tests.api.conftest import Remote, listing, path, start_upload, upload, wait_task
 from tests.factories import (
     EXE,
     PDF,
@@ -55,11 +55,9 @@ async def test_upload_photo_as_file(client, telegram, storage):
 
 async def test_upload_creates_parent_folders(client, storage):
     await upload(client, path(storage, "a/b/c/x.jpg"), make_image())
-    root = (await client.get("/folders", params={"path": path(storage)})).json()
+    root = await listing(client, path(storage))
     assert [item["name"] for item in root["folders"]] == ["a"]
-    nested = (
-        await client.get("/folders", params={"path": path(storage, "a/b")})
-    ).json()
+    nested = await listing(client, path(storage, "a/b"))
     assert [item["name"] for item in nested["folders"]] == ["c"]
 
 

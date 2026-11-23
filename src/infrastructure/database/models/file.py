@@ -44,6 +44,33 @@ class FileDB(PrimaryKeyMixin, CreatedAtMixin, UpdatedAtMixin, Base):
         Index("ix_files_name", "name"),
         Index("ix_files_name_ru", text('name COLLATE "tcloud_ru"')),
         Index("ix_files_name_en", text('name COLLATE "tcloud_en"')),
+        *(
+            Index(
+                f"ix_files_list_name_{lang}",
+                "storage_id",
+                "folder_path",
+                text(f'name COLLATE "tcloud_{lang}"'),
+                "id",
+            )
+            for lang in ("ru", "en")
+        ),
+        *(
+            Index(
+                f"ix_files_list_type_{lang}",
+                "storage_id",
+                "folder_path",
+                text(
+                    "(coalesce(nullif(lower(substring(name, '\\.([^.]*)$')), ''), kind))"
+                    f' COLLATE "tcloud_{lang}"'
+                ),
+                text(f'name COLLATE "tcloud_{lang}"'),
+                "id",
+            )
+            for lang in ("ru", "en")
+        ),
+        Index("ix_files_list_size", "storage_id", "folder_path", "size", "id"),
+        Index("ix_files_list_updated", "storage_id", "folder_path", "updated_at", "id"),
+        Index("ix_files_list_created", "storage_id", "folder_path", "created_at", "id"),
         Index("ix_files_kind", "kind"),
         Index("ix_files_mime", "mime"),
         Index("ix_files_size", "size"),

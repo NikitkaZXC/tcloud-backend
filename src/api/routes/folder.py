@@ -1,3 +1,5 @@
+from typing import Annotated
+
 from fastapi import APIRouter, Depends, Query, status
 
 from src.api.dependencies import get_actor, rate_limit_by_user
@@ -5,12 +7,13 @@ from src.api.schemas import (
     FolderCreate,
     FolderDeleteResponse,
     FolderListingResponse,
+    FolderListParams,
     FolderResponse,
     SelectionArchiveCreate,
     TaskResponse,
 )
 from src.application.factory import get_service_folder
-from src.application.schemas import Actor
+from src.application.schemas import Actor, FolderListingServiceCreate
 from src.application.services import FolderService
 from src.config import settings
 from src.infrastructure.enums import ArchiveFormat, TaskPriority
@@ -35,15 +38,19 @@ async def create_folder(
 @router.get(
     path="",
     name="folders:list",
-    summary="Folder contents",
+    summary="One page of folder contents (folders and files) with server-side sort and a keyset cursor",
     status_code=status.HTTP_200_OK,
 )
 async def get_folder(
-    path: str,
+    params: Annotated[FolderListParams, Query()],
     actor: Actor = Depends(get_actor),
     folder_service: FolderService = Depends(get_service_folder),
 ) -> FolderListingResponse:
-    return await folder_service.get_listing(actor, path)
+    return await folder_service.get_listing(
+        actor,
+        params.path,
+        FolderListingServiceCreate.model_validate(params.model_dump(exclude={"path"})),
+    )
 
 
 @router.post(

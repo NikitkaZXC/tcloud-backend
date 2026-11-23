@@ -240,8 +240,8 @@ async def test_cancel_after_message_sent_deletes_it(client, telegram, storage, w
     task = await wait_task(client, ids[0])
     assert task["status"] == "cancelled" and task["step"] == "sending"
     assert telegram.messages() == []
-    listing = (await client.get("/folders", params={"path": path(storage)})).json()
-    assert listing["files"] == []
+    page = (await client.get("/folders", params={"path": path(storage)})).json()
+    assert page["items"] == []
 
 
 async def test_client_disconnect_mid_body_leaves_nothing(client, storage, monkeypatch):
