@@ -113,8 +113,7 @@ async def test_public_health_without_sign_in(client, scanner):
         assert bad.status_code == 401
 
 
-async def test_account_limit(client, telegram, monkeypatch):
-    monkeypatch.setattr(settings.upload, "CHANNELS_TTL", 0)
+async def test_account_limit(client, telegram, redis):
     telegram.other_channels = 3
     assert (await client.get("/account")).json() == {
         "telegram_connected": True,
@@ -125,6 +124,9 @@ async def test_account_limit(client, telegram, monkeypatch):
         "previews_enabled": True,
     }
     telegram.premium = True
+    assert (await client.get("/account")).json()["premium"] is False
+    assert 0 < await redis.ttl("tcloud:account:premium") <= 180
+    await redis.delete("tcloud:account:premium")
     assert (await client.get("/account")).json() == {
         "telegram_connected": True,
         "premium": True,
@@ -150,28 +152,24 @@ async def test_account_before_telegram_login(client, telegram):
 
 
 async def test_account_channels_count_storages_and_other_chats(
-    client, telegram, storage, monkeypatch
+    client, telegram, storage
 ):
-    monkeypatch.setattr(settings.upload, "CHANNELS_TTL", 0)
     telegram.other_channels = 10
     assert (await client.get("/account")).json()["channels_used"] == 11
 
 
-async def test_account_channels_are_cached(client, telegram, monkeypatch):
-    monkeypatch.setattr(settings.upload, "CHANNELS_TTL", 3600)
+async def test_account_channels_are_cached(client, telegram, redis):
     telegram.other_channels = 5
     assert (await client.get("/account")).json()["channels_used"] == 5
     telegram.other_channels = 9
     assert (await client.get("/account")).json()["channels_used"] == 5
     assert telegram.dialogs_read == 1
-    monkeypatch.setattr(settings.upload, "CHANNELS_TTL", 0)
+    assert 0 < await redis.ttl("tcloud:account:channels") <= 180
+    await redis.delete("tcloud:account:channels")
     assert (await client.get("/account")).json()["channels_used"] == 9
 
 
-async def test_account_channels_refresh_after_storage_change(
-    client, telegram, monkeypatch
-):
-    monkeypatch.setattr(settings.upload, "CHANNELS_TTL", 3600)
+async def test_account_channels_refresh_after_storage_change(client, telegram):
     telegram.other_channels = 5
     assert (await client.get("/account")).json()["channels_used"] == 5
     created = await client.post("/storages", json={"name": "a"})
@@ -181,12 +179,12 @@ async def test_account_channels_refresh_after_storage_change(
     assert (await client.get("/account")).json()["channels_used"] == 5
 
 
-async def test_account_without_channels_count(client, telegram, monkeypatch):
-    monkeypatch.setattr(settings.upload, "CHANNELS_TTL", 0)
+async def test_account_without_channels_count(client, telegram, redis):
     telegram.dialogs_flood = True
     response = await client.get("/account")
     assert response.status_code == 200
     assert response.json()["channels_used"] is None
+    assert not await redis.exists("tcloud:account:channels")
     assert response.json()["channels_limit"] == limits.CHANNELS_MAX
 
 
@@ -436,6 +434,16 @@ async def test_chats_from_env_idempotent(make_client, telegram, monkeypatch):
     await make_client()
     client = await make_client()
     assert len((await client.get("/storages")).json()) == 1
+
+
+async def test_connected_chat_refreshes_channels_count(
+    make_client, telegram, redis, monkeypatch
+):
+    await redis.set("tcloud:account:channels", "7")
+    chat_id = telegram.add_channel("ok")
+    monkeypatch.setattr(settings.telegram, "CHATS", str(chat_id))
+    client = await make_client()
+    assert (await client.get("/account")).json()["channels_used"] == 1
 
 
 async def test_no_chats_in_env(client):

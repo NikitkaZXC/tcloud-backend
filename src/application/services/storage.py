@@ -89,7 +89,7 @@ class StorageService:
         chat_id = await self._runtime.telegram.create_channel(
             data.name, data.description or ""
         )
-        self._runtime.channels = None
+        await self._runtime.store.forget_account()
         storage = await self._repo.create(chat_id)
         await self._session.commit()
         logger.info("Storage {} created as channel {}", storage.id, chat_id)
@@ -105,7 +105,7 @@ class StorageService:
             )
         if not keep_channel:
             await self._runtime.telegram.delete_channel(storage.tg_chat_id)
-            self._runtime.channels = None
+            await self._runtime.store.forget_account()
         await self._runtime.store.forget_channel(storage.tg_chat_id)
         await self._repo.delete(storage)
         await self._session.commit()
@@ -246,5 +246,6 @@ class StorageService:
                 continue
             await self._repo.create(chat_id)
             await self._session.commit()
+            await self._runtime.store.forget_account()
             logger.info("Storage {} connected from TELEGRAM_CHATS", chat_id)
         await self.sync_folder()

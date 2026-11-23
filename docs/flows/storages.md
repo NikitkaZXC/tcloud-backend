@@ -23,14 +23,15 @@ sequenceDiagram
     alt CHANNELS_TOO_MUCH
         S-->>C: 409 channels_limit
     end
-    S->>S: runtime.channels = None (сброс кеша числа каналов)
+    S->>R: DEL account:premium, account:channels (сброс кеша аккаунта)
     S->>DB: INSERT storages (tg_chat_id), commit
     S->>TG: sync_folder TCloud (ошибки только в лог)
     S-->>C: 201, хранилище с названием и фото из GetFullChannel
     C->>S: DELETE /api/storages/{id}?keep_channel=
     S->>R: SCAN path:tcloud/{id}/* (есть → 409 storage_busy)
     opt keep_channel=false
-        S->>TG: channels.deleteChannel, сброс кеша
+        S->>TG: channels.deleteChannel
+        S->>R: DEL account:*
     end
     S->>DB: DELETE storages (каскад folders, files, folder_grants), commit
     S->>TG: sync_folder TCloud
@@ -86,9 +87,12 @@ flowchart TD
 (`ChannelForbidden`, их нет среди диалогов). Ровно это Telegram ограничивает `channels_limit_default` /
 `channels_limit_premium` и отвечает `CHANNELS_TOO_MUCH` при создании хранилища, поэтому число совпадает с тем, что
 видно в приложении Telegram (каналы + супергруппы во всех папках и архиве). `channels_limit` — 500 или 1000 с Premium.
-Подсчёт — один проход по диалогам, он медленный, поэтому результат кешируется в памяти API на `UPLOAD_CHANNELS_TTL`
-(300 с); создание и удаление хранилища (с каналом) и новый вход в API-сессию сбрасывают кеш, так что изменения tcloud
-видны сразу, а вступление в каналы или выход из них в самом Telegram — не позже чем через 300 с. Telegram не ответил (флуд, сеть, сессия отозвана) → `channels_used: null`, остальные поля как обычно, ошибка
+Подсчёт — один проход по диалогам, он медленный, поэтому `channels_used` и `premium` кешируются в Redis
+(`tcloud:account:channels`, `tcloud:account:premium`, TTL `REDIS_CACHE_TTL`, 180 с; тот же `premium` даёт лимит размера
+при загрузке). Создание и удаление хранилища (с каналом), подключение канала из `TELEGRAM_CHATS` и новый вход в
+API-сессию удаляют оба ключа, так что изменения tcloud видны сразу; изменения в самом Telegram (вступление в каналы,
+выход, Premium) сбрасывают кеш через события Telegram (раздел «События Telegram»), а TTL — страховка, если событие
+потерялось. Telegram не ответил (флуд, сеть, сессия отозвана) → `channels_used: null`, остальные поля как обычно, ошибка
 не кешируется. Пока root не вошёл в API-сессию, ручка отвечает `200` с `telegram_connected: false` и `null`
 во всех полях Telegram (`premium`, `file_limit`, `channels_used`, `channels_limit`); после входа
 `telegram_connected: true` и `premium` читается из Telegram.
@@ -97,13 +101,15 @@ flowchart TD
 flowchart TD
     get["GET /api/account"] --> auth{"сессия api вошла?"}
     auth -->|нет| off["telegram_connected false, остальные поля null"]
-    auth -->|да| prem["is_premium(fresh): get_me().premium"]
-    prem --> cache{"runtime.channels моложе UPLOAD_CHANNELS_TTL?"}
+    auth -->|да| prem{"Redis account:premium есть?"}
+    prem -->|нет| me["get_me().premium → SET EX 180"]
+    prem -->|да| cache{"Redis account:channels есть?"}
+    me --> cache
     cache -->|да| hit["channels_used из кеша"]
     cache -->|нет| count["iter_dialogs: число dialog.is_channel"]
-    count -->|ок| put["кеш = (время, число)"]
+    count -->|ок| put["SET account:channels EX 180"]
     count -->|ошибка Telegram| nul["channels_used null, не кешируется"]
-    reset["создание хранилища, удаление с каналом,<br/>вход в сессию api"] -. "runtime.channels = None" .-> cache
+    reset["создание хранилища, удаление с каналом,<br/>TELEGRAM_CHATS, вход в сессию api,<br/>события Telegram"] -. "DEL account:*" .-> prem
 ```
 
 ## Кеш сведений о каналах

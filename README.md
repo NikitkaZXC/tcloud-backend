@@ -101,7 +101,7 @@ curl -H "X-API-Key: $TCLOUD_KEY" --data-binary @photo.jpg \
 | `UPLOAD_TMP_DIR` | `data/tmp` (compose — `/data/tmp`) | общий том тел загрузок и архивов |
 | `UPLOAD_MAX_ACTIVE_TASKS`, `UPLOAD_MAX_FILES_ON_DISK` | `0`, `0` (без лимита) | лимиты задач и файлов в `tmp` |
 | `UPLOAD_MIN_FREE_DISK_MB` | `1024` | резерв диска, иначе `507` |
-| `UPLOAD_TASK_TTL`, `UPLOAD_ARCHIVE_TTL`, `UPLOAD_CHANNELS_TTL` | 7 дней, 24 ч, 300 с | жизнь задач, готовых архивов, кеша числа каналов |
+| `UPLOAD_TASK_TTL`, `UPLOAD_ARCHIVE_TTL` | 7 дней, 24 ч | жизнь задач и готовых архивов |
 | `UPLOAD_ARCHIVE_MAX_ITEMS` | `1000` | выбранных элементов в архиве |
 | `LOG_LEVEL` | `INFO` | loguru |
 

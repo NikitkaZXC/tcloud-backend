@@ -273,7 +273,7 @@ def declared(size: int) -> dict:
     return {"headers": {"Content-Length": str(size)}}
 
 
-async def test_size_over_limit(client, telegram, storage):
+async def test_size_over_limit(client, telegram, storage, redis):
     target = path(storage, "a.mp4")
     plain = {"encrypt": "false"}
     response = await post_file(client, target, **plain, **declared(limits.FILE_MAX + 1))
@@ -285,7 +285,7 @@ async def test_size_over_limit(client, telegram, storage):
     assert encrypted.status_code == 413
     assert encrypted.json()["error"]["limit"] == plain_limit(limits.FILE_MAX)
     telegram.premium = True
-    await client.get("/account")
+    await redis.delete("tcloud:account:premium")
     response = await post_file(client, target, **plain, **declared(limits.FILE_MAX + 1))
     assert response.json()["error"]["code"] == "size_mismatch"
     big = declared(limits.FILE_MAX_PREMIUM + 1)

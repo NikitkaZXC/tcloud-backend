@@ -18,6 +18,7 @@ flowchart LR
         ss["StorageService<br/>activity, storage_busy"]
         ua["UserAuthService"]
         rl["RateLimiter<br/>api/dependencies/rate_limit.py"]
+        acs["AccountService"]
     end
     subgraph workers["Celery-воркеры"]
         pl["UploadPipeline"]
@@ -39,7 +40,10 @@ flowchart LR
         rate[("rate_limit:{scope}:{ip|user}:{id}<br/>zset")]
         job[("job:{name}")]
         channel[("channel:{chat_id}")]
+        account[("account:premium<br/>account:channels")]
     end
+    acs --> account
+    ss --> account
     us --> task & batch & owned & path & active & disk & waiting
     ts --> task & owned & waiting
     sw --> active & task & archives & path & disk & waiting
@@ -67,6 +71,7 @@ flowchart LR
 | `tcloud:worker:{queue}:{host}` | string | heartbeat воркера, значение — JSON `{"at": unix-время удара, "telegram": true/false/null}` (`telegram` — ping клиента Telegram воркера, `null` — клиента ещё нет; `health.workers`, `health.details.{queue}.last_seen_s`, `health.telegram_upload`) | `Heartbeat` раз в `UPLOAD_HEARTBEAT_INTERVAL`; `TaskStore.workers` | 3 × `UPLOAD_HEARTBEAT_INTERVAL` |
 | `tcloud:activity:{storage_id}:{read\|write}` | zset | «с хранилищем сейчас работают» для `GET /api/storages/activity` (flows/storages.md): член — id операции, score — unix-время «живо до» (идёт: сейчас + 5 с, продлевается раз в секунду; закончилась: сейчас + 1 с) | `TaskStore.active` (контекст операции); `activity` — `ZCOUNT (now, +inf)` конвейером | 5 с с последней записи (`ACTIVITY_TTL`, `PEXPIRE`) |
 | `tcloud:channel:{chat_id}` | string | JSON `{title, about, has_photo}` канала хранилища из `GetFullChannel` (flows/storages.md, «Кеш сведений о каналах») | `TaskStore.channel_infos`, `keep_channel_infos`, `forget_channel` (`PATCH`, фото, удаление хранилища); `StorageService.channel_infos` | `REDIS_CACHE_TTL` (180 с) |
+| `tcloud:account:premium`, `tcloud:account:channels` | string | JSON: Premium API-аккаунта (`true`/`false`, от него лимит размера файла) и `channels_used` (flows/storages.md, «Сколько каналов ещё можно создать») | `TaskStore.cached`/`keep`; `AccountService.is_premium`, `channels_used`; `forget_account` — создание/удаление хранилища, `TELEGRAM_CHATS`, вход в API-сессию, события Telegram | `REDIS_CACHE_TTL` (180 с) |
 | `tcloud:job:{name}` | string | одна фоновая задача на имя (`job:previews` — дозаполнение превью), значение — id задачи Celery; `SET NX`, свой ключ продлевается (Lua `RENEW`), снимает только владелец (Lua `UNLOCK`) | `TaskStore.hold_job`, `release_job`; `PreviewBackfill` | 120 с (`JOB_TTL`), продлевается каждые 30 с |
 | `tcloud:revoked:{jti}` | string | отозванный access-токен (logout, refresh, смена пароля) | `TokenBlacklist.revoke/revoked` | `JWT_ACCESS_TOKEN_EXPIRATION_MINUTES` |
 | `tcloud:rate_limit:{scope}:ip:{ip}`, `tcloud:rate_limit:{scope}:user:{user_id}`, `tcloud:rate_limit:signin_login:{login}` | zset | скользящее окно: время Redis (мс) каждого принятого запроса, Lua `RATE_LIMIT_SCRIPT`; правила и scope — security.md, «Rate limiting»; Redis недоступен — запрос пропускается (fail open) | `RateLimitStore.hit` (из `api/dependencies/rate_limit.py`) | окно правила (`PEXPIRE` на каждом обращении) |

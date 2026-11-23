@@ -337,6 +337,20 @@ class TaskStore:
     async def forget_channel(self, chat_id: int) -> None:
         await self._redis.delete(self._key("channel", chat_id))
 
+    async def cached(self, *parts: object):
+        value = await self._redis.get(self._key(*parts))
+        return None if value is None else json.loads(value)
+
+    async def keep(self, value, *parts: object) -> None:
+        await self._redis.set(
+            self._key(*parts), encode(value), ex=settings.redis.CACHE_TTL
+        )
+
+    async def forget_account(self) -> None:
+        await self._redis.delete(
+            self._key("account", "premium"), self._key("account", "channels")
+        )
+
     async def activity(self, storage_ids: list[UUID]) -> dict[UUID, dict[str, bool]]:
         if not storage_ids:
             return {}

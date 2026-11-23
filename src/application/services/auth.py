@@ -244,8 +244,8 @@ class AuthService:
         old, client = self._runtime.telegram, self._runtime.make_telegram()
         if not await client.start():
             raise TelegramUnauthorizedError("the new API session is not authorized")
-        self._runtime.telegram, self._runtime.premium = client, None
-        self._runtime.channels = None
+        self._runtime.telegram = client
+        await self._runtime.store.forget_account()
         if old is not client:
             await old.stop()
         await self.connect()
@@ -279,7 +279,8 @@ class AuthService:
                 await self._runtime.telegram.log_out()
                 client = self._runtime.make_telegram()
                 await client.start()
-                self._runtime.telegram, self._runtime.premium = client, None
+                self._runtime.telegram = client
+                await self._runtime.store.forget_account()
             elif session == TelegramSession.DOWNLOAD:
                 await self._runtime.download.log_out()
                 client = self._runtime.make_telegram(session, receive_updates=False)
