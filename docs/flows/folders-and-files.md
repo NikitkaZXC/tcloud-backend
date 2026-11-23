@@ -136,7 +136,7 @@ sequenceDiagram
         T->>TG: getMessages: нет → archive_file_gone, размер другой → archive_file_changed
         T->>TG: iter_media (+ decrypt) → часть в tmp
         T->>T: ArchiveWriter.add в потоке, часть удаляется
-        T->>R: прогресс, activity:{storage}:read раз в секунду
+        T->>R: прогресс, activity:{storage}:read, пока идёт сборка (storages.md)
     end
     T->>R: zset archives (путь, срок), archive.size и expires_at, status done
     C->>A: GET /api/tasks/{id}/archive (Range)
@@ -225,6 +225,7 @@ sequenceDiagram
         F-->>C: 409 file_changed
     end
     A->>A: parse_range(a-b, files.size), иначе 0..size-1
+    A->>R: ZADD activity:{storage}:read (начало операции)
     A-->>C: 200 или 206, Content-Length, Content-Range, Accept-Ranges, no-transform, sandbox
     loop куски тела
         alt открытый файл
@@ -234,9 +235,10 @@ sequenceDiagram
             A->>TG: iter_media(диапазон шифротекста)
             A->>A: decrypt блоков (GCM-тег, номер блока), обрезка до a..b
         end
-        A->>R: SET activity:{storage}:read EX 5 (не чаще раза в секунду)
+        A->>R: activity:{storage}:read продлевается раз в секунду (storages.md)
         A-->>C: байты
     end
+    A->>R: конец потока или обрыв клиента: активность гаснет через 1 с
 ```
 
 Статус и заголовки уходят до первого байта тела: подменённый или обрезанный блок шифротекста или ошибка Telegram

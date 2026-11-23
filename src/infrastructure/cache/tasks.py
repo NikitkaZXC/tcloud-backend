@@ -1,7 +1,10 @@
+import asyncio
 import json
 import time
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from redis.asyncio import Redis
 
@@ -10,6 +13,8 @@ from src.infrastructure.enums import UploadQueue
 
 QUEUES = [queue.value for queue in UploadQueue]
 ACTIVITY_TTL = 5
+ACTIVITY_TAIL = 1
+ACTIVITY_REFRESH = 1
 ACTIVITY_KINDS = ("read", "write")
 
 UNLOCK = """
@@ -284,10 +289,30 @@ class TaskStore:
             if rank is not None
         }
 
-    async def mark_activity(self, storage_id: UUID | str, kind: str) -> None:
-        await self._redis.set(
-            self._key("activity", storage_id, kind), 1, ex=ACTIVITY_TTL
-        )
+    async def _mark_activity(self, key: str, operation: str, seconds: float) -> None:
+        now = time.time()
+        async with self._redis.pipeline(transaction=True) as pipe:
+            pipe.zremrangebyscore(key, "-inf", now)
+            pipe.zadd(key, {operation: now + seconds})
+            pipe.pexpire(key, int(ACTIVITY_TTL * 1000))
+            await pipe.execute()
+
+    async def _keep_activity(self, key: str, operation: str) -> None:
+        while True:
+            await asyncio.sleep(ACTIVITY_REFRESH)
+            await self._mark_activity(key, operation, ACTIVITY_TTL)
+
+    @asynccontextmanager
+    async def active(self, storage_id: UUID | str, kind: str) -> AsyncIterator[None]:
+        key = self._key("activity", storage_id, kind)
+        operation = uuid4().hex
+        await self._mark_activity(key, operation, ACTIVITY_TTL)
+        keep = asyncio.create_task(self._keep_activity(key, operation))
+        try:
+            yield
+        finally:
+            keep.cancel()
+            await asyncio.shield(self._mark_activity(key, operation, ACTIVITY_TAIL))
 
     async def activity(self, storage_ids: list[UUID]) -> dict[UUID, dict[str, bool]]:
         if not storage_ids:
@@ -297,9 +322,13 @@ class TaskStore:
             for storage_id in storage_ids
             for kind in ACTIVITY_KINDS
         ]
-        flags = iter(await self._redis.mget(keys))
+        now = time.time()
+        async with self._redis.pipeline(transaction=False) as pipe:
+            for key in keys:
+                pipe.zcount(key, f"({now}", "+inf")
+            flags = iter(await pipe.execute())
         return {
-            storage_id: {kind: next(flags) is not None for kind in ACTIVITY_KINDS}
+            storage_id: {kind: next(flags) > 0 for kind in ACTIVITY_KINDS}
             for storage_id in storage_ids
         }
 

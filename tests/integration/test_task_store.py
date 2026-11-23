@@ -195,3 +195,66 @@ async def test_raised_priority_moves_to_front(store):
     await store.join_queue(ids[2], queue, 9)
     positions = await store.positions(await store.get_many(ids))
     assert positions == {ids[2]: 1, ids[0]: 2, ids[1]: 3} and generation == 1
+
+
+async def flags(store, storage_id) -> dict[str, bool]:
+    return (await store.activity([storage_id]))[storage_id]
+
+
+async def test_activity_lasts_while_operation_runs(store, monkeypatch):
+    monkeypatch.setattr("src.infrastructure.cache.tasks.ACTIVITY_TTL", 1)
+    monkeypatch.setattr("src.infrastructure.cache.tasks.ACTIVITY_REFRESH", 0.2)
+    monkeypatch.setattr("src.infrastructure.cache.tasks.ACTIVITY_TAIL", 0.3)
+    storage_id = uuid7()
+    assert await flags(store, storage_id) == {"read": False, "write": False}
+    async with store.active(storage_id, "read"):
+        await asyncio.sleep(1.5)
+        assert await flags(store, storage_id) == {"read": True, "write": False}
+    assert await flags(store, storage_id) == {"read": True, "write": False}
+    await asyncio.sleep(0.4)
+    assert await flags(store, storage_id) == {"read": False, "write": False}
+
+
+async def test_activity_counts_overlapping_operations(store, monkeypatch):
+    monkeypatch.setattr("src.infrastructure.cache.tasks.ACTIVITY_TAIL", 0.2)
+    storage_id = uuid7()
+    async with store.active(storage_id, "write"):
+        async with store.active(storage_id, "write"):
+            pass
+        await asyncio.sleep(0.3)
+        assert (await flags(store, storage_id))["write"]
+    await asyncio.sleep(0.3)
+    assert not (await flags(store, storage_id))["write"]
+
+
+async def test_activity_ends_on_error_and_cancel(store, monkeypatch):
+    monkeypatch.setattr("src.infrastructure.cache.tasks.ACTIVITY_TAIL", 0.2)
+    storage_id = uuid7()
+    with pytest.raises(RuntimeError):
+        async with store.active(storage_id, "write"):
+            raise RuntimeError
+    started = asyncio.Event()
+
+    async def hang() -> None:
+        async with store.active(storage_id, "read"):
+            started.set()
+            await asyncio.sleep(60)
+
+    task = asyncio.create_task(hang())
+    await started.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    await asyncio.sleep(0.3)
+    assert await flags(store, storage_id) == {"read": False, "write": False}
+
+
+async def test_activity_of_crashed_operation_expires(store, monkeypatch):
+    monkeypatch.setattr("src.infrastructure.cache.tasks.ACTIVITY_TTL", 0.5)
+    storage_id = uuid7()
+    await store._mark_activity(
+        store._key("activity", storage_id, "read"), "crashed", 0.5
+    )
+    assert (await flags(store, storage_id))["read"]
+    await asyncio.sleep(0.6)
+    assert not (await flags(store, storage_id))["read"]

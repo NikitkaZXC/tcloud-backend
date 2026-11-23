@@ -69,7 +69,7 @@ async def test_backfill_builds_missing_previews(
     assert response.status_code == 200
     with Image.open(io.BytesIO(response.content)) as image:
         assert image.format == "JPEG" and image.size == (320, 240)
-    assert await redis.get(f"tcloud:activity:{storage['id']}:read")
+    assert await redis.zcard(f"tcloud:activity:{storage['id']}:read")
     listed = (await client.get(f"/storages/{storage['id']}")).json()
     assert listed["preview_count"] == 1
 

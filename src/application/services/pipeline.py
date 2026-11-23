@@ -4,6 +4,7 @@ import hashlib
 import os
 import time
 from collections.abc import Awaitable, Callable
+from contextlib import nullcontext
 from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
@@ -108,9 +109,14 @@ class UploadPipeline:
         beat = self._runtime.spawn(self._beat(task_id))
         watch = self._runtime.spawn(self._watch(task["id"]))
         kind = {UploadQueue.TELEGRAM: "write", UploadQueue.ARCHIVE: "read"}.get(queue)
-        activity = kind and self._runtime.spawn(self._activity(task["path"], kind))
+        activity = (
+            self._store.active(task["path"].split("/")[1], kind)
+            if kind
+            else nullcontext()
+        )
         try:
-            await step(task)
+            async with activity:
+                await step(task)
         except BaseException as error:
             if isinstance(error, TelegramUnauthorizedError):
                 await self._runtime.forget_telegram()
@@ -120,8 +126,6 @@ class UploadPipeline:
         finally:
             beat.cancel()
             watch.cancel()
-            if activity:
-                activity.cancel()
 
     async def _beat(self, task_id: UUID) -> None:
         while True:
@@ -136,12 +140,6 @@ class UploadPipeline:
     def _check_cancel(self, task_id: str) -> None:
         if task_id in self._cancelled:
             raise TaskCancelledError("task was cancelled")
-
-    async def _activity(self, path: str, kind: str) -> None:
-        storage_id = path.split("/")[1]
-        while True:
-            await self._store.mark_activity(storage_id, kind)
-            await asyncio.sleep(1)
 
     async def _checkpoint(self, task: dict) -> None:
         current = await self._store.get(task["id"]) or {}

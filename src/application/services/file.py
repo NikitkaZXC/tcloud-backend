@@ -1,6 +1,5 @@
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, time, timedelta
-from time import monotonic
 from uuid import UUID
 
 from loguru import logger
@@ -78,12 +77,9 @@ def file_body(
 async def tracked(
     body: AsyncIterator[bytes], store: TaskStore, storage_id: UUID, kind: str
 ) -> AsyncIterator[bytes]:
-    marked = 0.0
-    async for chunk in body:
-        if monotonic() - marked >= 1:
-            marked = monotonic()
-            await store.mark_activity(storage_id, kind)
-        yield chunk
+    async with store.active(storage_id, kind):
+        async for chunk in body:
+            yield chunk
 
 
 class FileService:
@@ -262,8 +258,8 @@ class FileService:
 
     async def delete(self, actor: Actor, file_id: UUID) -> None:
         file, chat_id = await self.get_db(actor, file_id, Permission.DELETE)
-        await self._runtime.store.mark_activity(file.storage_id, "write")
-        await self._runtime.telegram.delete(chat_id, [file.tg_message_id])
+        async with self._runtime.store.active(file.storage_id, "write"):
+            await self._runtime.telegram.delete(chat_id, [file.tg_message_id])
         await self._repo.delete_by_ids([file_id])
         await self._session.commit()
         logger.info("File {} deleted", file_id)

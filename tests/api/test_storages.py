@@ -486,7 +486,10 @@ async def test_chat_folder_survives_stale_root_settings(client, telegram, engine
     assert telegram.folders == {}
 
 
-async def test_activity_shows_reads_and_writes(client, storage, make_user, redis):
+async def test_activity_shows_reads_and_writes(
+    client, storage, make_user, redis, monkeypatch
+):
+    monkeypatch.setattr("src.infrastructure.cache.tasks.ACTIVITY_TAIL", 30)
     other = (await client.post("/storages", json={"name": "b"})).json()
     idle = {"read": False, "write": False}
     activity = (await client.get("/storages/activity")).json()
@@ -516,3 +519,14 @@ async def test_activity_shows_reads_and_writes(client, storage, make_user, redis
     assert (await flags())[storage["id"]] == (False, True)
     stranger = await make_user("stranger")
     assert (await stranger.get("/storages/activity")).json() == []
+
+
+async def test_activity_ends_soon_after_download(client, storage, monkeypatch):
+    file = (await upload(client, path(storage, "a.pdf"), PDF))["file"]
+    await asyncio.sleep(1.1)
+    idle = {"storage_id": storage["id"], "read": False, "write": False}
+    assert (await client.get("/storages/activity")).json() == [idle]
+    assert (await client.get(f"/files/{file['uuid']}/download")).status_code == 200
+    assert (await client.get("/storages/activity")).json()[0]["read"] is True
+    await asyncio.sleep(1.1)
+    assert (await client.get("/storages/activity")).json() == [idle]
