@@ -85,6 +85,24 @@ class FileRepository:
         )
         await self._session.flush()
 
+    async def clear_thumbnails(self, limit: int) -> tuple[int, int]:
+        batch = (
+            select(FileDB.id, func.octet_length(FileDB.thumbnail).label("size"))
+            .where(FileDB.thumbnail.is_not(None))
+            .limit(limit)
+            .with_for_update(skip_locked=True)
+            .cte("batch")
+        )
+        result = await self._session.execute(
+            update(FileDB)
+            .where(FileDB.id == batch.c.id)
+            .values(thumbnail=None, updated_at=FileDB.updated_at)
+            .returning(batch.c.size)
+        )
+        sizes = list(result.scalars().all())
+        await self._session.flush()
+        return len(sizes), sum(sizes)
+
     async def get_thumbnail(self, file_id: UUID) -> bytes | None:
         statement = select(FileDB.thumbnail).where(FileDB.id == file_id)
         return await self._session.scalar(statement)

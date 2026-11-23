@@ -108,6 +108,11 @@ class FileSearchServiceRead(BaseModel):
     folders: list[FoundFolderServiceRead]
 
 
+class PreviewsClearServiceRead(BaseModel):
+    cleared: int
+    bytes: int
+
+
 class MimeCountServiceRead(BaseModel):
     mime: str
     files: int

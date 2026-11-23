@@ -13,6 +13,7 @@ from .file import (
     FileSearchParams,
     FileSearchResponse,
     MimeCountResponse,
+    PreviewsClearResponse,
 )
 from .folder import (
     FolderCreate,
@@ -60,6 +61,7 @@ __all__ = [
     "FileSearchParams",
     "FileSearchResponse",
     "MimeCountResponse",
+    "PreviewsClearResponse",
     "BATCH_MAX",
     "AccountResponse",
     "AuthResponse",

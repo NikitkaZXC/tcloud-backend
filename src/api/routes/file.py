@@ -12,6 +12,7 @@ from src.api.schemas import (
     FileSearchParams,
     FileSearchResponse,
     MimeCountResponse,
+    PreviewsClearResponse,
 )
 from src.application.factory import get_runtime, get_service_file
 from src.application.schemas import Actor, FileSearchServiceCreate
@@ -194,6 +195,26 @@ async def backfill_previews(
     file_service: FileService = Depends(get_service_file),
 ) -> None:
     await file_service.backfill_previews(actor)
+
+
+@router.delete(
+    path="/previews",
+    dependencies=[
+        Depends(
+            rate_limit_by_user(
+                "previews_clear", settings.rate_limit.PREVIEWS_CLEAR_USER
+            )
+        )
+    ],
+    name="files:previews-clear",
+    summary="Root: delete every stored preview of encrypted files, the files stay",
+    status_code=status.HTTP_200_OK,
+)
+async def clear_previews(
+    actor: Actor = Depends(get_root),
+    file_service: FileService = Depends(get_service_file),
+) -> PreviewsClearResponse:
+    return await file_service.clear_previews(actor)
 
 
 @router.delete(

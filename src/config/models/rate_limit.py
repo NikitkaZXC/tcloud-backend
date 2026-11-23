@@ -26,5 +26,6 @@ class RateLimitSettings(BaseSettings):
     UPLOAD_BATCH_USER: RateLimitRule = RateLimitRule(limit=30, window=60)
     ARCHIVE_USER: RateLimitRule = RateLimitRule(limit=30, window=3600)
     PREVIEWS_BACKFILL_USER: RateLimitRule = RateLimitRule(limit=3, window=3600)
+    PREVIEWS_CLEAR_USER: RateLimitRule = RateLimitRule(limit=3, window=3600)
     FILE_READ_USER: RateLimitRule = RateLimitRule(limit=3000, window=60)
     API_USER: RateLimitRule = RateLimitRule(limit=1200, window=60)

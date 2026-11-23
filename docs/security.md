@@ -39,6 +39,7 @@
 | `UPLOAD_BATCH_USER` | 30 / 60 с | пользователь | `POST /api/uploads/batch` |
 | `ARCHIVE_USER` | 30 / 3600 с | пользователь | `POST /api/folders/archive`, `/folders/archive/selection` |
 | `PREVIEWS_BACKFILL_USER` | 3 / 3600 с | пользователь | `POST /api/files/previews/backfill` |
+| `PREVIEWS_CLEAR_USER` | 3 / 3600 с | пользователь | `DELETE /api/files/previews` |
 | `FILE_READ_USER` | 3000 / 60 с | пользователь | `GET /api/files/{id}/download`, `/files/{id}/thumb`, `/tasks/{id}/archive` — вместо общего правила, чтобы сетка большой папки не упиралась в 429 |
 | `API_USER` | 1200 / 60 с | пользователь | все остальные ручки со входом (роутеры users, telegram, settings, storages, folders, uploads/tasks, files; `GET /api/account`; `/auth/logout/all`, `/auth/sessions*`, `/auth/password`) — поверх своих правил |
 

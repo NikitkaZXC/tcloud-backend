@@ -171,6 +171,37 @@ async def test_backfill_stops_when_previews_are_off(client, storage, engine, red
     assert await previews(engine) == {"a.jpg": False}
 
 
+async def test_clear_previews(client, storage, engine, make_user, monkeypatch):
+    monkeypatch.setattr("src.application.services.file.CLEAR_BATCH", 2)
+    names = ["a.jpg", "b.jpg", "c.jpg"]
+    for name in names:
+        await upload(client, path(storage, name), make_image(), encrypt="true")
+    await upload(client, path(storage, "open.jpg"), make_image(), encrypt="false")
+    async with engine.connect() as connection:
+        before = (
+            await connection.execute(
+                text("SELECT sum(octet_length(thumbnail)), max(updated_at) FROM files")
+            )
+        ).one()
+    stats = (await client.get(f"/storages/{storage['id']}")).json()
+    assert stats["preview_count"] == 3 and stats["preview_bytes"] == before[0]
+    admin = await make_user("boss", "admin")
+    assert (await admin.delete("/files/previews")).status_code == 403
+    response = await client.delete("/files/previews")
+    assert response.status_code == 200, response.text
+    assert response.json() == {"cleared": 3, "bytes": before[0]}
+    assert await previews(engine) == dict.fromkeys([*names, "open.jpg"], False)
+    async with engine.connect() as connection:
+        assert (
+            await connection.execute(text("SELECT max(updated_at) FROM files"))
+        ).scalar_one() == before[1]
+    stats = (await client.get(f"/storages/{storage['id']}")).json()
+    assert stats["preview_count"] == 0 and stats["preview_bytes"] == 0
+    assert stats["files"] == 4
+    again = await client.delete("/files/previews")
+    assert again.json() == {"cleared": 0, "bytes": 0}
+
+
 async def test_backfill_job_lock(redis):
     store = TaskStore(redis)
     assert await store.hold_job("previews", "a")

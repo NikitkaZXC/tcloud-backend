@@ -55,6 +55,11 @@ class FileDB(PrimaryKeyMixin, CreatedAtMixin, UpdatedAtMixin, Base):
             postgresql_where=text("encryption_header IS NOT NULL"),
         ),
         Index(
+            "ix_files_preview",
+            "id",
+            postgresql_where=text("thumbnail IS NOT NULL"),
+        ),
+        Index(
             "ix_files_missing_preview",
             "kind",
             "id",

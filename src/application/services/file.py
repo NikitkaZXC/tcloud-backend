@@ -26,6 +26,7 @@ from src.application.schemas import (
     FoundFileServiceRead,
     FoundFolderServiceRead,
     MimeCountServiceRead,
+    PreviewsClearServiceRead,
 )
 from src.application.services.access import (
     allowed,
@@ -50,6 +51,7 @@ from src.utilities.errors import TCloudError
 from src.utilities.parsers import join_path, split_file, split_folder
 
 BACKFILL_TASK = "previews.backfill"
+CLEAR_BATCH = 1000
 SEARCH_FOLDERS = 20
 MIME_FACETS = 200
 
@@ -276,6 +278,21 @@ class FileService:
             raise PreviewsDisabledError("previews are turned off in root settings")
         await enqueue(UploadQueue.ARCHIVE, TaskPriority.LOW.level, BACKFILL_TASK)
         logger.info("Preview backfill queued by {}", actor.login)
+
+    async def clear_previews(self, actor: Actor) -> PreviewsClearServiceRead:
+        require_root(actor)
+        cleared = freed = 0
+        while True:
+            count, size = await self._repo.clear_thumbnails(CLEAR_BATCH)
+            await self._session.commit()
+            if not count:
+                break
+            cleared += count
+            freed += size
+        logger.info(
+            "Previews cleared by {}: {} files, {} bytes", actor.login, cleared, freed
+        )
+        return PreviewsClearServiceRead(cleared=cleared, bytes=freed)
 
     async def get_thumbnail(
         self, actor: Actor, file_id: UUID, if_none_match: str | None

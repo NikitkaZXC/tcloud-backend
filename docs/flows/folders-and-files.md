@@ -171,6 +171,13 @@ sequenceDiagram
 - `POST /api/files/previews/backfill` — только root, `202`: фоновая задача строит недостающие превью зашифрованных
   фото, GIF и видео (background-tasks.md, «Дозаполнение превью»); `503 queue_unavailable`, если брокер недоступен;
   `409 previews_disabled`, если root выключил `uploads.previews` (flows/settings.md).
+- `DELETE /api/files/previews` — только root (`403 forbidden` остальным), `200 {cleared, bytes}`: стирает все наши
+  превью (`files.thumbnail = NULL`; сами файлы, `updated_at` и превью Telegram у открытых файлов не трогаются).
+  Идёт пачками по 1000 строк (`FileService.CLEAR_BATCH`, частичный индекс `ix_files_preview`, `FOR UPDATE SKIP LOCKED`),
+  каждая пачка — своя транзакция, поэтому таблица не блокируется надолго; `cleared` — сколько превью стёрто, `bytes` —
+  их суммарный размер. После очистки `preview_count`/`preview_bytes` в `/api/storages` — `0`, `/thumb` у
+  зашифрованных файлов — `404 thumbnail_not_found`; вернуть превью можно `POST /api/files/previews/backfill`.
+  Лимит `RATE_LIMIT_PREVIEWS_CLEAR_USER` (3 в час, security.md).
 - `GET /api/files/{uuid}/thumb` — маленькое превью (`image/jpeg`). Открытые файлы: превью, которое Telegram сам хранит у
   сообщения: у фото (сжатых и отправленных файлом), у видео (превью делаем при загрузке, flows/uploads.md) и у
   документов, для которых Telegram его сделал. Зашифрованные файлы: наше превью из `files.thumbnail` (фото, GIF, видео;

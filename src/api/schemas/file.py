@@ -8,6 +8,7 @@ from src.application.schemas import (
     FileSearchServiceRead,
     FileServiceRead,
     MimeCountServiceRead,
+    PreviewsClearServiceRead,
 )
 from src.infrastructure.enums import MediaKind
 from src.utilities.formatters import TcloudPath
@@ -62,6 +63,10 @@ class FileSearchResponse(FileSearchServiceRead):
 
 
 class MimeCountResponse(MimeCountServiceRead):
+    pass
+
+
+class PreviewsClearResponse(PreviewsClearServiceRead):
     pass
 
 
