@@ -283,7 +283,10 @@ Telegram — `TelegramClient.iter_media` клиентом `runtime.download`.
 Сообщение с медиа (`message_media`: `media` и размер) кешируется в памяти процесса API (`runtime.media`,
 `cache/media.py` `MediaCache`, LRU до 2000 записей, 90 с), так что повторные скачивания, перемотка (`Range`) и
 `/thumb` того же файла не делают `GetMessages` каждый раз; строка `files` и права проверяются на каждом запросе как
-раньше. Запись удаляется: событием `MessageDeleted` (`forget_deleted`), событием `MessageEdited` (`forget_edited`),
+раньше. Промахи кеша по одному каналу, пришедшие в течение 20 мс (`MEDIA_WINDOW`; так бывает, когда открывается
+листинг и браузер разом просит десятки `/thumb`), склеиваются в один `GetMessages(ids=[…])`
+(`MediaCache.load` → `TelegramClient.messages_media`); каждый ждущий получает своё сообщение или
+`404 file_not_found`, ошибка Telegram достаётся всем ждущим и не кешируется. Запись удаляется: событием `MessageDeleted` (`forget_deleted`), событием `MessageEdited` (`forget_edited`),
 удалением файла или папки через tcloud (до `telegram.delete`); `replace` даёт новое сообщение, поэтому старая запись
 не используется. Истёк `file_reference` (`FILE_REFERENCE_EXPIRED`/`INVALID` → `TelegramFileReferenceError`) до
 первого отданного байта (`FileService.body`) или при `/thumb` — запись удаляется, сообщение читается заново, попытка
@@ -307,7 +310,7 @@ sequenceDiagram
     alt (chat, message_id) в runtime.media моложе 90 с
         F->>F: media, размер из памяти
     else
-        F->>TG: getMessages(chat, message_id), положить в runtime.media
+        F->>TG: getMessages(chat, ids=[все промахи канала за 20 мс]), положить в runtime.media
     end
     alt сообщения нет
         F->>DB: DELETE files (запись удаляется)

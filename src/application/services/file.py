@@ -351,11 +351,9 @@ class FileService:
         return media
 
     async def _lookup(self, chat_id: int, message_id: int) -> tuple[object, int]:
-        found = self._runtime.media.get(chat_id, message_id)
-        if found is None:
-            found = await self._runtime.download.message_media(chat_id, message_id)
-            self._runtime.media.put(chat_id, message_id, *found)
-        return found
+        return await self._runtime.media.load(
+            self._runtime.download, chat_id, message_id
+        )
 
     def body(
         self, file: FileDB, chat_id: int, media: object, start: int, end: int

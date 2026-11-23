@@ -70,6 +70,7 @@ class FakeTelegram:
         self.max_sending = 0
         self.on_deleted = None
         self.on_channel = None
+        self.media_batches: list[list[int]] = []
         self.on_account = None
         self.other_channels = 0
         self.dialogs_read = 0
@@ -272,6 +273,18 @@ class FakeTelegram:
         if not message:
             raise TelegramMessageGoneError("gone")
         return message, len(body(message))
+
+    async def messages_media(
+        self, chat_id: int, message_ids: list[int]
+    ) -> dict[int, tuple[dict, int]]:
+        await asyncio.sleep(self.delay)
+        self.media_batches.append(list(message_ids))
+        messages = self.chats[chat_id]["messages"]
+        return {
+            message_id: (messages[message_id], len(body(messages[message_id])))
+            for message_id in message_ids
+            if message_id in messages
+        }
 
     async def thumbnail(self, media: dict) -> bytes | None:
         if media["media"].kind == MediaKind.PHOTO:

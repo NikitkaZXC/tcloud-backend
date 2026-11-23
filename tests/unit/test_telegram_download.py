@@ -148,6 +148,21 @@ async def test_message_media_reports_the_downloaded_photo_size():
     assert await _client(fake).message_media(-100, 5) == (media, 12522)
 
 
+async def test_messages_media_reads_a_batch_in_one_call():
+    fake = FakeTelethon(b"")
+    media = photo_media()
+    found = SimpleNamespace(id=5, media=media, file=SimpleNamespace(size=1))
+    calls = []
+
+    async def get_messages(entity, ids):
+        calls.append(ids)
+        return [found, None, SimpleNamespace(id=7, media=None, file=None)]
+
+    fake.get_messages = get_messages
+    assert await _client(fake).messages_media(-100, [5, 6, 7]) == {5: (media, 12522)}
+    assert calls == [[5, 6, 7]]
+
+
 async def test_send_records_the_downloaded_photo_size(tmp_path, monkeypatch):
     fake = FakeTelethon(b"")
     sent = SimpleNamespace(

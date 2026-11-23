@@ -362,13 +362,13 @@ async def test_folder_archive_skips_files_gone_from_telegram(client, telegram, s
 
 def count_lookups(telegram, monkeypatch) -> list:
     calls = []
-    original = telegram.message_media
+    original = telegram.messages_media
 
-    async def message_media(chat_id, message_id):
-        calls.append((chat_id, message_id))
-        return await original(chat_id, message_id)
+    async def messages_media(chat_id, message_ids):
+        calls.append((chat_id, message_ids))
+        return await original(chat_id, message_ids)
 
-    monkeypatch.setattr(telegram, "message_media", message_media)
+    monkeypatch.setattr(telegram, "messages_media", messages_media)
     return calls
 
 
@@ -458,7 +458,9 @@ async def test_if_range_resumes_only_the_same_version(client, storage):
     url = f"/files/{file['uuid']}/download"
     same = await client.get(url, headers={"Range": "bytes=1-", "If-Range": tag})
     assert same.status_code == 206 and same.content == b"ello"
-    changed = await client.get(url, headers={"Range": "bytes=1-", "If-Range": '"stale"'})
+    changed = await client.get(
+        url, headers={"Range": "bytes=1-", "If-Range": '"stale"'}
+    )
     assert changed.status_code == 200 and changed.content == b"hello"
     assert "content-range" not in changed.headers
 

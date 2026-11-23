@@ -656,6 +656,19 @@ class TelegramClient:
         return message.media, media_size(message.media) or message.file.size
 
     @translate_errors
+    async def messages_media(
+        self, chat_id: int, message_ids: list[int]
+    ) -> dict[int, tuple[object, int]]:
+        messages = await self._client.get_messages(
+            await self._peer(chat_id), ids=message_ids
+        )
+        return {
+            message.id: (message.media, media_size(message.media) or message.file.size)
+            for message in messages
+            if message and message.media
+        }
+
+    @translate_errors
     async def thumbnail(self, media) -> bytes | None:
         if isinstance(media, types.MessageMediaPhoto):
             sizes = media.photo.sizes if isinstance(media.photo, types.Photo) else []
