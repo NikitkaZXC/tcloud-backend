@@ -62,6 +62,10 @@ def stored_size(file: FileDB) -> int:
     return cipher_size(file.size) if file.encryption_header else file.size
 
 
+def file_tag(file: FileDB) -> str:
+    return f'"{file.tg_message_id}"'
+
+
 def file_body(
     telegram: TelegramClient, media: object, file: FileDB, start: int, end: int
 ) -> AsyncIterator[bytes]:
@@ -263,9 +267,11 @@ class FileService:
         logger.info("File {} deleted", file_id)
 
     async def open_download(
-        self, actor: Actor, file_id: UUID
-    ) -> tuple[FileDB, int, object]:
+        self, actor: Actor, file_id: UUID, if_none_match: str | None = None
+    ) -> tuple[FileDB, int, object | None]:
         file, chat_id = await self.get_db(actor, file_id, Permission.READ)
+        if if_none_match == file_tag(file):
+            return file, chat_id, None
         return file, chat_id, await self._media(file, chat_id)
 
     async def backfill_previews(self, actor: Actor) -> None:
@@ -294,7 +300,7 @@ class FileService:
         self, actor: Actor, file_id: UUID, if_none_match: str | None
     ) -> tuple[str, bytes | None]:
         file, chat_id = await self.get_db(actor, file_id, Permission.READ)
-        tag = f'"{file.tg_message_id}"'
+        tag = file_tag(file)
         if file.encryption_header:
             sealed = await self._repo.get_thumbnail(file.id)
             if not sealed:

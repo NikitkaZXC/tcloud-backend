@@ -51,7 +51,8 @@ async def test_download_full(client, photo):
         and response.headers["accept-ranges"] == "bytes"
     )
     assert "photo.jpg" in response.headers["content-disposition"]
-    assert response.headers["cache-control"] == "no-transform"
+    assert response.headers["cache-control"] == "private, no-cache, no-transform"
+    assert response.headers["etag"] == f'"{photo["telegram"]["message_id"]}"'
     assert "content-encoding" not in response.headers
 
 
@@ -425,3 +426,50 @@ async def test_expired_file_reference_rereads_the_message_once(
     response = await client.get(f"/files/{file['uuid']}/download")
     assert response.status_code == 200 and response.content == b"hello"
     assert len(calls) == 2
+
+
+async def test_download_revalidates_with_etag_without_telegram(
+    client, storage, download_telegram, monkeypatch
+):
+    file = (await upload(client, path(storage, "a.txt"), b"hello", encrypt="false"))[
+        "file"
+    ]
+    tag = (await client.get(f"/files/{file['uuid']}/download")).headers["etag"]
+    main.app.state.runtime.media.forget(
+        file["telegram"]["chat_id"], [file["telegram"]["message_id"]]
+    )
+    calls = count_lookups(download_telegram, monkeypatch)
+    response = await client.get(
+        f"/files/{file['uuid']}/download", headers={"If-None-Match": tag}
+    )
+    assert response.status_code == 304 and response.content == b""
+    assert response.headers["etag"] == tag and calls == []
+    other = await client.get(
+        f"/files/{file['uuid']}/download", headers={"If-None-Match": '"0"'}
+    )
+    assert other.status_code == 200 and other.content == b"hello"
+
+
+async def test_if_range_resumes_only_the_same_version(client, storage):
+    file = (await upload(client, path(storage, "a.txt"), b"hello", encrypt="false"))[
+        "file"
+    ]
+    tag = f'"{file["telegram"]["message_id"]}"'
+    url = f"/files/{file['uuid']}/download"
+    same = await client.get(url, headers={"Range": "bytes=1-", "If-Range": tag})
+    assert same.status_code == 206 and same.content == b"ello"
+    changed = await client.get(url, headers={"Range": "bytes=1-", "If-Range": '"stale"'})
+    assert changed.status_code == 200 and changed.content == b"hello"
+    assert "content-range" not in changed.headers
+
+
+async def test_download_etag_needs_read_access(client, storage, make_user):
+    file = (await upload(client, path(storage, "a/b.txt"), b"x", encrypt="false"))[
+        "file"
+    ]
+    bob = await make_user("bob", "user", {"path": path(storage, "other")})
+    response = await bob.get(
+        f"/files/{file['uuid']}/download",
+        headers={"If-None-Match": f'"{file["telegram"]["message_id"]}"'},
+    )
+    assert response.status_code == 403

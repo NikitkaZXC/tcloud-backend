@@ -18,13 +18,14 @@ from src.api.schemas import (
 from src.application.factory import get_runtime, get_service_file
 from src.application.schemas import Actor, FileSearchServiceCreate
 from src.application.services import FileService
-from src.application.services.file import tracked
+from src.application.services.file import file_tag, tracked
 from src.config import settings
 from src.infrastructure.background import AppRuntime
 from src.infrastructure.enums import MediaKind
 from src.utilities.parsers import parse_range
 
 THUMB_MAX_AGE = 24 * 3600
+DOWNLOAD_CACHE = "private, no-cache, no-transform"
 
 router = APIRouter(prefix="/files", tags=["Files"])
 stream_router = APIRouter(
@@ -112,18 +113,31 @@ async def get_file(
 @stream_router.get(
     path="/{file_id}/download",
     name="files:download",
-    summary="Stream the file from Telegram (Range supported)",
+    summary="Stream the file from Telegram (Range, If-Range, ETag/304)",
     status_code=status.HTTP_200_OK,
     response_class=StreamingResponse,
+    responses={206: {}, 304: {}},
 )
 async def download_file(
     file_id: UUID,
     range_header: str | None = Header(None, alias="range"),
+    if_none_match: str | None = Header(None, alias="if-none-match"),
+    if_range: str | None = Header(None, alias="if-range"),
     actor: Actor = Depends(get_actor),
     file_service: FileService = Depends(get_service_file),
     runtime: AppRuntime = Depends(get_runtime),
-) -> StreamingResponse:
-    file, chat_id, media = await file_service.open_download(actor, file_id)
+) -> Response:
+    file, chat_id, media = await file_service.open_download(
+        actor, file_id, if_none_match
+    )
+    tag = file_tag(file)
+    if media is None:
+        return Response(
+            status_code=status.HTTP_304_NOT_MODIFIED,
+            headers={"ETag": tag, "Cache-Control": DOWNLOAD_CACHE},
+        )
+    if if_range is not None and if_range != tag:
+        range_header = None
     start, end = (
         parse_range(range_header, file.size) if range_header else (0, file.size - 1)
     )
@@ -134,7 +148,8 @@ async def download_file(
         "Content-Disposition": f"{'attachment' if document else 'inline'}; filename*=UTF-8''{quote(file.name)}",
         "X-Content-Type-Options": "nosniff",
         "Content-Security-Policy": "sandbox",
-        "Cache-Control": "no-transform",
+        "Cache-Control": DOWNLOAD_CACHE,
+        "ETag": tag,
     }
     if range_header:
         headers["Content-Range"] = f"bytes {start}-{end}/{file.size}"

@@ -226,7 +226,11 @@ sequenceDiagram
   размеры, длительность, `sha256` оригинала, `telegram.chat_id`/`message_id`/`link`/`search`.
 - `GET /api/files/{uuid}/download` — поток из Telegram; `Range` (один диапазон) → `206`, видео можно перематывать.
   Документы (`kind = document`, в т. ч. `.json`, `.txt`, `.html`) отдаются как `application/octet-stream` +
-  `attachment`, медиа — со своим MIME. У скачивания и у `GET /api/tasks/{id}/archive` есть `Cache-Control: no-transform`:
+  `attachment`, медиа — со своим MIME. `ETag: "{telegram message_id}"` (как у `/thumb`; `replace` даёт новое сообщение,
+  значит и новый тег) и `Cache-Control: private, no-cache, no-transform`: браузер каждый раз переспрашивает, и
+  `If-None-Match` с тем же тегом → `304` после проверки записи и прав, без запроса к Telegram. `If-Range` с другим
+  тегом — `Range` игнорируется и отдаётся весь файл `200` (докачка не склеит разные версии). У скачивания и у
+  `GET /api/tasks/{id}/archive` есть `no-transform`:
   прокси не должны сжимать или менять тело, иначе пропадут `Content-Length` и `Range`. nginx этот заголовок не читает,
   поэтому в nginx фронтенда для этих путей gzip выключается отдельным `location` (deployment.md).
   Перед отдачей размер файла в Telegram сверяется с `files.size`: если файл в канале подменили (размер другой), ответ
@@ -297,6 +301,9 @@ sequenceDiagram
     A->>F: open_download
     F->>DB: files + storages.tg_chat_id
     F->>F: require READ (403 forbidden)
+    opt If-None-Match = "{message_id}"
+        F-->>C: 304 (после проверки прав, в Telegram не ходим)
+    end
     alt (chat, message_id) в runtime.media моложе 90 с
         F->>F: media, размер из памяти
     else
@@ -308,9 +315,10 @@ sequenceDiagram
     else размер в Telegram не равен stored_size(file)
         F-->>C: 409 file_changed
     end
+    A->>A: If-Range не равен ETag → Range игнорируется
     A->>A: parse_range(a-b, files.size), иначе 0..size-1
     A->>R: ZADD activity:{storage}:read (начало операции)
-    A-->>C: 200 или 206, Content-Length, Content-Range, Accept-Ranges, no-transform, sandbox
+    A-->>C: 200 или 206, Content-Length, Content-Range, Accept-Ranges, ETag, no-cache, no-transform, sandbox
     loop куски тела
         alt открытый файл
             A->>TG: iter_media(смещение вниз до кратного 512 КиБ), лишнее в начале отрезается
