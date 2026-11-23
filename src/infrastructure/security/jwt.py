@@ -4,6 +4,14 @@ from functools import cache
 from uuid import UUID, uuid7
 
 import jwt
+from cryptography.hazmat.primitives.asymmetric.types import (
+    PrivateKeyTypes,
+    PublicKeyTypes,
+)
+from cryptography.hazmat.primitives.serialization import (
+    load_pem_private_key,
+    load_pem_public_key,
+)
 from jwt import ExpiredSignatureError, InvalidTokenError
 from pydantic import BaseModel
 
@@ -22,13 +30,13 @@ class JWTPayload(BaseModel):
 
 
 @cache
-def _private_key() -> str:
-    return settings.jwt.PRIVATE_KEY_PATH.read_text()
+def _private_key() -> PrivateKeyTypes:
+    return load_pem_private_key(settings.jwt.PRIVATE_KEY_PATH.read_bytes(), None)
 
 
 @cache
-def _public_key() -> str:
-    return settings.jwt.PUBLIC_KEY_PATH.read_text()
+def _public_key() -> PublicKeyTypes:
+    return load_pem_public_key(settings.jwt.PUBLIC_KEY_PATH.read_bytes())
 
 
 def check_keys() -> None:

@@ -28,3 +28,11 @@ def test_unreadable_jwt_key_fails_fast(tmp_path, monkeypatch):
     with pytest.raises(RuntimeError, match="not readable"):
         jwt.check_keys()
     jwt._private_key.cache_clear()
+
+
+def test_jwt_keys_are_parsed_once():
+    from src.infrastructure.security import jwt
+
+    assert jwt._public_key() is jwt._public_key()
+    assert jwt._private_key() is jwt._private_key()
+    assert not isinstance(jwt._public_key(), (str, bytes))
