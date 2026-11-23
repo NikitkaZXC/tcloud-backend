@@ -1,5 +1,6 @@
 import asyncio
 from collections.abc import AsyncIterator
+from dataclasses import asdict
 from uuid import UUID
 
 from loguru import logger
@@ -32,12 +33,15 @@ from src.infrastructure.database.repositories import (
     UserRepository,
 )
 from src.infrastructure.enums import MediaKind
+from src.infrastructure.integrations import ChannelInfo
 from src.infrastructure.limits import PHOTO_MAX
 from src.infrastructure.media import UnsupportedMediaError, probe, to_jpeg
+from src.utilities.errors import TCloudError
 
 TELEGRAM_PHOTO_SUFFIXES = {"image/jpeg": ".jpg", "image/png": ".png"}
 CHAT_FOLDER = "TCloud"
 NO_STATS = (0, 0, 0, 0)
+CHANNEL_TTL = 600
 
 
 async def root_settings(session: AsyncSession) -> SettingsServiceRead:
@@ -50,6 +54,26 @@ class StorageService:
         self._session = session
         self._runtime = runtime
         self._repo = StorageRepository(session)
+
+    async def channel_infos(self, chat_ids: list[int]) -> dict[int, ChannelInfo]:
+        cached = {
+            chat_id: ChannelInfo(**info)
+            for chat_id, info in (
+                await self._runtime.store.channel_infos(chat_ids)
+            ).items()
+        }
+        missing = [chat_id for chat_id in chat_ids if chat_id not in cached]
+        if not missing:
+            return cached
+        try:
+            fresh = await self._runtime.telegram.channels(missing)
+        except TCloudError as error:
+            logger.warning("Telegram channel info is unavailable: {}", error.message)
+            return cached
+        await self._runtime.store.keep_channel_infos(
+            {chat_id: asdict(info) for chat_id, info in fresh.items()}, CHANNEL_TTL
+        )
+        return {**cached, **fresh}
 
     async def get_db(self, storage_id: UUID) -> StorageDB:
         storage = await self._repo.get_by_id(storage_id)
@@ -81,6 +105,7 @@ class StorageService:
         if not keep_channel:
             await self._runtime.telegram.delete_channel(storage.tg_chat_id)
             self._runtime.channels = None
+        await self._runtime.store.forget_channel(storage.tg_chat_id)
         await self._repo.delete(storage)
         await self._session.commit()
         logger.info(
@@ -109,9 +134,7 @@ class StorageService:
             for storage in await self._repo.get_all()
             if can_see_storage(actor, storage.id)
         ]
-        infos = await self._runtime.telegram.channels(
-            [storage.tg_chat_id for storage in storages]
-        )
+        infos = await self.channel_infos([storage.tg_chat_id for storage in storages])
         stats = await self._repo.get_stats(
             [storage.id for storage in storages], read_scopes(actor)
         )
@@ -130,9 +153,7 @@ class StorageService:
         self.check_visible(actor, storage_id)
         storage = await self.get_db(storage_id)
         stats = await self._repo.get_stats([storage_id], read_scopes(actor, storage_id))
-        info = (await self._runtime.telegram.channels([storage.tg_chat_id])).get(
-            storage.tg_chat_id
-        )
+        info = (await self.channel_infos([storage.tg_chat_id])).get(storage.tg_chat_id)
         return StorageServiceRead.from_db(
             storage, info, *stats.get(storage_id, NO_STATS)
         )
@@ -148,6 +169,7 @@ class StorageService:
             await self._runtime.telegram.edit_about(
                 storage.tg_chat_id, data.description
             )
+        await self._runtime.store.forget_channel(storage.tg_chat_id)
         await self._repo.touch(storage_id)
         await self._session.commit()
         return await self.get(actor, storage_id)
@@ -172,6 +194,7 @@ class StorageService:
                 path.unlink()
                 path = jpeg
             await self._runtime.telegram.set_photo(storage.tg_chat_id, path)
+            await self._runtime.store.forget_channel(storage.tg_chat_id)
         finally:
             path.unlink(missing_ok=True)
         await self._repo.touch(storage_id)
@@ -182,6 +205,7 @@ class StorageService:
         require_admin(actor)
         storage = await self.get_db(storage_id)
         await self._runtime.telegram.delete_photo(storage.tg_chat_id)
+        await self._runtime.store.forget_channel(storage.tg_chat_id)
         await self._repo.touch(storage_id)
         await self._session.commit()
         return await self.get(actor, storage_id)

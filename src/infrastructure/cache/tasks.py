@@ -314,6 +314,29 @@ class TaskStore:
             keep.cancel()
             await asyncio.shield(self._mark_activity(key, operation, ACTIVITY_TAIL))
 
+    async def channel_infos(self, chat_ids: list[int]) -> dict[int, dict]:
+        if not chat_ids:
+            return {}
+        values = await self._redis.mget(
+            [self._key("channel", item) for item in chat_ids]
+        )
+        return {
+            chat_id: json.loads(value)
+            for chat_id, value in zip(chat_ids, values)
+            if value is not None
+        }
+
+    async def keep_channel_infos(self, infos: dict[int, dict], ttl: int) -> None:
+        if not infos:
+            return
+        async with self._redis.pipeline(transaction=False) as pipe:
+            for chat_id, info in infos.items():
+                pipe.set(self._key("channel", chat_id), encode(info), ex=ttl)
+            await pipe.execute()
+
+    async def forget_channel(self, chat_id: int) -> None:
+        await self._redis.delete(self._key("channel", chat_id))
+
     async def activity(self, storage_ids: list[UUID]) -> dict[UUID, dict[str, bool]]:
         if not storage_ids:
             return {}

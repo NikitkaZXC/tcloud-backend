@@ -5,7 +5,7 @@
 | Действие | Ручка | Что происходит |
 |---|---|---|
 | Создать | `POST /api/storages` `{name, description?}` | `CreateChannelRequest`, запись в БД, ответ с UUID. Аккаунт уже в 500 (1000 с Premium) каналах и группах → `409 channels_limit` |
-| Список | `GET /api/storages` | id из БД + название/описание/фото из Telegram (`GetFullChannel` на канал); недоступный канал → `available: false`; `files` и `total_size` (открытый размер), `preview_count` и `preview_bytes` (файлы с нашим превью в `files.thumbnail` и сумма `octet_length(thumbnail)`) — одним запросом `GROUP BY storage_id` по всем хранилищам, только читаемые пользователем файлы (как у одного хранилища) |
+| Список | `GET /api/storages` | id из БД + название/описание/фото из Telegram (`GetFullChannel` на канал, кеш в Redis 10 мин, см. ниже); недоступный канал → `available: false`; `files` и `total_size` (открытый размер), `preview_count` и `preview_bytes` (файлы с нашим превью в `files.thumbnail` и сумма `octet_length(thumbnail)`) — одним запросом `GROUP BY storage_id` по всем хранилищам, только читаемые пользователем файлы (как у одного хранилища) |
 | Одно | `GET /api/storages/{id}` | то же для одного хранилища |
 | Изменить | `PATCH /api/storages/{id}` `{name?, description?}` | `EditTitle` / `EditChatAbout`; неизменённые значения Telegram не роняют |
 | Удалить | `DELETE /api/storages/{id}?keep_channel=false` | `204`. Записи файлов и папок удаляются из БД (каскад), канал — `DeleteChannelRequest` вместе со всеми сообщениями, безвозвратно. `keep_channel=true` — канал с файлами остаётся в Telegram, отвязывается только БД. Идут загрузки в хранилище — `409 storage_busy` (дождаться или отменить). Канал уже удалён руками — удаление всё равно проходит |
@@ -105,6 +105,16 @@ flowchart TD
     count -->|ошибка Telegram| nul["channels_used null, не кешируется"]
     reset["создание хранилища, удаление с каналом,<br/>вход в сессию api"] -. "runtime.channels = None" .-> cache
 ```
+
+## Кеш сведений о каналах
+
+Название, описание и «есть фото» каждого канала (`StorageService.channel_infos`) берутся из Redis
+`tcloud:channel:{chat_id}` (JSON, TTL 600 с, `CHANNEL_TTL`); в Telegram (`GetFullChannel`, бывало до 10 с) идут только
+каналы без записи, и ответ сразу кладётся в кеш. Так `GET /api/storages`, `GET /api/storages/{id}` и поиск (имена
+хранилищ в результатах) не ждут Telegram на каждом запросе. Свои изменения видны сразу: `PATCH`, `PUT`/`DELETE …/photo`
+и удаление хранилища удаляют ключ. Переименование руками в Telegram или удаление канала там видно не позже чем через
+10 мин. Telegram недоступен (сеть, флуд, сессия) — warning в лог, закешированные каналы отдаются как есть, остальные —
+`available: false` (раньше весь список отвечал `503`).
 
 ## Активность чтения и записи (индикаторы)
 

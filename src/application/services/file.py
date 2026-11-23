@@ -46,7 +46,6 @@ from src.infrastructure.database.repositories import (
 from src.infrastructure.enums import Permission, TaskPriority, UploadQueue
 from src.infrastructure.integrations import TelegramClient, TelegramMessageGoneError
 from src.infrastructure.security import cipher_size, cipher_span, decrypt, unseal
-from src.utilities.errors import TCloudError
 from src.utilities.parsers import join_path, split_file, split_folder
 
 BACKFILL_TASK = "previews.backfill"
@@ -135,13 +134,7 @@ class FileService:
         return storage_id, folder
 
     async def _storage_names(self, chats: dict[UUID, int]) -> dict[UUID, str]:
-        try:
-            infos = await self._runtime.telegram.channels(list(set(chats.values())))
-        except TCloudError as error:
-            logger.warning(
-                "Storage names for search are unavailable: {}", error.message
-            )
-            return {}
+        infos = await self._storage_service.channel_infos(list(set(chats.values())))
         return {
             storage_id: infos[chat_id].title
             for storage_id, chat_id in chats.items()

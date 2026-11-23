@@ -8,6 +8,7 @@ from sqlalchemy import text
 import main
 from src.config import settings
 from src.infrastructure import limits
+from src.infrastructure.integrations import TelegramUnavailableError
 from tests.api.conftest import path, upload
 from tests.factories import EXE, PDF, make_image
 
@@ -279,15 +280,61 @@ async def test_list_storages_counts_previews(client, engine, make_user):
     )
 
 
-async def test_name_lives_in_telegram(client, telegram, storage):
+async def expire_channels(redis) -> None:
+    keys = [key async for key in redis.scan_iter("*:channel:*")]
+    if keys:
+        await redis.delete(*keys)
+
+
+async def test_name_lives_in_telegram(client, telegram, storage, redis):
     telegram.chats[storage["telegram"]["chat_id"]]["title"] = "Переименовал в TG"
+    cached = (await client.get(f"/storages/{storage['id']}")).json()
+    assert cached["name"] == "Фото"
+    await expire_channels(redis)
     assert (await client.get(f"/storages/{storage['id']}")).json()[
         "name"
     ] == "Переименовал в TG"
 
 
-async def test_unavailable_storage(client, telegram, storage):
+async def test_channel_info_is_cached(client, telegram, storage, redis, monkeypatch):
+    calls = []
+    original = telegram.channels
+
+    async def channels(chat_ids):
+        calls.append(chat_ids)
+        return await original(chat_ids)
+
+    monkeypatch.setattr(telegram, "channels", channels)
+    await expire_channels(redis)
+    for _ in range(3):
+        assert (await client.get("/storages")).json()[0]["name"] == "Фото"
+        assert (await client.get(f"/storages/{storage['id']}")).status_code == 200
+    assert calls == [[storage["telegram"]["chat_id"]]]
+    ttl = await redis.ttl(f"tcloud:channel:{storage['telegram']['chat_id']}")
+    assert 0 < ttl <= 600
+    await client.patch(f"/storages/{storage['id']}", json={"name": "Новое"})
+    assert (await client.get("/storages")).json()[0]["name"] == "Новое"
+
+
+async def test_storages_survive_telegram_outage(
+    client, telegram, storage, redis, monkeypatch
+):
+    other = (await client.post("/storages", json={"name": "b"})).json()
+    assert (await client.get("/storages")).status_code == 200
+    await redis.delete(f"tcloud:channel:{other['telegram']['chat_id']}")
+
+    async def down(chat_ids):
+        raise TelegramUnavailableError("network is down")
+
+    monkeypatch.setattr(telegram, "channels", down)
+    listed = {item["id"]: item for item in (await client.get("/storages")).json()}
+    assert listed[storage["id"]]["name"] == "Фото"
+    assert listed[other["id"]]["available"] is False
+
+
+async def test_unavailable_storage(client, telegram, storage, redis):
     del telegram.chats[storage["telegram"]["chat_id"]]
+    await expire_channels(redis)
     listed = (await client.get("/storages")).json()[0]
     assert listed["available"] is False and listed["name"] is None
 
