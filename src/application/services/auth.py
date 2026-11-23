@@ -68,6 +68,23 @@ async def forget_deleted(
         logger.exception("Could not forget messages deleted in {}", chat_id)
 
 
+async def forget_channel(runtime: AppRuntime, chat_id: int) -> None:
+    try:
+        await runtime.store.forget_channel(chat_id)
+        await runtime.store.forget_account()
+        logger.debug("Telegram channel {} changed, its cache is dropped", chat_id)
+    except Exception:
+        logger.exception("Could not drop the cache of channel {}", chat_id)
+
+
+async def forget_account(runtime: AppRuntime) -> None:
+    try:
+        await runtime.store.forget_account()
+        logger.debug("Telegram account changed, its cache is dropped")
+    except Exception:
+        logger.exception("Could not drop the Telegram account cache")
+
+
 class AuthService:
     def __init__(self, runtime: AppRuntime) -> None:
         self._runtime = runtime
@@ -268,8 +285,10 @@ class AuthService:
             await StorageService(session, self._runtime).connect_chats(
                 settings.telegram.CHAT_IDS
             )
-        await self._runtime.telegram.watch_deletions(
-            partial(forget_deleted, self._runtime)
+        await self._runtime.telegram.watch(
+            partial(forget_deleted, self._runtime),
+            partial(forget_channel, self._runtime),
+            partial(forget_account, self._runtime),
         )
 
     async def logout(self, session: TelegramSession) -> SessionStateServiceRead:

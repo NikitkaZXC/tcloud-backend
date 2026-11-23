@@ -66,7 +66,7 @@ stateDiagram-v2
 flowchart TD
     done["TelegramLogin.finish: login-*.session → файл сессии (os.replace)"] --> which{"какая сессия?"}
     which -->|api| api["_switch_api: новый runtime.telegram,<br/>сброс кешей Premium и числа каналов"]
-    api --> connect["connect: каналы из TELEGRAM_CHATS,<br/>sync_folder TCloud, MessageDeleted + catch_up"]
+    api --> connect["connect: каналы из TELEGRAM_CHATS,<br/>sync_folder TCloud, MessageDeleted + Raw<br/>(сброс кешей, flows/storages.md) + catch_up"]
     which -->|download| dl["_switch_download: новый runtime.download"]
     which -->|upload| up["ничего: worker-telegram откроет файл<br/>на следующей задаче"]
     connect --> sweep["sweep_quietly: отозвать старые устройства tcloud"]

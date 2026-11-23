@@ -122,6 +122,40 @@ flowchart TD
 3 мин. Telegram недоступен (сеть, флуд, сессия) — warning в лог, закешированные каналы отдаются как есть, остальные —
 `available: false` (раньше весь список отвечал `503`).
 
+## События Telegram
+
+Кеши выше (`channel:*`, `channel_photo:*`, `account:*`) живут 180 с, но изменения, сделанные в самом Telegram, видны
+почти сразу: клиент API-сессии (единственный с `receive_updates=True`) в `AuthService.connect` регистрирует через
+`TelegramClient.watch` вместе с `MessageDeleted` сырой обработчик (`events.Raw`) и только потом вызывает `catch_up()`.
+Обработчик в Telegram не ходит (никаких `GetFullChannel`), только удаляет ключи Redis; свежие данные читаются при
+следующем запросе.
+
+| Обновление Telegram | Когда приходит | Что удаляется |
+|---|---|---|
+| `UpdateChannel` | у канала поменялись сведения или наше членство: переименование, описание, фото, канал удалён, мы вышли или нас выгнали; вступление в любой канал | `channel:{chat_id}`, `channel_photo:{chat_id}`, `account:*` (`channels_used`) |
+| `UpdateNewChannelMessage` со служебным `MessageActionChatEditTitle` / `EditPhoto` / `DeletePhoto` | новое название или фото канала | то же |
+| `UpdateUser` с id нашего аккаунта (`me.id`, запомнен в `start`) | изменились сведения об аккаунте, в том числе Premium | `account:*` |
+
+Обработчики живут на объекте Telethon-клиента, поэтому переживают переподключения (`ensure_connected` вызывает тот же
+`connect()`, который заново запускает цикл обновлений; пропущенное Telethon догоняет `getDifference` по состоянию из
+файла сессии). Новый вход в API-сессию создаёт новый клиент, и `connect()` регистрирует обработчики на нём. Ошибка
+Redis в обработчике только пишется в лог. События, потерянные совсем (долгий простой, сбой), покрывает TTL 180 с.
+
+```mermaid
+sequenceDiagram
+    participant TG as Telegram
+    participant C as TelegramClient (api, receive_updates)
+    participant A as AuthService.forget_channel / forget_account
+    participant R as Redis
+    TG-->>C: UpdateChannel / служебное сообщение EditTitle, EditPhoto, DeletePhoto
+    C->>A: channel_changed(chat_id)
+    A->>R: DEL channel:{chat_id}, channel_photo:{chat_id}, account:premium, account:channels
+    TG-->>C: UpdateUser (наш id)
+    C->>A: account_changed()
+    A->>R: DEL account:premium, account:channels
+    Note over C,R: в Telegram не ходим, следующий запрос читает заново
+```
+
 ## Активность чтения и записи (индикаторы)
 
 `GET /api/storages/activity` → `[{storage_id, read, write}]` — по одной записи на каждое хранилище, которое видит

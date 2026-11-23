@@ -69,6 +69,8 @@ class FakeTelegram:
         self.sending = 0
         self.max_sending = 0
         self.on_deleted = None
+        self.on_channel = None
+        self.on_account = None
         self.other_channels = 0
         self.dialogs_read = 0
         self.dialogs_flood = False
@@ -285,8 +287,10 @@ class FakeTelegram:
         for message_id in message_ids:
             self.chats[chat_id]["messages"].pop(message_id, None)
 
-    async def watch_deletions(self, callback) -> None:
-        self.on_deleted = callback
+    async def watch(self, deleted, channel_changed, account_changed) -> None:
+        self.on_deleted = deleted
+        self.on_channel = channel_changed
+        self.on_account = account_changed
 
     async def delete_by_hand(self, chat_id: int, message_ids: list[int]) -> None:
         for message_id in message_ids:

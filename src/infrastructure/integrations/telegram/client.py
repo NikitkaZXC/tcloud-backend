@@ -52,6 +52,12 @@ CONNECT_TIMEOUT = 15.0
 PING_TTL = 5.0
 PING_TIMEOUT = 5.0
 
+CHANNEL_ACTIONS = (
+    types.MessageActionChatEditTitle,
+    types.MessageActionChatEditPhoto,
+    types.MessageActionChatDeletePhoto,
+)
+
 TRANSIENT = (
     ConnectionError,
     OSError,
@@ -165,6 +171,7 @@ class TelegramClient:
     _backoff = 0.0
     _reconnect_lock: asyncio.Lock | None = None
     _pinged: tuple[float, bool] | None = None
+    _me_id: int | None = None
 
     def __init__(
         self,
@@ -228,6 +235,7 @@ class TelegramClient:
             logger.warning("Telegram session {} is not authorized", self._name)
             return False
         me = await self._client.get_me()
+        self._me_id = me.id
         if me.bot:
             raise RuntimeError(
                 "tcloud needs a user account: bots cannot create channels"
@@ -303,14 +311,34 @@ class TelegramClient:
             functions.account.ResetAuthorizationRequest(hash=authorization_hash)
         )
 
-    async def watch_deletions(
-        self, callback: Callable[[int, list[int]], Awaitable[None]]
+    async def watch(
+        self,
+        deleted: Callable[[int, list[int]], Awaitable[None]],
+        channel_changed: Callable[[int], Awaitable[None]],
+        account_changed: Callable[[], Awaitable[None]],
     ) -> None:
-        async def handler(event: events.MessageDeleted.Event) -> None:
+        async def on_deleted(event: events.MessageDeleted.Event) -> None:
             if event.chat_id is not None:
-                await callback(event.chat_id, list(event.deleted_ids))
+                await deleted(event.chat_id, list(event.deleted_ids))
 
-        self._client.add_event_handler(handler, events.MessageDeleted())
+        async def on_update(update) -> None:
+            if isinstance(update, types.UpdateChannel):
+                await channel_changed(
+                    utils.get_peer_id(types.PeerChannel(update.channel_id))
+                )
+            elif isinstance(update, types.UpdateNewChannelMessage):
+                if isinstance(getattr(update.message, "action", None), CHANNEL_ACTIONS):
+                    await channel_changed(utils.get_peer_id(update.message.peer_id))
+            elif update.user_id == self._me_id:
+                await account_changed()
+
+        self._client.add_event_handler(on_deleted, events.MessageDeleted())
+        self._client.add_event_handler(
+            on_update,
+            events.Raw(
+                [types.UpdateChannel, types.UpdateNewChannelMessage, types.UpdateUser]
+            ),
+        )
         await self._client.catch_up()
 
     @translate_errors

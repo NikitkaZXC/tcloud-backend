@@ -651,3 +651,46 @@ async def test_activity_ends_soon_after_download(client, storage, monkeypatch):
     assert (await client.get("/storages/activity")).json()[0]["read"] is True
     await asyncio.sleep(1.1)
     assert (await client.get("/storages/activity")).json() == [idle]
+
+
+async def test_telegram_events_drop_caches(client, telegram, storage, redis):
+    chat_id = storage["telegram"]["chat_id"]
+    assert (await client.get(f"/storages/{storage['id']}")).json()["name"] == "Фото"
+    await client.get(f"/storages/{storage['id']}/photo")
+    assert (await client.get("/account")).json()["premium"] is False
+    telegram.chats[chat_id]["title"] = "Переименовал в TG"
+    telegram.premium = True
+    assert (await client.get(f"/storages/{storage['id']}")).json()["name"] == "Фото"
+    assert (
+        await redis.exists(
+            f"tcloud:channel:{chat_id}",
+            f"tcloud:channel_photo:{chat_id}",
+            "tcloud:account:premium",
+            "tcloud:account:channels",
+        )
+        == 4
+    )
+    await telegram.on_channel(chat_id)
+    assert not await redis.exists(
+        f"tcloud:channel:{chat_id}",
+        f"tcloud:channel_photo:{chat_id}",
+        "tcloud:account:channels",
+    )
+    assert (await client.get(f"/storages/{storage['id']}")).json()[
+        "name"
+    ] == "Переименовал в TG"
+    await client.get("/account")
+    await redis.set("tcloud:account:premium", "false")
+    await telegram.on_account()
+    assert (await client.get("/account")).json()["premium"] is True
+
+
+async def test_telegram_event_handler_survives_redis_errors(
+    client, telegram, monkeypatch
+):
+    async def broken(*args):
+        raise ConnectionError("redis is down")
+
+    monkeypatch.setattr(main.app.state.runtime.store, "forget_account", broken)
+    await telegram.on_channel(-100123)
+    await telegram.on_account()
