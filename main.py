@@ -59,6 +59,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     sweepers = [
         asyncio.create_task(TaskSweeper(runtime.store).run()),
         asyncio.create_task(auth.run_sweeper()),
+        asyncio.create_task(auth.run_keepalive()),
     ]
     try:
         yield

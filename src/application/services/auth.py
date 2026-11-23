@@ -39,6 +39,7 @@ from src.utilities.errors import TCloudError
 
 MODELS = {session.value: session for session in TelegramSession}
 MAX_ATTEMPTS = 5
+KEEPALIVE_INTERVAL = 15
 
 
 @dataclass
@@ -365,6 +366,15 @@ class AuthService:
     async def close(self) -> None:
         for session in list(self._runtime.logins):
             await self._drop(session)
+
+    async def run_keepalive(self) -> None:
+        while True:
+            await asyncio.sleep(KEEPALIVE_INTERVAL)
+            for client in (self._runtime.telegram, self._runtime.download):
+                try:
+                    await client.ensure_connected()
+                except TCloudError:
+                    pass
 
     async def run_sweeper(self) -> None:
         while True:

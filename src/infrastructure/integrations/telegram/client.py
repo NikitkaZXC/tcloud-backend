@@ -1,6 +1,7 @@
 import asyncio
 import inspect
 import os
+import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import aclosing, contextmanager
 from functools import wraps
@@ -43,6 +44,10 @@ from src.infrastructure.limits import (
     THUMB_SIDE,
 )
 from src.infrastructure.media import Media
+
+RECONNECT_MIN = 1.0
+RECONNECT_MAX = 60.0
+CONNECT_TIMEOUT = 15.0
 
 TRANSIENT = (
     ConnectionError,
@@ -95,6 +100,8 @@ def translate_errors(method):
         @wraps(method)
         async def generator(*args, **kwargs):
             with translated():
+                if args and isinstance(args[0], TelegramClient):
+                    await args[0].ensure_connected()
                 async with aclosing(method(*args, **kwargs)) as items:
                     async for item in items:
                         yield item
@@ -104,6 +111,8 @@ def translate_errors(method):
     @wraps(method)
     async def wrapper(*args, **kwargs):
         with translated():
+            if args and isinstance(args[0], TelegramClient):
+                await args[0].ensure_connected()
             return await method(*args, **kwargs)
 
     return wrapper
@@ -148,6 +157,11 @@ def download_location(media) -> tuple[object, dict]:
 
 
 class TelegramClient:
+    _wanted = False
+    _retry_at = 0.0
+    _backoff = 0.0
+    _reconnect_lock: asyncio.Lock | None = None
+
     def __init__(
         self,
         session: Path,
@@ -169,9 +183,42 @@ class TelegramClient:
             receive_updates=receive_updates,
         )
 
+    async def ensure_connected(self) -> None:
+        if not self._wanted or self._client.is_connected():
+            return
+        self._reconnect_lock = self._reconnect_lock or asyncio.Lock()
+        async with self._reconnect_lock:
+            if self._client.is_connected():
+                return
+            wait = self._retry_at - time.monotonic()
+            if wait > 0:
+                raise TelegramUnavailableError(
+                    f"Telegram is disconnected, next reconnect in {wait:.0f} s"
+                )
+            try:
+                await asyncio.wait_for(self._client.connect(), CONNECT_TIMEOUT)
+            except (*TRANSIENT, asyncio.TimeoutError) as error:
+                self._backoff = min(
+                    max(self._backoff * 2, RECONNECT_MIN), RECONNECT_MAX
+                )
+                self._retry_at = time.monotonic() + self._backoff
+                logger.warning(
+                    "Telegram {}: reconnect failed ({!r}), next try in {:.0f} s",
+                    self._name,
+                    error,
+                    self._backoff,
+                )
+                raise TelegramUnavailableError(
+                    f"Telegram is disconnected: {error!r}"
+                ) from error
+            self._backoff = self._retry_at = 0.0
+            logger.info("Telegram {}: reconnected", self._name)
+
     @translate_errors
     async def start(self) -> bool:
+        self._wanted = False
         await self._client.connect()
+        self._wanted = True
         self.authorized = await self._client.is_user_authorized()
         if not self.authorized:
             logger.warning("Telegram session {} is not authorized", self._name)
@@ -194,6 +241,7 @@ class TelegramClient:
         return self._client.session.filename
 
     async def stop(self) -> None:
+        self._wanted = False
         await self._client.disconnect()
 
     def connected(self) -> bool:
@@ -202,9 +250,10 @@ class TelegramClient:
     async def log_out(self) -> None:
         if not (self.authorized and await self._client.log_out()):
             await self.forget()
-        self.authorized = False
+        self._wanted = self.authorized = False
 
     async def forget(self) -> None:
+        self._wanted = False
         await self._client.disconnect()
         Path(self._name).unlink(missing_ok=True)
         self.authorized = False

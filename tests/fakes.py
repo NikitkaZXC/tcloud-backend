@@ -83,6 +83,9 @@ class FakeTelegram:
     async def stop(self) -> None:
         pass
 
+    async def ensure_connected(self) -> None:
+        return None
+
     def connected(self) -> bool:
         return True
 

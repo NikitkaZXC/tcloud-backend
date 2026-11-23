@@ -33,6 +33,30 @@ SQLite-файл сессии нельзя открывать из двух пр�
 - Скачивание: смещение запроса к Telegram должно быть кратно 512 КБ, лишние байты в начале отрезаем — так работает `Range`.
 - Сжатое фото (`send_as=media`) хранится в Telegram в нескольких размерах (`PhotoSize`/`PhotoSizeProgressive`, плюс встроенные `PhotoStrippedSize`/`PhotoCachedSize`), и последний в списке не всегда самый тяжёлый. Telethon в `message.file.size` отдаёт самый тяжёлый размер, а `iter_download` по умолчанию качает последний — из-за этого `Content-Length` не совпадал с телом. Теперь размер при отправке, проверка `file_changed`, скачивание, `Range` и архивы берут один и тот же размер — самый тяжёлый `PhotoSize`/`PhotoSizeProgressive` (`client.photo_size`, `download_location`). У старых записей в `files.size` уже лежит именно он, миграция не нужна.
 - Если `access_hash` канала ещё нет в сессии, список диалогов загружается один раз.
+- Переподключение. Telethon сам пробует восстановить оборванное соединение (`auto_reconnect`, 5 попыток), после
+  чего клиент остаётся отключённым навсегда — так API и worker-telegram стояли с `503 telegram_unavailable` до
+  перезапуска. Теперь каждый вызов клиента (`translate_errors`) сначала делает `TelegramClient.ensure_connected`: клиент,
+  который был запущен (`start`) и не остановлен (`stop`, `forget`, `log_out`), но отключён, переподключается
+  (`connect`, таймаут 15 с) под замком, чтобы параллельные запросы не плодили подключения. Неудача → `503
+  telegram_unavailable` и экспоненциальная пауза 1, 2, 4 … 60 с (`RECONNECT_MIN`/`RECONNECT_MAX`), в которую вызовы
+  сразу отвечают `telegram_unavailable` без новой попытки; успех сбрасывает паузу. Так работают все процессы: API
+  (сессии `api` и `download`) и воркеры (сессия `upload`). Дополнительно API раз в 15 с (`AuthService.run_keepalive`)
+  вызывает `ensure_connected` у клиентов `api` и `download`, чтобы события об удалениях и проверки здоровья
+  вернулись и без запросов пользователей.
+
+```mermaid
+flowchart TD
+    call["вызов клиента (translate_errors)"] --> wanted{"start был, stop/forget/log_out — нет?"}
+    wanted -->|нет| run["запрос к Telegram"]
+    wanted -->|да| conn{"is_connected?"}
+    conn -->|да| run
+    conn -->|нет| pause{"идёт пауза после неудачи?"}
+    pause -->|да| unav["503 telegram_unavailable"]
+    pause -->|нет| try["connect, таймаут 15 с"]
+    try -->|ошибка| back["пауза ×2: 1 … 60 с"] --> unav
+    try -->|ок| reset["пауза = 0"] --> run
+    keep["API: run_keepalive раз в 15 с"] --> conn
+```
 - Исключения Telethon переводятся в `TelegramFloodWaitError`, `TelegramUnavailableError`, `TelegramUnauthorizedError`
   (401: сессия не вошла или отозвана), ошибки входа (`invalid_code`, `invalid_password`, `invalid_phone`,
   `password_needed`, `session_too_fresh`) и `TelegramError` для остального.
