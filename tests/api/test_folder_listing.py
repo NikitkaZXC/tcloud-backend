@@ -1,9 +1,11 @@
+import inspect
 import itertools
+from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from uuid import uuid7
 
 import pytest
-from sqlalchemy import text
+from sqlalchemy import Engine, event, text
 
 from tests.api.conftest import listing, path
 
@@ -308,3 +310,63 @@ async def test_default_limit_is_20(client, storage, engine):
     page = (await client.get("/folders", params={"path": path(storage, "many")})).json()
     assert len(page["items"]) == 20 and page["next_cursor"]
     assert names(page)[:3] == ["0.txt", "1.txt", "2.txt"]
+
+
+@contextmanager
+def recorded(telegram, monkeypatch):
+    statements: list[str] = []
+    calls: list[str] = []
+
+    def record(conn, cursor, statement, *args) -> None:
+        statements.append(statement)
+
+    for name in dir(type(telegram)):
+        method = getattr(telegram, name)
+        if not name.startswith("_") and inspect.iscoroutinefunction(method):
+
+            def wrap(method=method, name=name):
+                async def call(*args, **kwargs):
+                    calls.append(name)
+                    return await method(*args, **kwargs)
+
+                return call
+
+            monkeypatch.setattr(telegram, name, wrap())
+    event.listen(Engine, "before_cursor_execute", record)
+    try:
+        yield statements, calls
+    finally:
+        event.remove(Engine, "before_cursor_execute", record)
+
+
+def grouped(statements: list[str]) -> list[str]:
+    return [item for item in statements if "GROUP BY" in item]
+
+
+async def test_pages_query_only_what_they_show(client, folder, telegram, monkeypatch):
+    params = {"lang": "en", "limit": 3}
+    with recorded(telegram, monkeypatch) as (statements, calls):
+        first = await listing(client, folder, **params)
+    assert names(first) == ["sub", "Альфа", "apple.jpg"]
+    assert (first["total_files"], first["total_folders"], first["direct_files"]) == (
+        7,
+        2,
+        6,
+    )
+    assert len(grouped(statements)) == 1 and calls == []
+    first_count = len(statements)
+    with recorded(telegram, monkeypatch) as (statements, calls):
+        second = await listing(client, folder, cursor=first["next_cursor"], **params)
+    assert names(second) == ["b2.txt", "b10.txt", "ezh"]
+    assert second["total_files"] is None and second["direct_files"] is None
+    assert grouped(statements) == [] and calls == []
+    assert not any("FROM folders" in item and "LIKE" in item for item in statements)
+    assert len(statements) < first_count
+    mixed = {"lang": "en", "limit": 4, "folders_first": "false"}
+    page = await listing(client, folder, **mixed)
+    with recorded(telegram, monkeypatch) as (statements, calls):
+        page = await listing(client, folder, cursor=page["next_cursor"], **mixed)
+    assert names(page) == ["sub", "Альфа", "Ёж.png", "Яблоко.pdf"]
+    assert (page["items"][0]["files"], page["items"][0]["size"]) == (1, 100)
+    [sizes] = grouped(statements)
+    assert "LIKE" in sizes and calls == []

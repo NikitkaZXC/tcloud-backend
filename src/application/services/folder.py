@@ -41,7 +41,7 @@ from src.application.services.temp import temp_path
 from src.application.services.upload import start_task
 from src.config import settings
 from src.infrastructure.background import AppRuntime
-from src.infrastructure.database.models import FileDB
+from src.infrastructure.database.models import FileDB, FolderDB
 from src.infrastructure.database.repositories import FileRepository, FolderRepository
 from src.infrastructure.enums import (
     ArchiveFormat,
@@ -146,31 +146,39 @@ class FolderService:
         await self._storage_service.get_db(storage_id)
         if not await self._repo.exists(storage_id, path):
             raise FolderNotFoundError("folder not found")
-        folders = [
-            folder
-            for folder in await self._repo.get_children(storage_id, path)
+        first = after is None
+        with_folders = not (folders_first and after and after[0] == 1)
+        folders = {
+            folder.id: folder
+            for folder in (
+                await self._repo.get_children(storage_id, path) if with_folders else []
+            )
             if allowed(actor, storage_id, folder.path, Permission.READ)
             or leads_to_grant(actor, storage_id, folder.path)
-        ]
-        sizes = await self._files.sizes_below(
-            storage_id, path, read_scopes(actor, storage_id)
-        )
-        entries = {
-            folder.id: FolderEntryServiceRead(
-                **FolderServiceRead.from_db(folder).model_dump(),
-                files=sizes.get(name, (0, 0))[0],
-                size=sizes.get(name, (0, 0))[1],
-            )
-            for folder in folders
-            for name in [folder.path.rpartition("/")[2]]
         }
+        scopes = read_scopes(actor, storage_id)
+        sizes = (
+            await self._files.sizes_below(storage_id, path, scopes)
+            if first or (folders and sort_by == "size")
+            else None
+        )
+
+        def size_of(folder: FolderDB) -> int:
+            return sizes.get(folder.path.rpartition("/")[2], (0, 0))[1] if sizes else 0
+
         rows = await self._files.list_page(
             storage_id=storage_id,
             folder=path,
             files=readable,
             folders=[
-                (entry.id, entry.name, entry.size, entry.updated_at, entry.created_at)
-                for entry in entries.values()
+                (
+                    folder.id,
+                    folder.path.rpartition("/")[2],
+                    size_of(folder),
+                    folder.updated_at,
+                    folder.created_at,
+                )
+                for folder in folders.values()
             ],
             sort_by=sort_by,
             lang=lang,
@@ -180,17 +188,32 @@ class FolderService:
             limit=params.limit + 1,
         )
         page = rows[: params.limit]
-        files = await self._files.get_many_with_chat(
-            [ident for group, ident, _ in page if group == 1]
-        )
+        on_page = [folders[ident] for group, ident, _ in page if group == 0]
+        if sizes is None and on_page:
+            sizes = await self._files.sizes_below(
+                storage_id,
+                path,
+                scopes,
+                [folder.path.rpartition("/")[2] for folder in on_page],
+            )
+        entries = {
+            folder.id: FolderEntryServiceRead(
+                **FolderServiceRead.from_db(folder).model_dump(),
+                files=sizes.get(name, (0, 0))[0],
+                size=sizes.get(name, (0, 0))[1],
+            )
+            for folder in on_page
+            for name in [folder.path.rpartition("/")[2]]
+        }
+        file_ids = [ident for group, ident, _ in page if group == 1]
+        files = await self._files.get_many_with_chat(file_ids) if file_ids else {}
+        totals = sizes.values() if first else None
         return FolderListingServiceRead(
             path=join_path(storage_id, path),
-            size=sum(size for _, size in sizes.values()),
-            total_files=sum(count for count, _ in sizes.values()),
-            total_folders=len(entries),
-            direct_files=(
-                await self._files.count_in_folder(storage_id, path) if readable else 0
-            ),
+            size=sum(size for _, size in totals) if first else None,
+            total_files=sum(count for count, _ in totals) if first else None,
+            total_folders=len(folders) if first else None,
+            direct_files=sizes.get(None, (0, 0))[0] if first else None,
             items=[
                 (
                     entries[ident]

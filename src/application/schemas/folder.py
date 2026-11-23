@@ -51,10 +51,10 @@ class FolderListingServiceCreate(BaseModel):
 
 class FolderListingServiceRead(BaseModel):
     path: str
-    size: int
-    total_files: int
-    total_folders: int
-    direct_files: int
+    size: int | None
+    total_files: int | None
+    total_folders: int | None
+    direct_files: int | None
     items: list[
         Annotated[
             FolderEntryServiceRead | FileEntryServiceRead, Field(discriminator="type")

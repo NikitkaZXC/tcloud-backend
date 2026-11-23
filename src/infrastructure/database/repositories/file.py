@@ -13,6 +13,7 @@ from sqlalchemy import (
     func,
     literal,
     literal_column,
+    or_,
     select,
     tuple_,
     union_all,
@@ -156,12 +157,6 @@ class FileRepository:
         )
         return await self._session.scalar(statement)
 
-    async def count_in_folder(self, storage_id: UUID, folder: str) -> int:
-        statement = select(func.count()).where(
-            FileDB.storage_id == storage_id, FileDB.folder_path == folder
-        )
-        return await self._session.scalar(statement) or 0
-
     async def list_page(
         self,
         *,
@@ -269,6 +264,7 @@ class FileRepository:
         storage_id: UUID,
         folder: str,
         scopes: list[tuple[UUID, str, bool]] | None,
+        children: list[str] | None = None,
     ) -> dict[str | None, tuple[int, int]]:
         rest = func.substr(FileDB.folder_path, len(folder) + 2 if folder else 1)
         child = case(
@@ -283,7 +279,18 @@ class FileRepository:
             )
             .group_by(child)
         )
-        if folder:
+        if children is not None:
+            statement = statement.where(
+                or_(
+                    *(
+                        folder_and_below(
+                            FileDB.folder_path, f"{folder}/{child}" if folder else child
+                        )
+                        for child in children
+                    )
+                )
+            )
+        elif folder:
             statement = statement.where(folder_and_below(FileDB.folder_path, folder))
         return {
             row[0]: (row[1], row[2])
