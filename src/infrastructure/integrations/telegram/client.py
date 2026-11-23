@@ -44,10 +44,13 @@ from src.infrastructure.limits import (
     THUMB_SIDE,
 )
 from src.infrastructure.media import Media
+from src.utilities.errors import TCloudError
 
 RECONNECT_MIN = 1.0
 RECONNECT_MAX = 60.0
 CONNECT_TIMEOUT = 15.0
+PING_TTL = 5.0
+PING_TIMEOUT = 5.0
 
 TRANSIENT = (
     ConnectionError,
@@ -161,6 +164,7 @@ class TelegramClient:
     _retry_at = 0.0
     _backoff = 0.0
     _reconnect_lock: asyncio.Lock | None = None
+    _pinged: tuple[float, bool] | None = None
 
     def __init__(
         self,
@@ -246,6 +250,24 @@ class TelegramClient:
 
     def connected(self) -> bool:
         return self._client.is_connected()
+
+    @translate_errors
+    async def _get_state(self) -> None:
+        await self._client(functions.updates.GetStateRequest())
+
+    async def ping(self) -> bool:
+        if not self.authorized:
+            return False
+        if self._pinged and time.monotonic() - self._pinged[0] < PING_TTL:
+            return self._pinged[1]
+        try:
+            await asyncio.wait_for(self._get_state(), PING_TIMEOUT)
+            alive = True
+        except (TCloudError, TimeoutError) as error:
+            logger.warning("Telegram {}: ping failed: {!r}", self._name, error)
+            alive = False
+        self._pinged = (time.monotonic(), alive)
+        return alive
 
     async def log_out(self) -> None:
         if not (self.authorized and await self._client.log_out()):

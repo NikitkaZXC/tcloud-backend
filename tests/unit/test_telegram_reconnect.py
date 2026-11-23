@@ -87,3 +87,31 @@ async def test_stopped_client_is_not_reconnected():
     with pytest.raises(TelegramUnavailableError):
         await client.is_premium()
     assert fake.connects == 0
+
+
+class PingTelethon(FlakyTelethon):
+    def __init__(self) -> None:
+        super().__init__(failures=0)
+        self.calls = 0
+
+    async def __call__(self, request):
+        self.calls += 1
+        if not self.up:
+            raise ConnectionError("down")
+        return None
+
+
+async def test_ping_is_a_cached_round_trip(monkeypatch):
+    now = [0.0]
+    monkeypatch.setattr(telegram.time, "monotonic", lambda: now[0])
+    fake = PingTelethon()
+    client = make(fake)
+    client.authorized = True
+    assert await client.ping() and fake.calls == 1
+    assert await client.ping() and fake.calls == 1
+    now[0] += telegram.PING_TTL
+    fake.up, fake.failures = False, 1
+    assert not await client.ping()
+    client.authorized = False
+    now[0] += telegram.PING_TTL
+    assert not await client.ping()

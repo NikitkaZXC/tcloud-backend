@@ -86,6 +86,9 @@ class FakeTelegram:
     async def ensure_connected(self) -> None:
         return None
 
+    async def ping(self) -> bool:
+        return self.connected() and self.authorized
+
     def connected(self) -> bool:
         return True
 

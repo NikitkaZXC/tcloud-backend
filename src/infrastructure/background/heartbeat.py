@@ -1,5 +1,7 @@
+import json
 import threading
 import time
+from collections.abc import Callable
 
 from loguru import logger
 
@@ -12,24 +14,37 @@ class Heartbeat:
         self._stop = threading.Event()
         self._threads: list[threading.Thread] = []
 
-    def start(self, queues: list[str], hostname: str) -> None:
+    def start(
+        self,
+        queues: list[str],
+        hostname: str,
+        telegram: Callable[[], bool | None] | None = None,
+    ) -> None:
         keys = [
             f"{settings.redis.PREFIX}:worker:{queue}:{hostname}" for queue in queues
         ]
         thread = threading.Thread(
-            target=self._beat, args=(keys,), name="tcloud-heartbeat", daemon=True
+            target=self._beat,
+            args=(keys, telegram),
+            name="tcloud-heartbeat",
+            daemon=True,
         )
         self._threads.append(thread)
         thread.start()
 
-    def _beat(self, keys: list[str]) -> None:
+    def _beat(
+        self, keys: list[str], telegram: Callable[[], bool | None] | None
+    ) -> None:
         redis = create_sync_redis()
         try:
             while not self._stop.is_set():
                 ttl = max(1, int(settings.upload.HEARTBEAT_INTERVAL * 3))
                 try:
+                    beat = json.dumps(
+                        {"at": time.time(), "telegram": telegram and telegram()}
+                    )
                     for key in keys:
-                        redis.set(key, time.time(), ex=ttl)
+                        redis.set(key, beat, ex=ttl)
                 except Exception as error:
                     logger.warning("Worker heartbeat failed: {!r}", error)
                 self._stop.wait(settings.upload.HEARTBEAT_INTERVAL)

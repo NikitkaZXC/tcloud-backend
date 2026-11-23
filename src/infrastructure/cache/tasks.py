@@ -352,14 +352,18 @@ class TaskStore:
     async def active_ids(self) -> list[str]:
         return await self._redis.zrange(self._key("active"), 0, -1)
 
-    async def workers(self) -> dict[str, float]:
+    async def workers(self) -> dict[str, tuple[float, bool | None]]:
         keys = [key async for key in self._redis.scan_iter(self._key("worker", "*"))]
-        beats: dict[str, float] = {}
+        beats: dict[str, tuple[float, bool | None]] = {}
         for key, value in zip(keys, await self._redis.mget(keys) if keys else []):
             if value is None:
                 continue
+            beat = json.loads(value)
+            if not isinstance(beat, dict):
+                beat = {"at": float(beat), "telegram": None}
             queue = key.rsplit(":", 2)[1]
-            beats[queue] = max(beats.get(queue, 0.0), float(value))
+            if queue not in beats or beat["at"] > beats[queue][0]:
+                beats[queue] = (beat["at"], beat["telegram"])
         return beats
 
     async def count_active(self) -> int:

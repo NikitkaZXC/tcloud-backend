@@ -30,29 +30,29 @@ class HealthService:
             return result
 
         db = await probe("db", self._db)
-        telegram = await probe(
-            "telegram",
-            lambda: self._runtime.telegram.connected()
-            and self._runtime.telegram.authorized,
-        )
-        telegram_upload = await probe(
-            "telegram_upload", lambda: session_exists(TelegramSession.UPLOAD)
-        )
+        telegram = await probe("telegram", self._runtime.telegram.ping)
         telegram_download = await probe(
-            "telegram_download",
-            lambda: self._runtime.download.connected()
-            and self._runtime.download.authorized,
+            "telegram_download", self._runtime.download.ping
         )
         antivirus = await probe("antivirus", self._runtime.scanner.ping)
         redis = await probe("redis", self._runtime.store.ping)
         queue = await probe("queue", broker_alive)
         beats = await self._runtime.store.workers() if redis else {}
+        worker_telegram = beats.get(UploadQueue.TELEGRAM.value, (0.0, None))[1]
+        telegram_upload = await probe(
+            "telegram_upload",
+            lambda: (
+                session_exists(TelegramSession.UPLOAD)
+                if worker_telegram is None
+                else worker_telegram
+            ),
+        )
         now = time.time()
         workers = {item.value: item.value in beats for item in UploadQueue}
         for name in workers:
             details[name] = HealthDetailServiceRead(
                 last_seen_s=(
-                    round(max(0.0, now - beats[name]), 3) if name in beats else None
+                    round(max(0.0, now - beats[name][0]), 3) if name in beats else None
                 )
             )
         return HealthServiceRead(

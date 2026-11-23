@@ -69,7 +69,9 @@ def backfill_previews(self: Task) -> None:
 @worker_ready.connect
 def on_worker_ready(sender: Any = None, **_: Any) -> None:
     heartbeat.start(
-        [queue.name for queue in sender.task_consumer.queues], sender.hostname
+        [queue.name for queue in sender.task_consumer.queues],
+        sender.hostname,
+        lambda: runtime.telegram_state(),
     )
 
 

@@ -58,14 +58,42 @@ async def test_health(client, scanner, redis):
 
 
 async def test_health_sees_dead_worker(client, monkeypatch):
-    async def workers() -> dict[str, float]:
-        return {"uploads.download": time.time() - 2, "uploads.prepare": time.time()}
+    async def workers() -> dict:
+        return {
+            "uploads.download": (time.time() - 2, None),
+            "uploads.prepare": (time.time(), None),
+        }
 
     monkeypatch.setattr(main.app.state.runtime.store, "workers", workers)
     health = (await client.get("/health")).json()
     assert health["ok"] is False and health["workers"]["uploads.telegram"] is False
     assert health["details"]["uploads.telegram"]["last_seen_s"] is None
     assert 2 <= health["details"]["uploads.download"]["last_seen_s"] < 3
+
+
+async def test_health_uses_worker_telegram_state(client, monkeypatch):
+    state = {"value": False}
+
+    async def workers() -> dict:
+        return {
+            queue: (
+                time.time(),
+                state["value"] if queue == "uploads.telegram" else None,
+            )
+            for queue in (
+                "uploads.download",
+                "uploads.prepare",
+                "uploads.telegram",
+                "archives.build",
+            )
+        }
+
+    monkeypatch.setattr(main.app.state.runtime.store, "workers", workers)
+    health = (await client.get("/health")).json()
+    assert health["telegram_upload"] is False and health["ok"] is False
+    state["value"] = True
+    health = (await client.get("/health")).json()
+    assert health["telegram_upload"] is True and health["ok"] is True
 
 
 async def test_public_health_without_sign_in(client, scanner):

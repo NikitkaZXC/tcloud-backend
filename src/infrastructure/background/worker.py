@@ -10,6 +10,8 @@ from src.infrastructure.background.disk import DiskBudget, MiB
 from src.infrastructure.cache import TaskStore, create_redis
 from src.infrastructure.integrations.telegram import TelegramUnauthorizedError
 
+PROBE_TIMEOUT = 10
+
 
 class WorkerRuntime:
     def __init__(
@@ -75,6 +77,17 @@ class WorkerRuntime:
                         )
                     self._telegram = client
         return self._telegram
+
+    def telegram_state(self) -> bool | None:
+        loop, client = self._loop, self._telegram
+        if loop is None or client is None:
+            return None
+        try:
+            return asyncio.run_coroutine_threadsafe(client.ping(), loop).result(
+                PROBE_TIMEOUT
+            )
+        except Exception:
+            return False
 
     async def forget_telegram(self) -> None:
         client, self._telegram = self._telegram, None

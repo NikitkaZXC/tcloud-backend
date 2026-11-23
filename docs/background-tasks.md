@@ -360,6 +360,23 @@ RabbitMQ позицию не сообщает, поэтому её считае�
   (замер вокруг уже идущих `SELECT 1`, ping Redis, проверки брокера, ping ClamAV, проверки клиентов Telegram),
   `last_seen_s` — секунд с последнего heartbeat самого свежего воркера очереди; где неприменимо — `null`. Без входа
   ответ по-прежнему только `{status}`.
+- Проверки Telegram — настоящий запрос, а не `is_connected()`: `TelegramClient.ping` шлёт `updates.GetState`
+  (таймаут 5 с, `PING_TIMEOUT`; перед ним `ensure_connected`, так что проверка заодно переподключает упавший клиент)
+  и кеширует ответ на 5 с (`PING_TTL`), чтобы частый опрос `/health` не нагружал Telegram. `telegram` и
+  `telegram_download` — ping клиентов API. `telegram_upload` — состояние клиента самого worker-telegram: поток
+  heartbeat раз в `UPLOAD_HEARTBEAT_INTERVAL` вызывает `WorkerRuntime.telegram_state` (тот же `ping` в цикле событий
+  воркера, ≤ 10 с) и пишет его в heartbeat (`{"at", "telegram"}`); `null` — воркер ещё не создавал клиента (не было
+  ни одной задачи Telegram), тогда, как раньше, проверяется наличие файла сессии `upload`.
+
+```mermaid
+flowchart LR
+    hb["heartbeat воркера"] -->|telegram_state: ping в цикле воркера| key[("worker:{queue}:{host}<br/>{at, telegram}")]
+    api["GET /api/health"] --> p1["ping api, download<br/>GetState, кеш 5 с"]
+    api --> key
+    key -->|telegram = null| file["файл сессии upload есть?"]
+    key -->|true / false| up["telegram_upload"]
+    file --> up
+```
 - Flower — `http://127.0.0.1:5555`, логин и пароль `FLOWER_USER` / `FLOWER_PASSWORD`: воркеры, задачи, очереди.
 
 ## Вебхуки
