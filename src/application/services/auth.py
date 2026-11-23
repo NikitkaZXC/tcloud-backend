@@ -60,12 +60,17 @@ def _deadline() -> datetime:
 async def forget_deleted(
     runtime: AppRuntime, chat_id: int, message_ids: list[int]
 ) -> None:
+    runtime.media.forget(chat_id, message_ids)
     try:
         async with session_factory() as session:
             files = FileService(session, runtime, StorageService(session, runtime))
             await files.forget_messages(chat_id, message_ids)
     except Exception:
         logger.exception("Could not forget messages deleted in {}", chat_id)
+
+
+async def forget_edited(runtime: AppRuntime, chat_id: int, message_id: int) -> None:
+    runtime.media.forget(chat_id, [message_id])
 
 
 async def forget_channel(runtime: AppRuntime, chat_id: int) -> None:
@@ -287,6 +292,7 @@ class AuthService:
             )
         await self._runtime.telegram.watch(
             partial(forget_deleted, self._runtime),
+            partial(forget_edited, self._runtime),
             partial(forget_channel, self._runtime),
             partial(forget_account, self._runtime),
         )

@@ -7,6 +7,10 @@ class TelegramError(TCloudError):
     code = "telegram_error"
 
 
+class TelegramFileReferenceError(TelegramError):
+    """Raised when the file reference of a cached Telegram media has expired."""
+
+
 class TelegramFloodWaitError(TCloudError):
     """Raised when Telegram asks to wait before the next request."""
 

@@ -44,7 +44,11 @@ from src.infrastructure.database.repositories import (
     StorageRepository,
 )
 from src.infrastructure.enums import Permission, TaskPriority, UploadQueue
-from src.infrastructure.integrations import TelegramClient, TelegramMessageGoneError
+from src.infrastructure.integrations import (
+    TelegramClient,
+    TelegramFileReferenceError,
+    TelegramMessageGoneError,
+)
 from src.infrastructure.security import cipher_size, cipher_span, decrypt, unseal
 from src.utilities.parsers import join_path, split_file, split_folder
 
@@ -252,14 +256,17 @@ class FileService:
     async def delete(self, actor: Actor, file_id: UUID) -> None:
         file, chat_id = await self.get_db(actor, file_id, Permission.DELETE)
         async with self._runtime.store.active(file.storage_id, "write"):
+            self._runtime.media.forget(chat_id, [file.tg_message_id])
             await self._runtime.telegram.delete(chat_id, [file.tg_message_id])
         await self._repo.delete_by_ids([file_id])
         await self._session.commit()
         logger.info("File {} deleted", file_id)
 
-    async def open_download(self, actor: Actor, file_id: UUID) -> tuple[FileDB, object]:
+    async def open_download(
+        self, actor: Actor, file_id: UUID
+    ) -> tuple[FileDB, int, object]:
         file, chat_id = await self.get_db(actor, file_id, Permission.READ)
-        return file, await self._media(file, chat_id)
+        return file, chat_id, await self._media(file, chat_id)
 
     async def backfill_previews(self, actor: Actor) -> None:
         require_root(actor)
@@ -299,10 +306,15 @@ class FileService:
             return tag, None
         data = await self._runtime.store.thumb(file.id, file.tg_message_id)
         if data is None:
-            data = (
-                await self._runtime.download.thumbnail(await self._media(file, chat_id))
-                or b""
-            )
+            media = await self._media(file, chat_id)
+            try:
+                data = await self._runtime.download.thumbnail(media)
+            except TelegramFileReferenceError:
+                self._runtime.media.forget(chat_id, [file.tg_message_id])
+                data = await self._runtime.download.thumbnail(
+                    await self._media(file, chat_id)
+                )
+            data = data or b""
             await self._runtime.store.keep_thumb(file.id, file.tg_message_id, data)
         if not data:
             raise ThumbnailNotFoundError("Telegram has no thumbnail for this file")
@@ -314,9 +326,7 @@ class FileService:
                 "the download session is not logged in, log in with /api/telegram/download"
             )
         try:
-            media, size = await self._runtime.download.message_media(
-                chat_id, file.tg_message_id
-            )
+            media, size = await self._lookup(chat_id, file.tg_message_id)
         except TelegramMessageGoneError:
             await self._repo.delete_by_ids([file.id])
             await self._session.commit()
@@ -333,6 +343,46 @@ class FileService:
                 "the file in Telegram was replaced, its size no longer matches"
             )
         return media
+
+    async def _lookup(self, chat_id: int, message_id: int) -> tuple[object, int]:
+        found = self._runtime.media.get(chat_id, message_id)
+        if found is None:
+            found = await self._runtime.download.message_media(chat_id, message_id)
+            self._runtime.media.put(chat_id, message_id, *found)
+        return found
+
+    def body(
+        self, file: FileDB, chat_id: int, media: object, start: int, end: int
+    ) -> AsyncIterator[bytes]:
+        return self._retried(
+            file_body(self._runtime.download, media, file, start, end),
+            file,
+            chat_id,
+            start,
+            end,
+        )
+
+    async def _retried(
+        self,
+        body: AsyncIterator[bytes],
+        file: FileDB,
+        chat_id: int,
+        start: int,
+        end: int,
+    ) -> AsyncIterator[bytes]:
+        sent = False
+        try:
+            async for chunk in body:
+                sent = True
+                yield chunk
+            return
+        except TelegramFileReferenceError:
+            if sent:
+                raise
+        self._runtime.media.forget(chat_id, [file.tg_message_id])
+        media, _ = await self._lookup(chat_id, file.tg_message_id)
+        async for chunk in file_body(self._runtime.download, media, file, start, end):
+            yield chunk
 
     async def forget_messages(self, chat_id: int, message_ids: list[int]) -> None:
         storage = await self._storages.get_by_chat_id(chat_id)

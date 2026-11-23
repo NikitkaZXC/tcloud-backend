@@ -394,9 +394,9 @@ class FolderService:
             raise FolderNotFoundError("folder not found")
         files = await self._files.get_messages_below(storage_id, path)
         async with self._runtime.store.active(storage_id, "write"):
-            await self._runtime.telegram.delete(
-                storage.tg_chat_id, [message_id for _, message_id in files]
-            )
+            messages = [message_id for _, message_id in files]
+            self._runtime.media.forget(storage.tg_chat_id, messages)
+            await self._runtime.telegram.delete(storage.tg_chat_id, messages)
         await self._files.delete_by_ids([file_id for file_id, _ in files])
         await self._repo.delete_with_children(storage_id, path)
         await self._session.commit()

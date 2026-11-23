@@ -3,7 +3,12 @@ from collections.abc import Coroutine
 
 from src.config import settings
 from src.infrastructure.background.disk import DiskBudget, MiB
-from src.infrastructure.cache import RateLimitStore, TaskStore, TokenBlacklist
+from src.infrastructure.cache import (
+    MediaCache,
+    RateLimitStore,
+    TaskStore,
+    TokenBlacklist,
+)
 
 
 class AppRuntime:
@@ -31,6 +36,7 @@ class AppRuntime:
         self.disk = DiskBudget(
             settings.upload.TMP_DIR, settings.upload.MIN_FREE_DISK_MB * MiB
         )
+        self.media = MediaCache()
         self._tasks: set[asyncio.Task] = set()
         self.handoff_lock = asyncio.Lock()
 

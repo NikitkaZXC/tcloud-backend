@@ -276,6 +276,15 @@ sequenceDiagram
 `file_body`, `tracked`), расшифровка — `infrastructure/security/encryption.py` (`cipher_span`, `decrypt`), чтение из
 Telegram — `TelegramClient.iter_media` клиентом `runtime.download`.
 
+Сообщение с медиа (`message_media`: `media` и размер) кешируется в памяти процесса API (`runtime.media`,
+`cache/media.py` `MediaCache`, LRU до 2000 записей, 90 с), так что повторные скачивания, перемотка (`Range`) и
+`/thumb` того же файла не делают `GetMessages` каждый раз; строка `files` и права проверяются на каждом запросе как
+раньше. Запись удаляется: событием `MessageDeleted` (`forget_deleted`), событием `MessageEdited` (`forget_edited`),
+удалением файла или папки через tcloud (до `telegram.delete`); `replace` даёт новое сообщение, поэтому старая запись
+не используется. Истёк `file_reference` (`FILE_REFERENCE_EXPIRED`/`INVALID` → `TelegramFileReferenceError`) до
+первого отданного байта (`FileService.body`) или при `/thumb` — запись удаляется, сообщение читается заново, попытка
+повторяется один раз.
+
 ```mermaid
 sequenceDiagram
     participant C as Клиент
@@ -288,7 +297,11 @@ sequenceDiagram
     A->>F: open_download
     F->>DB: files + storages.tg_chat_id
     F->>F: require READ (403 forbidden)
-    F->>TG: getMessages(chat, message_id)
+    alt (chat, message_id) в runtime.media моложе 90 с
+        F->>F: media, размер из памяти
+    else
+        F->>TG: getMessages(chat, message_id), положить в runtime.media
+    end
     alt сообщения нет
         F->>DB: DELETE files (запись удаляется)
         F-->>C: 404 file_not_found

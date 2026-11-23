@@ -17,6 +17,7 @@ from src.infrastructure.integrations.telegram.exception import (
     TelegramChannelsLimitError,
     TelegramCodeInvalidError,
     TelegramError,
+    TelegramFileReferenceError,
     TelegramFloodWaitError,
     TelegramMessageGoneError,
     TelegramPasswordInvalidError,
@@ -96,6 +97,11 @@ def translated():
         raise TelegramSessionTooFreshError(
             "Telegram lets a session end other sessions only 24 h after login"
         ) from error
+    except (
+        errors.FileReferenceExpiredError,
+        errors.FileReferenceInvalidError,
+    ) as error:
+        raise TelegramFileReferenceError(str(error)) from error
     except errors.UnauthorizedError as error:
         raise TelegramUnauthorizedError(
             f"Telegram session is not authorized: {error}"
@@ -315,12 +321,17 @@ class TelegramClient:
     async def watch(
         self,
         deleted: Callable[[int, list[int]], Awaitable[None]],
+        edited: Callable[[int, int], Awaitable[None]],
         channel_changed: Callable[[int], Awaitable[None]],
         account_changed: Callable[[], Awaitable[None]],
     ) -> None:
         async def on_deleted(event: events.MessageDeleted.Event) -> None:
             if event.chat_id is not None:
                 await deleted(event.chat_id, list(event.deleted_ids))
+
+        async def on_edited(event: events.MessageEdited.Event) -> None:
+            if event.chat_id is not None:
+                await edited(event.chat_id, event.id)
 
         async def on_update(update) -> None:
             if isinstance(update, types.UpdateChannel):
@@ -334,6 +345,7 @@ class TelegramClient:
                 await account_changed()
 
         self._client.add_event_handler(on_deleted, events.MessageDeleted())
+        self._client.add_event_handler(on_edited, events.MessageEdited())
         self._client.add_event_handler(
             on_update,
             events.Raw(

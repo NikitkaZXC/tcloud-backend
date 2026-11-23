@@ -7,9 +7,11 @@ from pathlib import Path
 import py7zr
 import pytest
 
+import main
 from src.application.services import TaskSweeper
 from src.config import settings
 from src.infrastructure.cache import TaskStore
+from src.infrastructure.integrations import TelegramFileReferenceError
 from tests.api.conftest import build_archive, listing, path, upload, wait_task
 from tests.factories import PDF, make_image
 
@@ -355,3 +357,71 @@ async def test_folder_archive_skips_files_gone_from_telegram(client, telegram, s
     ]
     with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
         assert archive.namelist() == ["1.jpg"]
+
+
+def count_lookups(telegram, monkeypatch) -> list:
+    calls = []
+    original = telegram.message_media
+
+    async def message_media(chat_id, message_id):
+        calls.append((chat_id, message_id))
+        return await original(chat_id, message_id)
+
+    monkeypatch.setattr(telegram, "message_media", message_media)
+    return calls
+
+
+async def test_message_media_is_cached_until_telegram_changes_it(
+    client, storage, telegram, download_telegram, monkeypatch
+):
+    file = (await upload(client, path(storage, "a.txt"), b"hello", encrypt="false"))[
+        "file"
+    ]
+    chat_id, message_id = file["telegram"]["chat_id"], file["telegram"]["message_id"]
+    calls = count_lookups(download_telegram, monkeypatch)
+    for _ in range(3):
+        response = await client.get(f"/files/{file['uuid']}/download")
+        assert response.content == b"hello"
+    assert len(calls) == 1
+    await telegram.on_edited(chat_id, message_id)
+    await client.get(f"/files/{file['uuid']}/download")
+    assert len(calls) == 2
+    await telegram.delete_by_hand(chat_id, [message_id])
+    assert (await client.get(f"/files/{file['uuid']}/download")).status_code == 404
+
+
+async def test_deleting_through_tcloud_drops_cached_media(
+    client, storage, download_telegram, monkeypatch
+):
+    file = (await upload(client, path(storage, "a.txt"), b"hello", encrypt="false"))[
+        "file"
+    ]
+    calls = count_lookups(download_telegram, monkeypatch)
+    await client.get(f"/files/{file['uuid']}/download")
+    runtime = main.app.state.runtime
+    key = (file["telegram"]["chat_id"], file["telegram"]["message_id"])
+    assert runtime.media.get(*key)
+    assert (await client.delete(f"/files/{file['uuid']}")).status_code == 204
+    assert runtime.media.get(*key) is None and len(calls) == 1
+
+
+async def test_expired_file_reference_rereads_the_message_once(
+    client, storage, download_telegram, monkeypatch
+):
+    file = (await upload(client, path(storage, "a.txt"), b"hello", encrypt="false"))[
+        "file"
+    ]
+    calls = count_lookups(download_telegram, monkeypatch)
+    original = download_telegram.iter_media
+    failures = [TelegramFileReferenceError("FILE_REFERENCE_EXPIRED")]
+
+    async def iter_media(media, offset, length):
+        if failures:
+            raise failures.pop()
+        async for chunk in original(media, offset, length):
+            yield chunk
+
+    monkeypatch.setattr(download_telegram, "iter_media", iter_media)
+    response = await client.get(f"/files/{file['uuid']}/download")
+    assert response.status_code == 200 and response.content == b"hello"
+    assert len(calls) == 2

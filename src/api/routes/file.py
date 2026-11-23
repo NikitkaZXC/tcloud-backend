@@ -18,7 +18,7 @@ from src.api.schemas import (
 from src.application.factory import get_runtime, get_service_file
 from src.application.schemas import Actor, FileSearchServiceCreate
 from src.application.services import FileService
-from src.application.services.file import file_body, tracked
+from src.application.services.file import tracked
 from src.config import settings
 from src.infrastructure.background import AppRuntime
 from src.infrastructure.enums import MediaKind
@@ -123,7 +123,7 @@ async def download_file(
     file_service: FileService = Depends(get_service_file),
     runtime: AppRuntime = Depends(get_runtime),
 ) -> StreamingResponse:
-    file, media = await file_service.open_download(actor, file_id)
+    file, chat_id, media = await file_service.open_download(actor, file_id)
     start, end = (
         parse_range(range_header, file.size) if range_header else (0, file.size - 1)
     )
@@ -140,7 +140,7 @@ async def download_file(
         headers["Content-Range"] = f"bytes {start}-{end}/{file.size}"
     return StreamingResponse(
         tracked(
-            file_body(runtime.download, media, file, start, end),
+            file_service.body(file, chat_id, media, start, end),
             runtime.store,
             file.storage_id,
             "read",

@@ -15,7 +15,7 @@ class FakeTelethon:
         self.handlers.append((handler, event))
 
     async def catch_up(self) -> None:
-        assert len(self.handlers) == 2, "catch up must run after handlers are added"
+        assert len(self.handlers) == 3, "catch up must run after handlers are added"
         self.caught_up = True
 
 
@@ -28,13 +28,16 @@ async def watched():
     async def deleted(chat_id, message_ids):
         seen.append(("deleted", chat_id, message_ids))
 
+    async def edited(chat_id, message_id):
+        seen.append(("edited", chat_id, message_id))
+
     async def channel(chat_id):
         seen.append(("channel", chat_id))
 
     async def account():
         seen.append(("account",))
 
-    await client.watch(deleted, channel, account)
+    await client.watch(deleted, edited, channel, account)
     assert fake.caught_up
     return fake.handlers, seen
 
@@ -46,6 +49,15 @@ async def test_watch_passes_channel_deletes():
     await handler(SimpleNamespace(chat_id=-1001, deleted_ids=(5, 6)))
     await handler(SimpleNamespace(chat_id=None, deleted_ids=[7]))
     assert seen == [("deleted", -1001, [5, 6])]
+
+
+async def test_watch_passes_channel_edits():
+    handlers, seen = await watched()
+    handler, event = handlers[1]
+    assert isinstance(event, events.MessageEdited)
+    await handler(SimpleNamespace(chat_id=-1001, id=5))
+    await handler(SimpleNamespace(chat_id=None, id=6))
+    assert seen == [("edited", -1001, 5)]
 
 
 def service(action) -> types.UpdateNewChannelMessage:
@@ -60,7 +72,7 @@ def service(action) -> types.UpdateNewChannelMessage:
 
 async def test_watch_reports_channel_and_account_changes():
     handlers, seen = await watched()
-    handler, event = handlers[1]
+    handler, event = handlers[2]
     assert isinstance(event, events.Raw)
     assert set(event.types) == {
         types.UpdateChannel,

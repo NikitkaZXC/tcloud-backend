@@ -287,8 +287,9 @@ class FakeTelegram:
         for message_id in message_ids:
             self.chats[chat_id]["messages"].pop(message_id, None)
 
-    async def watch(self, deleted, channel_changed, account_changed) -> None:
+    async def watch(self, deleted, edited, channel_changed, account_changed) -> None:
         self.on_deleted = deleted
+        self.on_edited = edited
         self.on_channel = channel_changed
         self.on_account = account_changed
 
