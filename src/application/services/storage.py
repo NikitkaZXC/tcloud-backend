@@ -1,4 +1,6 @@
 import asyncio
+import base64
+import hashlib
 from collections.abc import AsyncIterator
 from dataclasses import asdict
 from uuid import UUID
@@ -211,13 +213,23 @@ class StorageService:
         await self._session.commit()
         return await self.get(actor, storage_id)
 
-    async def get_photo(self, actor: Actor, storage_id: UUID) -> bytes:
+    async def get_photo(
+        self, actor: Actor, storage_id: UUID, if_none_match: str | None
+    ) -> tuple[str, bytes | None]:
         self.check_visible(actor, storage_id)
         storage = await self.get_db(storage_id)
-        data = await self._runtime.telegram.photo(storage.tg_chat_id)
+        chat_id = storage.tg_chat_id
+        cached = await self._runtime.store.cached("channel_photo", chat_id)
+        if cached is None:
+            cached = base64.b64encode(
+                await self._runtime.telegram.photo(chat_id) or b""
+            ).decode()
+            await self._runtime.store.keep(cached, "channel_photo", chat_id)
+        data = base64.b64decode(cached)
         if not data:
             raise StoragePhotoNotFoundError("storage has no photo")
-        return data
+        tag = f'"{hashlib.blake2b(data, digest_size=8).hexdigest()}"'
+        return tag, None if if_none_match == tag else data
 
     async def sync_folder(self) -> None:
         try:

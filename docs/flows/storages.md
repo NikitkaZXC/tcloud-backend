@@ -9,7 +9,7 @@
 | Одно | `GET /api/storages/{id}` | то же для одного хранилища |
 | Изменить | `PATCH /api/storages/{id}` `{name?, description?}` | `EditTitle` / `EditChatAbout`; неизменённые значения Telegram не роняют |
 | Удалить | `DELETE /api/storages/{id}?keep_channel=false` | `204`. Записи файлов и папок удаляются из БД (каскад), канал — `DeleteChannelRequest` вместе со всеми сообщениями, безвозвратно. `keep_channel=true` — канал с файлами остаётся в Telegram, отвязывается только БД. Идут загрузки в хранилище — `409 storage_busy` (дождаться или отменить). Канал уже удалён руками — удаление всё равно проходит |
-| Фото | `PUT` / `GET` / `DELETE /api/storages/{id}/photo` | PUT — тело-картинка ≤ 10 МБ, проверка типа и ClamAV, не JPEG/PNG → JPEG; GET — поток из Telegram, у нас не хранится |
+| Фото | `PUT` / `GET` / `DELETE /api/storages/{id}/photo` | PUT — тело-картинка ≤ 10 МБ, проверка типа и ClamAV, не JPEG/PNG → JPEG; GET — байты из Telegram, кешируются в Redis `channel_photo:{chat_id}` на `REDIS_CACHE_TTL` (180 с, base64; «нет фото» тоже кешируется), `ETag` — хеш байтов, `Cache-Control: private, no-cache`, `If-None-Match` → `304`; `PUT`/`DELETE`/`PATCH` и удаление хранилища удаляют ключ |
 
 ```mermaid
 sequenceDiagram
@@ -118,7 +118,7 @@ flowchart TD
 `tcloud:channel:{chat_id}` (JSON, TTL `REDIS_CACHE_TTL`, 180 с); в Telegram (`GetFullChannel`, бывало до 10 с) идут только
 каналы без записи, и ответ сразу кладётся в кеш. Так `GET /api/storages`, `GET /api/storages/{id}` и поиск (имена
 хранилищ в результатах) не ждут Telegram на каждом запросе. Свои изменения видны сразу: `PATCH`, `PUT`/`DELETE …/photo`
-и удаление хранилища удаляют ключ. Переименование руками в Telegram или удаление канала там видно не позже чем через
+и удаление хранилища удаляют ключ (вместе с аватаркой `channel_photo:{chat_id}`). Переименование руками в Telegram или удаление канала там видно не позже чем через
 3 мин. Telegram недоступен (сеть, флуд, сессия) — warning в лог, закешированные каналы отдаются как есть, остальные —
 `available: false` (раньше весь список отвечал `503`).
 

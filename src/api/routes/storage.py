@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Request, Response, status
+from fastapi import APIRouter, Depends, Header, Request, Response, status
 
 from src.api.dependencies import get_actor
 from src.api.schemas import (
@@ -135,15 +135,19 @@ async def delete_photo(
 @router.get(
     path="/{storage_id}/photo",
     name="storages:get-photo",
-    summary="Channel photo streamed from Telegram",
+    summary="Channel photo from Telegram, cached in Redis, ETag revalidation",
     status_code=status.HTTP_200_OK,
     response_class=Response,
+    responses={200: {"content": {"image/jpeg": {}}}, 304: {}},
 )
 async def get_photo(
     storage_id: UUID,
+    if_none_match: str | None = Header(None, alias="if-none-match"),
     actor: Actor = Depends(get_actor),
     storage_service: StorageService = Depends(get_service_storage),
 ) -> Response:
-    return Response(
-        await storage_service.get_photo(actor, storage_id), media_type="image/jpeg"
-    )
+    tag, data = await storage_service.get_photo(actor, storage_id, if_none_match)
+    headers = {"ETag": tag, "Cache-Control": "private, no-cache"}
+    if data is None:
+        return Response(status_code=status.HTTP_304_NOT_MODIFIED, headers=headers)
+    return Response(data, media_type="image/jpeg", headers=headers)

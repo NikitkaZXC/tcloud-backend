@@ -376,6 +376,44 @@ async def test_storage_photo(client, telegram, storage):
     ] is False
 
 
+async def test_storage_photo_cached_with_etag(
+    client, telegram, storage, redis, monkeypatch
+):
+    storage_id, chat_id = storage["id"], storage["telegram"]["chat_id"]
+    calls = []
+    original = telegram.photo
+
+    async def photo(chat):
+        calls.append(chat)
+        return await original(chat)
+
+    monkeypatch.setattr(telegram, "photo", photo)
+    assert (await client.get(f"/storages/{storage_id}/photo")).status_code == 404
+    assert (await client.get(f"/storages/{storage_id}/photo")).status_code == 404
+    assert calls == [chat_id]
+    await client.put(f"/storages/{storage_id}/photo", content=make_image("PNG"))
+    first = await client.get(f"/storages/{storage_id}/photo")
+    assert first.status_code == 200 and len(calls) == 2
+    assert first.headers["cache-control"] == "private, no-cache"
+    assert 0 < await redis.ttl(f"tcloud:channel_photo:{chat_id}") <= 180
+    tag = first.headers["etag"]
+    again = await client.get(
+        f"/storages/{storage_id}/photo", headers={"If-None-Match": tag}
+    )
+    assert again.status_code == 304 and again.content == b"" and len(calls) == 2
+    assert again.headers["etag"] == tag
+    telegram.chats[chat_id]["photo"] = b"changed in telegram"
+    assert (await client.get(f"/storages/{storage_id}/photo")).content == first.content
+    await redis.delete(f"tcloud:channel_photo:{chat_id}")
+    changed = await client.get(
+        f"/storages/{storage_id}/photo", headers={"If-None-Match": tag}
+    )
+    assert changed.status_code == 200 and changed.content == b"changed in telegram"
+    assert changed.headers["etag"] != tag
+    await client.delete(f"/storages/{storage_id}/photo")
+    assert (await client.get(f"/storages/{storage_id}/photo")).status_code == 404
+
+
 async def test_storage_photo_webp_converted_to_jpeg(client, telegram, storage):
     await client.put(f"/storages/{storage['id']}/photo", content=make_image("WEBP"))
     assert (

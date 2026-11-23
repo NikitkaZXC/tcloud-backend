@@ -335,7 +335,9 @@ class TaskStore:
             await pipe.execute()
 
     async def forget_channel(self, chat_id: int) -> None:
-        await self._redis.delete(self._key("channel", chat_id))
+        await self._redis.delete(
+            self._key("channel", chat_id), self._key("channel_photo", chat_id)
+        )
 
     async def cached(self, *parts: object):
         value = await self._redis.get(self._key(*parts))
