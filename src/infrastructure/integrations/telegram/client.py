@@ -358,6 +358,13 @@ class TelegramClient:
             await self._client.get_dialogs()
             return await self._client.get_entity(chat_id)
 
+    async def _peer(self, chat_id: int):
+        try:
+            return await self._client.get_input_entity(chat_id)
+        except ValueError:
+            await self._client.get_dialogs()
+            return await self._client.get_input_entity(chat_id)
+
     @translate_errors
     async def create_channel(self, title: str, about: str) -> int:
         try:
@@ -396,7 +403,7 @@ class TelegramClient:
                 )
                 break
             try:
-                peers.append(utils.get_input_peer(await self._entity(chat_id)))
+                peers.append(utils.get_input_peer(await self._peer(chat_id)))
             except ValueError as error:
                 logger.warning("Telegram channel {} is unavailable: {}", chat_id, error)
         if not peers:
@@ -429,7 +436,7 @@ class TelegramClient:
     @translate_errors
     async def delete_channel(self, chat_id: int) -> None:
         try:
-            channel = await self._entity(chat_id)
+            channel = await self._peer(chat_id)
             await self._client(functions.channels.DeleteChannelRequest(channel))
         except ValueError, errors.ChannelInvalidError, errors.ChannelPrivateError:
             logger.warning("Telegram channel {} is already gone", chat_id)
@@ -484,7 +491,7 @@ class TelegramClient:
     async def edit_title(self, chat_id: int, title: str) -> None:
         try:
             await self._client(
-                functions.channels.EditTitleRequest(await self._entity(chat_id), title)
+                functions.channels.EditTitleRequest(await self._peer(chat_id), title)
             )
         except errors.ChatNotModifiedError:
             pass
@@ -494,7 +501,7 @@ class TelegramClient:
         try:
             await self._client(
                 functions.messages.EditChatAboutRequest(
-                    await self._entity(chat_id), about
+                    await self._peer(chat_id), about
                 )
             )
         except errors.ChatAboutNotModifiedError:
@@ -505,7 +512,7 @@ class TelegramClient:
         uploaded = await self._client.upload_file(str(path))
         photo = types.InputChatUploadedPhoto(file=uploaded)
         await self._client(
-            functions.channels.EditPhotoRequest(await self._entity(chat_id), photo)
+            functions.channels.EditPhotoRequest(await self._peer(chat_id), photo)
         )
 
     @translate_errors
@@ -513,7 +520,7 @@ class TelegramClient:
         try:
             await self._client(
                 functions.channels.EditPhotoRequest(
-                    await self._entity(chat_id), types.InputChatPhotoEmpty()
+                    await self._peer(chat_id), types.InputChatPhotoEmpty()
                 )
             )
         except errors.ChatNotModifiedError:
@@ -561,7 +568,7 @@ class TelegramClient:
                 attributes.append(types.DocumentAttributeAnimated())
         handle = await self.upload(path, progress)
         message = await self._client.send_file(
-            await self._entity(chat_id),
+            await self._peer(chat_id),
             handle,
             caption=caption,
             force_document=as_file,
@@ -622,7 +629,7 @@ class TelegramClient:
     @translate_errors
     async def message_media(self, chat_id: int, message_id: int) -> tuple[object, int]:
         message = await self._client.get_messages(
-            await self._entity(chat_id), ids=message_id
+            await self._peer(chat_id), ids=message_id
         )
         if not message or not message.media:
             raise TelegramMessageGoneError("telegram message with this file is gone")
@@ -677,7 +684,7 @@ class TelegramClient:
     async def delete(self, chat_id: int, message_ids: list[int]) -> None:
         if not message_ids:
             return
-        entity = await self._entity(chat_id)
+        entity = await self._peer(chat_id)
         for start in range(0, len(message_ids), BATCH):
             await self._client.delete_messages(
                 entity, message_ids[start : start + BATCH]

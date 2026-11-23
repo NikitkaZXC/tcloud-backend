@@ -25,7 +25,7 @@ def _folder_client(fake: FakeFolders, premium: bool = False) -> telegram.Telegra
     async def is_premium():
         return premium
 
-    client._entity, client.is_premium = entity, is_premium
+    client._peer, client.is_premium = entity, is_premium
     return client
 
 

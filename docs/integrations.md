@@ -32,7 +32,10 @@ SQLite-файл сессии нельзя открывать из двух пр�
   и упирается в задержку сети. Плюс `cryptg` для быстрого AES.
 - Скачивание: смещение запроса к Telegram должно быть кратно 512 КБ, лишние байты в начале отрезаем — так работает `Range`.
 - Сжатое фото (`send_as=media`) хранится в Telegram в нескольких размерах (`PhotoSize`/`PhotoSizeProgressive`, плюс встроенные `PhotoStrippedSize`/`PhotoCachedSize`), и последний в списке не всегда самый тяжёлый. Telethon в `message.file.size` отдаёт самый тяжёлый размер, а `iter_download` по умолчанию качает последний — из-за этого `Content-Length` не совпадал с телом. Теперь размер при отправке, проверка `file_changed`, скачивание, `Range` и архивы берут один и тот же размер — самый тяжёлый `PhotoSize`/`PhotoSizeProgressive` (`client.photo_size`, `download_location`). У старых записей в `files.size` уже лежит именно он, миграция не нужна.
-- Если `access_hash` канала ещё нет в сессии, список диалогов загружается один раз.
+- Канал адресуется через `get_input_entity` (`TelegramClient._peer`): id и `access_hash` берутся из кеша сессии без
+  запроса к Telegram. `get_entity` в Telethon 1.45 всегда делает `channels.GetChannels`, поэтому полная сущность
+  (`_entity`) нужна только там, где читаются её поля: права в `check_channel` и фото в `photo`. Если `access_hash`
+  канала ещё нет в сессии, список диалогов загружается один раз.
 - Переподключение. Telethon сам пробует восстановить оборванное соединение (`auto_reconnect`, 5 попыток), после
   чего клиент остаётся отключённым навсегда — так API и worker-telegram стояли с `503 telegram_unavailable` до
   перезапуска. Теперь каждый вызов клиента (`translate_errors`) сначала делает `TelegramClient.ensure_connected`: клиент,

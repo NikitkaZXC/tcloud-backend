@@ -69,7 +69,7 @@ class FakeTelethon:
     async def get_messages(self, entity, ids):
         return self.message
 
-    async def get_entity(self, chat_id):
+    async def get_input_entity(self, chat_id):
         return chat_id
 
 
@@ -193,3 +193,26 @@ async def test_channels_used_counts_channels_and_supergroups():
 
     fake.iter_dialogs = iter_dialogs
     assert await _client(fake).channels_used() == 3
+
+
+async def test_peer_comes_from_the_session_cache_and_falls_back_to_dialogs():
+    calls = []
+
+    class Cache:
+        known = False
+
+        async def get_input_entity(self, chat_id):
+            calls.append("input")
+            if not self.known:
+                raise ValueError("unknown")
+            return types.InputPeerChannel(1, 2)
+
+        async def get_dialogs(self):
+            calls.append("dialogs")
+            self.known = True
+
+        async def get_entity(self, chat_id):
+            raise AssertionError("get_entity costs a GetChannels call")
+
+    assert await _client(Cache())._peer(-1001) == types.InputPeerChannel(1, 2)
+    assert calls == ["input", "dialogs", "input"]
