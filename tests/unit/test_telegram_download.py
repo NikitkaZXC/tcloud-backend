@@ -1,10 +1,11 @@
+import asyncio
 from types import SimpleNamespace
 
 import pytest
 from telethon import errors, types
 
 from src.infrastructure.enums import MediaKind
-from src.infrastructure.integrations.telegram import TelegramFloodWaitError
+from src.infrastructure.integrations.telegram import ChannelInfo, TelegramFloodWaitError
 from src.infrastructure.integrations.telegram import client as telegram
 from src.infrastructure.integrations.telegram.client import (
     download_location,
@@ -216,3 +217,45 @@ async def test_peer_comes_from_the_session_cache_and_falls_back_to_dialogs():
 
     assert await _client(Cache())._peer(-1001) == types.InputPeerChannel(1, 2)
     assert calls == ["input", "dialogs", "input"]
+
+
+async def test_channels_read_title_and_photo_from_full_channel_in_parallel():
+    class Full:
+        active = peak = 0
+
+        async def get_input_entity(self, chat_id):
+            if chat_id == -1009:
+                raise ValueError("unknown")
+            return types.InputPeerChannel(-chat_id - 1000000000000, 0)
+
+        async def get_dialogs(self):
+            pass
+
+        async def get_entity(self, chat_id):
+            raise AssertionError("title comes from GetFullChannel")
+
+        async def __call__(self, request):
+            self.active += 1
+            self.peak = max(self.peak, self.active)
+            await asyncio.sleep(0.01)
+            self.active -= 1
+            channel_id = request.channel.channel_id
+            photo = (
+                types.ChatPhotoEmpty()
+                if channel_id % 2
+                else types.ChatPhoto(photo_id=1, dc_id=2)
+            )
+            return SimpleNamespace(
+                full_chat=SimpleNamespace(id=channel_id, about=f"about {channel_id}"),
+                chats=[
+                    SimpleNamespace(id=999, title="other", photo=None),
+                    SimpleNamespace(id=channel_id, title=f"t{channel_id}", photo=photo),
+                ],
+            )
+
+    fake = Full()
+    chat_ids = [-1000000000000 - index for index in range(1, 13)] + [-1009]
+    found = await _client(fake).channels(chat_ids)
+    assert len(found) == 12 and fake.peak == telegram.CHANNELS_PARALLEL
+    assert found[-1000000000002] == ChannelInfo("t2", "about 2", True)
+    assert found[-1000000000003] == ChannelInfo("t3", "about 3", False)

@@ -116,7 +116,8 @@ flowchart TD
 
 Название, описание и «есть фото» каждого канала (`StorageService.channel_infos`) берутся из Redis
 `tcloud:channel:{chat_id}` (JSON, TTL `REDIS_CACHE_TTL`, 180 с); в Telegram (`GetFullChannel`, бывало до 10 с) идут только
-каналы без записи, и ответ сразу кладётся в кеш. Так `GET /api/storages`, `GET /api/storages/{id}` и поиск (имена
+каналы без записи — одним `GetFullChannel` на канал (название и фото берутся из его `chats`, отдельного
+`GetChannels` нет), до 5 каналов параллельно (`CHANNELS_PARALLEL`), — и ответ сразу кладётся в кеш. Так `GET /api/storages`, `GET /api/storages/{id}` и поиск (имена
 хранилищ в результатах) не ждут Telegram на каждом запросе. Свои изменения видны сразу: `PATCH`, `PUT`/`DELETE …/photo`
 и удаление хранилища удаляют ключ (вместе с аватаркой `channel_photo:{chat_id}`). Переименование руками в Telegram или удаление канала там видно не позже чем через
 3 мин. Telegram недоступен (сеть, флуд, сессия) — warning в лог, закешированные каналы отдаются как есть, остальные —

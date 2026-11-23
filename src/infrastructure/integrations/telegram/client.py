@@ -51,6 +51,7 @@ RECONNECT_MAX = 60.0
 CONNECT_TIMEOUT = 15.0
 PING_TTL = 5.0
 PING_TIMEOUT = 5.0
+CHANNELS_PARALLEL = 5
 
 CHANNEL_ACTIONS = (
     types.MessageActionChatEditTitle,
@@ -469,23 +470,30 @@ class TelegramClient:
 
     @translate_errors
     async def channels(self, chat_ids: list[int]) -> dict[int, ChannelInfo]:
-        found = {}
-        for chat_id in chat_ids:
-            try:
-                channel = await self._entity(chat_id)
-                full = await self._client(
-                    functions.channels.GetFullChannelRequest(channel)
-                )
-            except errors.FloodWaitError:
-                raise
-            except (ValueError, errors.RPCError) as error:
-                logger.warning("Telegram channel {} is unavailable: {}", chat_id, error)
-                continue
+        limit = asyncio.Semaphore(CHANNELS_PARALLEL)
+
+        async def one(chat_id: int) -> tuple[int, ChannelInfo] | None:
+            async with limit:
+                try:
+                    full = await self._client(
+                        functions.channels.GetFullChannelRequest(
+                            await self._peer(chat_id)
+                        )
+                    )
+                except errors.FloodWaitError:
+                    raise
+                except (ValueError, errors.RPCError) as error:
+                    logger.warning(
+                        "Telegram channel {} is unavailable: {}", chat_id, error
+                    )
+                    return None
+            channel = next(chat for chat in full.chats if chat.id == full.full_chat.id)
             has_photo = not isinstance(channel.photo, types.ChatPhotoEmpty)
-            found[chat_id] = ChannelInfo(
+            return chat_id, ChannelInfo(
                 channel.title, full.full_chat.about or "", has_photo
             )
-        return found
+
+        return dict(item for item in await asyncio.gather(*map(one, chat_ids)) if item)
 
     @translate_errors
     async def edit_title(self, chat_id: int, title: str) -> None:
