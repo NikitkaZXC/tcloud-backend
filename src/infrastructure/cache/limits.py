@@ -31,15 +31,11 @@ return {count, math.ceil(retry / 1000)}
 class RateLimitStore:
     def __init__(self, redis: Redis) -> None:
         self._redis = redis
+        self._script = redis.register_script(RATE_LIMIT_SCRIPT)
         self._prefix = f"{settings.redis.PREFIX}:{settings.rate_limit.PREFIX}"
 
     async def hit(self, key: str, limit: int, window: int) -> tuple[int, int]:
-        count, retry_after = await self._redis.eval(
-            RATE_LIMIT_SCRIPT,
-            1,
-            f"{self._prefix}:{key}",
-            window * 1000,
-            limit,
-            token_hex(8),
+        count, retry_after = await self._script(
+            keys=[f"{self._prefix}:{key}"], args=[window * 1000, limit, token_hex(8)]
         )
         return int(count), int(retry_after)

@@ -133,6 +133,13 @@ class TaskStore:
     def __init__(self, redis: Redis) -> None:
         self._redis = redis
         self._prefix = settings.redis.PREFIX
+        self._scripts: dict[str, object] = {}
+
+    async def _run(self, source: str, keys: list[str], *args):
+        script = self._scripts.get(source)
+        if script is None:
+            script = self._scripts[source] = self._redis.register_script(source)
+        return await script(keys=keys, args=args)
 
     def _key(self, *parts: object) -> str:
         return ":".join((self._prefix, *(str(part) for part in parts)))
@@ -226,11 +233,9 @@ class TaskStore:
         self, task_id: UUID, queue: str, generation: int, redelivered: bool
     ) -> bool:
         return bool(
-            await self._redis.eval(
+            await self._run(
                 CLAIM,
-                2,
-                self._key("task", task_id),
-                self._key("waiting", queue),
+                [self._key("task", task_id), self._key("waiting", queue)],
                 queue,
                 generation,
                 int(redelivered),
@@ -241,13 +246,11 @@ class TaskStore:
     async def requeue(
         self, task_id: UUID, priority: str, level: int
     ) -> tuple[int, str] | None:
-        result = await self._redis.eval(
-            REQUEUE, 1, self._key("task", task_id), priority, level
-        )
+        result = await self._run(REQUEUE, [self._key("task", task_id)], priority, level)
         return (int(result[0]), result[1]) if result else None
 
     async def cancel(self, task_id: UUID) -> str:
-        return await self._redis.eval(CANCEL, 1, self._key("task", task_id))
+        return await self._run(CANCEL, [self._key("task", task_id)])
 
     async def cancel_requested(self, task_id: UUID | str) -> bool:
         return await self._redis.hget(self._key("task", task_id), "cancel") == "true"
@@ -272,16 +275,16 @@ class TaskStore:
         return False
 
     async def unlock_path(self, path: str, task_id: UUID) -> None:
-        await self._redis.eval(UNLOCK, 1, self._key("path", path), str(task_id))
+        await self._run(UNLOCK, [self._key("path", path)], str(task_id))
 
     async def hold_job(self, name: str, owner: str) -> bool:
         key = self._key("job", name)
         if await self._redis.set(key, owner, nx=True, ex=JOB_TTL):
             return True
-        return bool(await self._redis.eval(RENEW, 1, key, owner, JOB_TTL))
+        return bool(await self._run(RENEW, [key], owner, JOB_TTL))
 
     async def release_job(self, name: str, owner: str) -> None:
-        await self._redis.eval(UNLOCK, 1, self._key("job", name), owner)
+        await self._run(UNLOCK, [self._key("job", name)], owner)
 
     async def touch(self, task_id: UUID) -> None:
         await self._redis.hset(self._key("task", task_id), "beat_at", time.time())
@@ -289,10 +292,9 @@ class TaskStore:
     async def take_disk_slot(self, task_id: UUID) -> bool:
         now = time.time()
         return bool(
-            await self._redis.eval(
+            await self._run(
                 DISK_SLOT,
-                1,
-                self._key("disk"),
+                [self._key("disk")],
                 str(task_id),
                 settings.upload.MAX_FILES_ON_DISK,
                 now - settings.upload.LOCK_TTL,
@@ -399,13 +401,14 @@ class TaskStore:
 
     async def keep_thumb(self, file_id: UUID, message_id: int, data: bytes) -> bool:
         return bool(
-            await self._redis.eval(
+            await self._run(
                 KEEP_THUMB,
-                4,
-                self._key("thumbs"),
-                self._key("thumbs", "size"),
-                self._key("thumbs", "bytes"),
-                self._key("thumb", file_id, message_id),
+                [
+                    self._key("thumbs"),
+                    self._key("thumbs", "size"),
+                    self._key("thumbs", "bytes"),
+                    self._key("thumb", file_id, message_id),
+                ],
                 base64.b64encode(data).decode(),
                 time.time(),
                 settings.redis.CACHE_TTL,

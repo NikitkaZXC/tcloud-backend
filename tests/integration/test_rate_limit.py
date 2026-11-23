@@ -42,3 +42,12 @@ async def test_replaces_key_of_another_type(redis, store):
 async def test_is_atomic(store):
     results = await asyncio.gather(*(store.hit("scope:ip:4", 5, 60) for _ in range(20)))
     assert sum(count <= 5 for count, _ in results) == 5
+
+
+async def test_rate_limit_runs_by_sha(redis):
+    store = RateLimitStore(redis)
+    await redis.config_resetstat()
+    for _ in range(3):
+        await store.hit("sha:ip:1", 10, 60)
+    stats = await redis.info("commandstats")
+    assert stats["cmdstat_evalsha"]["calls"] == 3 and "cmdstat_eval" not in stats

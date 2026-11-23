@@ -331,3 +331,15 @@ async def test_workers_come_from_the_registry_not_a_keyspace_scan(
         await redis.zscore("tcloud:workers", "tcloud:worker:uploads.download:old")
         is None
     )
+
+
+async def test_lua_runs_by_sha(store, redis):
+    await redis.config_resetstat()
+    task_id = uuid7()
+    await store.create({"id": task_id, "status": "queued", "generation": 0})
+    for _ in range(3):
+        await store.cancel(task_id)
+        await store.unlock_path("a", task_id)
+    stats = await redis.info("commandstats")
+    assert stats["cmdstat_evalsha"]["calls"] >= 6
+    assert "cmdstat_eval" not in stats

@@ -8,6 +8,9 @@ Redis хранит всё быстрое и временное: задачи з�
 Код: `src/infrastructure/cache/tasks.py` (`TaskStore`, Lua `CLAIM`/`REQUEUE`/`CANCEL`/`DISK_SLOT`/`UNLOCK`/`RENEW`),
 `cache/tokens.py` (`TokenBlacklist`), `cache/limits.py` (`RateLimitStore`), `background/heartbeat.py` (`Heartbeat`).
 Клиент создаёт `cache/factory.py` (`create_redis`, `create_sync_redis` для потока heartbeat).
+Lua-скрипты регистрируются один раз (`register_script`, `TaskStore._run`, `RateLimitStore`) и вызываются по SHA
+(`EVALSHA`): тело скрипта не уходит в Redis с каждым вызовом; после перезапуска Redis (`NOSCRIPT`) redis-py сам
+загружает его заново.
 
 ```mermaid
 flowchart LR
