@@ -12,3 +12,4 @@ class RedisSettings(BaseSettings):
     PASSWORD: SecretStr = SecretStr("")
     DB: int = 0
     PREFIX: str = "tcloud"
+    CACHE_TTL: int = 180

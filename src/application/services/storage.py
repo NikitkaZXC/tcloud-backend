@@ -26,6 +26,7 @@ from src.application.services.access import (
     require_admin,
 )
 from src.application.services.temp import temp_path, write_body
+from src.config import settings
 from src.infrastructure.background import AppRuntime
 from src.infrastructure.database.models import StorageDB
 from src.infrastructure.database.repositories import (
@@ -41,7 +42,6 @@ from src.utilities.errors import TCloudError
 TELEGRAM_PHOTO_SUFFIXES = {"image/jpeg": ".jpg", "image/png": ".png"}
 CHAT_FOLDER = "TCloud"
 NO_STATS = (0, 0, 0, 0)
-CHANNEL_TTL = 600
 
 
 async def root_settings(session: AsyncSession) -> SettingsServiceRead:
@@ -71,7 +71,8 @@ class StorageService:
             logger.warning("Telegram channel info is unavailable: {}", error.message)
             return cached
         await self._runtime.store.keep_channel_infos(
-            {chat_id: asdict(info) for chat_id, info in fresh.items()}, CHANNEL_TTL
+            {chat_id: asdict(info) for chat_id, info in fresh.items()},
+            settings.redis.CACHE_TTL,
         )
         return {**cached, **fresh}
 

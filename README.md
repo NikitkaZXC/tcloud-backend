@@ -91,6 +91,7 @@ curl -H "X-API-Key: $TCLOUD_KEY" --data-binary @photo.jpg \
 | `POSTGRES_HOST`, `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD` | `tcloud` для БД | PostgreSQL |
 | `RABBITMQ_HOST`, `RABBITMQ_USER`, `RABBITMQ_PASSWORD` | `rabbitmq`, `tcloud` | брокер |
 | `REDIS_HOST`, `REDIS_PASSWORD`, `REDIS_PREFIX` | `redis`, пусто, `tcloud` | Redis ([docs/redis.md](docs/redis.md)) |
+| `REDIS_CACHE_TTL` | `180` | срок кешей сведений из Telegram в Redis, с (каналы, аккаунт, аватарки, превью; docs/redis.md) |
 | `CLAMAV_HOST`, `CLAMAV_PORT`, `CLAMAV_TIMEOUT` | `clamav`, `3310`, `900` | антивирус |
 | `TELEGRAM_API_ID`, `TELEGRAM_API_HASH` | — | приложение на my.telegram.org |
 | `TELEGRAM_SESSION`, `TELEGRAM_UPLOAD_SESSION`, `TELEGRAM_DOWNLOAD_SESSION` | `data/session/tcloud*` (compose — `/data/session/...`) | файлы сессий `api`, `upload`, `download` |

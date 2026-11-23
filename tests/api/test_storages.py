@@ -311,7 +311,7 @@ async def test_channel_info_is_cached(client, telegram, storage, redis, monkeypa
         assert (await client.get(f"/storages/{storage['id']}")).status_code == 200
     assert calls == [[storage["telegram"]["chat_id"]]]
     ttl = await redis.ttl(f"tcloud:channel:{storage['telegram']['chat_id']}")
-    assert 0 < ttl <= 600
+    assert 0 < ttl <= 180
     await client.patch(f"/storages/{storage['id']}", json={"name": "Новое"})
     assert (await client.get("/storages")).json()[0]["name"] == "Новое"
 
