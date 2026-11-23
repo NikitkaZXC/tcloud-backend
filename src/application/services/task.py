@@ -26,6 +26,27 @@ from src.infrastructure.cache import TaskStore
 from src.infrastructure.database.repositories import FileRepository
 from src.infrastructure.enums import TaskStatus, TaskStep
 
+VIEW_FIELDS = (
+    "batch_id",
+    "user_id",
+    "status",
+    "stage",
+    "step",
+    "priority",
+    "path",
+    "bytes_done",
+    "bytes_total",
+    "stage_started",
+    "waiting",
+    "cancel",
+    "error",
+    "warnings",
+    "file_id",
+    "archive",
+    "created_at",
+    "updated_at",
+)
+
 
 class TaskService:
     def __init__(self, session: AsyncSession, store: TaskStore) -> None:
@@ -135,7 +156,10 @@ class TaskService:
         return archive
 
     async def get(self, task_id: UUID, actor: Actor | None) -> TaskServiceRead:
-        return (await self.render_many([await self.get_raw(task_id, actor)]))[0]
+        task = await self._store.get(task_id, VIEW_FIELDS)
+        if not task or not self.visible(task, actor):
+            raise TaskNotFoundError("task not found")
+        return (await self.render_many([task]))[0]
 
     async def get_batch(self, actor: Actor, batch_id: UUID) -> TaskListServiceRead:
         return await self.get_many(actor, await self._store.batch(batch_id))
@@ -147,7 +171,9 @@ class TaskService:
         )
 
     async def get_many(self, actor: Actor, task_ids: list) -> TaskListServiceRead:
-        tasks = await self._store.get_many([str(task_id) for task_id in task_ids])
+        tasks = await self._store.get_many(
+            [str(task_id) for task_id in task_ids], VIEW_FIELDS
+        )
         views = await self.render_many(
             [task for task in tasks if self.visible(task, actor)]
         )

@@ -58,6 +58,7 @@ from src.utilities.parsers import split_file
 TELEGRAM_PHOTO_SUFFIXES = {"image/jpeg": ".jpg", "image/png": ".png"}
 DISK_SLOT_POLL = 1.0
 CANCEL_POLL = 1.0
+PROGRESS_FIELDS = ("cancel", "params")
 PREVIEW_KINDS = {MediaKind.PHOTO, MediaKind.ANIMATION, MediaKind.VIDEO}
 
 
@@ -484,7 +485,9 @@ class UploadPipeline:
                     FileDB(id=file_id, storage_id=storage_id, **values)
                 )
             await session.commit()
-        await self._store.update(task["id"], committed=True)
+        await self._store.update(
+            task["id"], committed=True, prepared={**prepared, "thumbnail": None}
+        )
         if (
             existing
             and existing.id == file_id
@@ -610,7 +613,7 @@ class UploadPipeline:
 
     async def _save_progress(self, task_id: str, values: dict) -> None:
         await self._store.update(task_id, **values)
-        task = await self._store.get(task_id)
+        task = await self._store.get(task_id, PROGRESS_FIELDS)
         if task and task.get("cancel"):
             self._cancelled.add(task_id)
         if task:

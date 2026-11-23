@@ -96,8 +96,13 @@ flowchart LR
 | `error`, `warnings`, `file_id` | итог |
 | `claimed` | очередь, в которой задачу захватил воркер (`CLAIM`) |
 | `cancel` | флаг отмены во время работы |
-| `prepared` | результат проверки: `send_path`, `thumb`, `media`, `sha256`, `as_file`, `warnings`, у шифрования `encryption_header`, `plain_size`, `thumbnail` |
+| `prepared` | результат проверки: `send_path`, `thumb`, `media`, `sha256`, `as_file`, `warnings`, у шифрования `encryption_header`, `plain_size`, `thumbnail` (base64 превью до ~27 КБ; после записи в `files` вместе с `committed` заменяется на `null`) |
 | `sent`, `committed` | отправлено в Telegram / записано в `files` — защита от дублей при повторной доставке |
 | `beat_at` | heartbeat задачи для `TaskSweeper` |
+
+Чтение полей: `GET /api/tasks/{id}`, `GET /api/tasks?ids=`, пачки и вебхуки (`TaskService.get`/`get_many`) читают
+только поля для ответа (`VIEW_FIELDS` в `services/task.py`, `HMGET` конвейером) — без `prepared`, `params`, `sent`;
+тик прогресса воркера (`UploadPipeline._save_progress`) читает только `cancel` и `params` (нужен `callback_url`).
+Целиком (`HGETALL`) задачу читают только воркер на своих шагах, отмена и `TaskSweeper`.
 
 Через `UPLOAD_TASK_TTL` задача пропадает, `GET /api/tasks/{id}` отвечает `404`; сам файл остаётся в `files`.

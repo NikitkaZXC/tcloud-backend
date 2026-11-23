@@ -172,17 +172,34 @@ class TaskStore:
             pipe.expire(key, settings.upload.TASK_TTL)
             await pipe.execute()
 
-    async def get(self, task_id: UUID) -> dict | None:
-        raw = await self._redis.hgetall(self._key("task", task_id))
-        return {name: json.loads(value) for name, value in raw.items()} or None
+    async def get(
+        self, task_id: UUID | str, fields: tuple[str, ...] | None = None
+    ) -> dict | None:
+        found = await self.get_many([str(task_id)], fields)
+        return found[0] if found else None
 
-    async def get_many(self, task_ids: list[str]) -> list[dict]:
+    async def get_many(
+        self, task_ids: list[str], fields: tuple[str, ...] | None = None
+    ) -> list[dict]:
         async with self._redis.pipeline(transaction=False) as pipe:
             for task_id in task_ids:
-                pipe.hgetall(self._key("task", task_id))
+                key = self._key("task", task_id)
+                if fields:
+                    pipe.hmget(key, ["id", *fields])
+                else:
+                    pipe.hgetall(key)
             rows = await pipe.execute()
+        if fields:
+            rows = [
+                dict(zip(["id", *fields], row)) if row[0] is not None else {}
+                for row in rows
+            ]
         return [
-            {name: json.loads(value) for name, value in row.items()}
+            {
+                name: json.loads(value)
+                for name, value in row.items()
+                if value is not None
+            }
             for row in rows
             if row
         ]

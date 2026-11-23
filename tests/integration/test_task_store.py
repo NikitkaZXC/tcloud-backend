@@ -285,3 +285,19 @@ async def test_thumb_cache_ttl_and_memory_cap(store, redis, monkeypatch):
     assert not await store.keep_thumb(files[1], 2, bytes(800_000))
     monkeypatch.setattr(settings.redis, "THUMB_CACHE_MB", 0)
     assert not await store.keep_thumb(files[1], 3, b"x")
+
+
+async def test_get_reads_only_asked_fields(store):
+    task_id = uuid7()
+    await store.create(
+        {"id": task_id, "status": "running", "prepared": {"thumbnail": "x" * 1000}}
+    )
+    assert await store.get(task_id, ("status", "cancel")) == {
+        "id": str(task_id),
+        "status": "running",
+    }
+    assert (await store.get(task_id))["prepared"]
+    assert await store.get(uuid7(), ("status",)) is None
+    assert await store.get_many([str(uuid7()), str(task_id)], ("status",)) == [
+        {"id": str(task_id), "status": "running"}
+    ]

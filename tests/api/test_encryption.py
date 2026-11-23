@@ -1,6 +1,7 @@
 import base64
 import hashlib
 import io
+import json
 import os
 import random
 import string
@@ -176,3 +177,12 @@ async def test_archive_decrypts_files_and_skips_damaged(client, telegram, storag
         survivor = (names - {"plain.txt"}).pop()
         assert archive.read(survivor) == TEXT
     assert any("not archived" in warning for warning in task["warnings"])
+
+
+async def test_task_forgets_the_preview_after_commit(client, storage, redis):
+    task = await upload(client, path(storage, "a.jpg"), make_image("JPEG", (400, 300)))
+    stored = await redis.hgetall(f"tcloud:task:{task['id']}")
+    assert json.loads(stored["prepared"])["thumbnail"] is None
+    assert json.loads(stored["committed"]) is True
+    response = await client.get(f"/files/{task['file']['uuid']}/thumb")
+    assert response.status_code == 200 and response.content
