@@ -57,6 +57,7 @@ class InterfaceSettingsServiceRead(SettingsGroup):
     sort_by: Literal["name", "modified", "uploaded", "type", "size"] = "name"
     sort_order: Literal["asc", "desc"] = "asc"
     folders_first: bool = True
+    page_size: Literal[20, 50, 100, 200] = 20
     animations: bool = True
     confirm_delete: bool = True
     start_page: Literal["dashboard", "storages", "tasks"] = "dashboard"

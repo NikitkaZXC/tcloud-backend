@@ -198,3 +198,19 @@ def test_from_stored_drops_removed_fx_silently():
         "interface": {"fx_sounds": True}
     }
     assert dropped == []
+
+
+def test_page_size_is_strict_and_read_tolerantly():
+    assert (
+        SettingsServiceRead.model_validate(
+            {"interface": {"page_size": 100}}
+        ).interface.page_size
+        == 100
+    )
+    with pytest.raises(ValidationError):
+        SettingsServiceRead.model_validate({"interface": {"page_size": 30}})
+    value, dropped = SettingsServiceRead.from_stored(
+        {"interface": {"page_size": 30, "folders_first": False}}
+    )
+    assert value.interface.page_size == 20 and not value.interface.folders_first
+    assert dropped == ["interface.page_size"]

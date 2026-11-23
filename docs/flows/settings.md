@@ -108,6 +108,7 @@ Content-Type: application/json
     "sort_by": "name",
     "sort_order": "asc",
     "folders_first": true,
+    "page_size": 20,
     "animations": true,
     "confirm_delete": true,
     "start_page": "dashboard",
@@ -153,6 +154,7 @@ Content-Type: application/json
 | `sort_by` | `name`, `modified`, `uploaded`, `type`, `size` | `name` | сортировка в папке |
 | `sort_order` | `asc`, `desc` | `asc` | направление сортировки |
 | `folders_first` | `true`, `false` | `true` | папки перед файлами |
+| `page_size` | `20`, `50`, `100`, `200` | `20` | сколько элементов фронтенд просит за страницу листинга папки (`limit` в `GET /api/folders`, flows/folders-and-files.md); сервер сам его не подставляет — без `limit` берётся `20` |
 | `animations` | `true`, `false` | `true` | анимации интерфейса |
 | `confirm_delete` | `true`, `false` | `true` | спрашивать перед удалением |
 | `start_page` | `dashboard`, `storages`, `tasks` | `dashboard` | страница после входа |
