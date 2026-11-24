@@ -124,6 +124,22 @@ end
 return total
 """
 
+USAGE = """
+local dead = redis.call('ZRANGEBYSCORE', KEYS[2], '-inf', ARGV[1])
+for _, owner in ipairs(dead) do redis.call('HDEL', KEYS[1], owner) end
+redis.call('ZREMRANGEBYSCORE', KEYS[2], '-inf', ARGV[1])
+local found = {}
+local rows = redis.call('HGETALL', KEYS[1])
+for i = 1, #rows, 2 do
+    local user, size = string.match(rows[i + 1], '^(.*):(%d+)$')
+    if user == ARGV[2] then
+        table.insert(found, rows[i])
+        table.insert(found, size)
+    end
+end
+return found
+"""
+
 KEEP_THUMB = """
 local now, ttl, cap = tonumber(ARGV[2]), tonumber(ARGV[3]), tonumber(ARGV[4])
 local size = string.len(ARGV[1])
@@ -416,6 +432,13 @@ class TaskStore:
             * (2 if session["task"]["params"]["encrypt"] else 1)
             for session in sessions
         )
+        found = await self._run(
+            USAGE,
+            [self._key("disk", "usage"), self._key("disk", "usage", "exp")],
+            now,
+            owner,
+        )
+        usage = {task: int(size) for task, size in zip(found[::2], found[1::2])}
         tasks = set(await self._redis.zrange(self._key("user_tasks", owner), 0, -1))
         live = set(
             await self._redis.zrangebyscore(
@@ -425,8 +448,21 @@ class TaskStore:
         mine = sorted(tasks & live)
         if mine:
             values = await self._redis.hmget(self._key("disk", "reserved"), mine)
-            held += sum(int(value) for value in values if value)
-        return len(sessions), held
+            for task, value in zip(mine, values):
+                usage[task] = max(usage.get(task, 0), int(value or 0))
+        return len(sessions), held + sum(usage.values())
+
+    async def use_disk(
+        self, owner: UUID | str, user_id: UUID | str | None, size: int, ttl: float
+    ) -> None:
+        if not user_id:
+            return
+        async with self._redis.pipeline(transaction=True) as pipe:
+            pipe.hset(self._key("disk", "usage"), str(owner), f"{user_id}:{size}")
+            pipe.zadd(
+                self._key("disk", "usage", "exp"), {str(owner): time.time() + ttl}
+            )
+            await pipe.execute()
 
     async def reserve_disk(self, owner: str, size: int, ttl: float) -> None:
         async with self._redis.pipeline(transaction=True) as pipe:
@@ -624,7 +660,11 @@ class TaskStore:
         await self._redis.zadd(self._key("active"), {str(task_id): time.time()})
 
     async def deactivate(self, task_id: UUID | str) -> None:
-        await self._redis.zrem(self._key("active"), str(task_id))
+        async with self._redis.pipeline(transaction=True) as pipe:
+            pipe.zrem(self._key("active"), str(task_id))
+            pipe.hdel(self._key("disk", "usage"), str(task_id))
+            pipe.zrem(self._key("disk", "usage", "exp"), str(task_id))
+            await pipe.execute()
         await self.drop_disk(task_id)
 
     async def active_ids(self) -> list[str]:

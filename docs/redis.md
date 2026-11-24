@@ -37,6 +37,7 @@ flowchart LR
         active[("active<br/>zset")]
         disk[("disk<br/>zset")]
         reserved[("disk:reserved hash<br/>disk:reserved:exp zset")]
+        usage[("disk:usage hash<br/>disk:usage:exp zset")]
         waiting[("waiting:{queue}<br/>zset")]
         archives[("archives<br/>zset")]
         worker[("worker:{queue}:{host}")]
@@ -53,10 +54,10 @@ flowchart LR
     end
     acs --> account
     ss --> account
-    us --> task & batch & owned & path & active & disk & reserved & waiting & session & job
+    us --> task & batch & owned & path & active & disk & reserved & usage & waiting & session & job
     ts --> task & owned & waiting
-    sw --> active & task & archives & path & disk & reserved & waiting & session
-    pl --> task & waiting & disk & reserved & path & active & archives & activity
+    sw --> active & task & archives & path & disk & reserved & usage & waiting & session
+    pl --> task & waiting & disk & reserved & usage & path & active & archives & activity
     bf --> job & activity & reserved
     hb --> worker & workers
     fs --> activity & thumb
@@ -71,7 +72,7 @@ flowchart LR
 |---|---|---|---|---|
 | `tcloud:task:{id}` | hash | задача: каждое поле — JSON, пишется отдельно (`HSET` по полям), прогресс не затирает статус | `TaskStore.create/update/get/get_many`; API и воркеры | `UPLOAD_TASK_TTL` (7 дней), продлевается на каждом `update` |
 | `tcloud:batch:{id}` | list | id задач пачки по порядку (`GET /api/tasks?batch_id=`) | `TaskStore.create`, `batch` | `UPLOAD_TASK_TTL` |
-| `tcloud:user_tasks:{user_id}` | zset | id задач пользователя, score — время создания; `GET /api/tasks/counts` чистит старше TTL и пропавшие | `TaskStore.create`, `statuses`, `user_disk` (какие записи `disk:reserved` — этого пользователя) | `UPLOAD_TASK_TTL` с последней задачи |
+| `tcloud:user_tasks:{user_id}` | zset | id задач пользователя, score — время создания; `GET /api/tasks/counts` чистит старше TTL и пропавшие | `TaskStore.create`, `statuses`, `user_disk` (какие записи `disk:reserved` — этого пользователя: ссылка без `size`, пока скачивается) | `UPLOAD_TASK_TTL` с последней задачи |
 | `tcloud:path:{path}` | string | блокировка пути, значение — id задачи; `SET NX`, снимает только владелец (Lua `UNLOCK`); `SCAN path:tcloud/{storage}/*` — «в хранилище идут загрузки» (`409 storage_busy`) | `lock_path`, `unlock_path`, `path_locked`, `storage_busy` | `UPLOAD_LOCK_TTL` (24 ч, страховка) |
 | `tcloud:active` | zset | активные задачи, score — время старта; основа `TaskSweeper` и лимита `UPLOAD_MAX_ACTIVE_TASKS` | `activate`, `deactivate`, `active_ids`, `count_active` | — (записи старше `UPLOAD_LOCK_TTL` выбрасывает `count_active`) |
 | `tcloud:disk` | zset | задачи, чей файл сейчас в `tmp` (`UPLOAD_MAX_FILES_ON_DISK`), score — время захвата; проверка и захват — Lua `DISK_SLOT` | `take_disk_slot`, `release` | — (зависшие старше `UPLOAD_LOCK_TTL` выбрасываются) |
@@ -87,6 +88,8 @@ flowchart LR
 | `tcloud:account:premium`, `tcloud:account:channels` | string | JSON: Premium API-аккаунта (`true`/`false`, от него размер части большого файла) и `channels_used` (flows/storages.md, «Сколько каналов ещё можно создать») | `TaskStore.cached`/`keep`; `AccountService.is_premium`, `channels_used`, `UploadPipeline._spans` (worker-telegram, только для файлов > 2000 МиБ); `forget_account` — создание/удаление хранилища, `TELEGRAM_CHATS`, вход в API-сессию, события Telegram | `REDIS_CACHE_TTL` (180 с) |
 | `tcloud:disk:reserved` | hash | журнал резервов места: владелец (id задачи, у превью — id файла) → байты, которые ещё будут записаны в `tmp` (flows/uploads.md, «Место на диске») | `TaskStore.reserve_disk` (`DiskBudget.reserve`/`hold`/`park`, держатель — раз в секунду), `drop_disk` (`Reservation.release`, `deactivate`), `reserved_bytes` (Lua `RESERVED`: сумма живых без `exclude`, просроченные стирает) | — (срок записи — в `disk:reserved:exp`) |
 | `tcloud:disk:reserved:exp` | zset | владелец → срок записи (unix): живой держатель — now + 30 с (`RESERVATION_TTL`), продлевается раз в секунду; запись между этапами — now + `UPLOAD_LOCK_TTL` | те же | — |
+| `tcloud:disk:usage` | hash | квота пользователя: владелец (id задачи, у готового архива `archive:{id}`) → `{user_id}:{байты}` — сколько задача занимает или займёт в `tmp` целиком (тело ×2 при шифровании, архив — оценка, потом размер готового); в отличие от `disk:reserved` не уменьшается по мере записи, поэтому в общую проверку места не входит | `TaskStore.use_disk` (`POST /api/uploads` и `from-url` с `size` под `job:disk`, последний кусок сессии, архив при постановке и готовый, воркер после скачивания по ссылке), `deactivate` (каждый `release`) стирает, `user_disk` (Lua `USAGE`: записи пользователя, просроченные стирает) | — (срок — в `disk:usage:exp`) |
+| `tcloud:disk:usage:exp` | zset | владелец → срок записи (unix): задача — now + `UPLOAD_LOCK_TTL` (продлевается heartbeat'ом и `TaskSweeper`), готовый архив — его `expires_at` | те же | — |
 | `tcloud:job:{name}` | string | одна фоновая задача на имя (`job:previews` — дозаполнение превью; `job:upload:{session_id}` — приём куска сессии, `TaskStore.holding`, flows/uploads.md «частями»; `job:disk` — проверка места + запись резерва, `TaskStore.disk_lock`, TTL 5 с без продления, значение — случайный владелец), значение — id задачи Celery; `SET NX`, свой ключ продлевается (Lua `RENEW`), снимает только владелец (Lua `UNLOCK`) | `TaskStore.hold_job`, `release_job`; `PreviewBackfill` | 120 с (`JOB_TTL`), продлевается каждые 30 с |
 | `tcloud:upload_session:{id}` | string | JSON сессии загрузки частями: `task` (будущая задача целиком, с `params.file`), `offset` (принято байт), `started_at` (unix, создание), `expires_at` (unix, `min(последний кусок + UPLOAD_SESSION_IDLE_TTL, started_at + UPLOAD_SESSION_TTL)`) | `TaskStore.save_session` (создание и каждый кусок; заодно продлевает `path:{path}` на `UPLOAD_LOCK_TTL` и score в `disk`), `get_session`, `session_bytes`, `user_disk` (квота пользователя), `drop_session` (последний кусок, `DELETE`, уборка, блокировка и удаление пользователя) | 2 × `UPLOAD_SESSION_TTL` (страховка; срок — `expires_at`) |
 | `tcloud:upload_sessions` | zset | id сессий → `expires_at`; `TaskSweeper.clean_tmp` не трогает файлы живых и удаляет просроченные | `save_session`, `sessions`, `session_bytes` (сумма резерва живых сессий для проверки диска), `drop_session` | — |

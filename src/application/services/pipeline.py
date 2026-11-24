@@ -224,9 +224,11 @@ class UploadPipeline:
         except BaseException:
             await reservation.release()
             raise
-        await reservation.release(
-            Path(params["file"]).stat().st_size if params.get("encrypt") else 0
+        size = Path(params["file"]).stat().st_size
+        await self._store.use_disk(
+            task["id"], task.get("user_id"), size * factor, settings.upload.LOCK_TTL
         )
+        await reservation.release(size if params.get("encrypt") else 0)
         await self._handoff(task, UploadQueue.PREPARE, TaskStage.SCANNING, None)
 
     async def _disk_slot(self, task: dict) -> None:
@@ -802,6 +804,12 @@ class UploadPipeline:
                 "size": archive.stat().st_size,
                 "expires_at": datetime.fromtimestamp(until, UTC),
             },
+        )
+        await self._store.use_disk(
+            f"archive:{task['id']}",
+            task.get("user_id"),
+            archive.stat().st_size,
+            until - time.time(),
         )
         await self._close(
             task,

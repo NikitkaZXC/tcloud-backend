@@ -116,8 +116,9 @@ FastAPI читает JSON-тело целиком ещё до зависимос
 кусков, большие `size`). Поэтому, кроме общего `UPLOAD_MIN_FREE_DISK_MB`, у каждого пользователя, кроме root, есть:
 
 - `UPLOAD_USER_MAX_SESSIONS` (10) открытых сессий частями → `429 too_many_upload_sessions`;
-- `UPLOAD_USER_DISK_QUOTA_MB` (51200) байт во временных файлах (живые сессии целиком + резервы его задач в
-  `disk:reserved`) → `507 temp_quota_exceeded` (как `insufficient_storage`: место кончилось, но своё);
+- `UPLOAD_USER_DISK_QUOTA_MB` (51200) байт во временных файлах (живые сессии целиком + полный размер его задач до
+  конца, `disk:usage`, включая готовые архивы до истечения) → `507 temp_quota_exceeded` (как `insufficient_storage`:
+  место кончилось, но своё); архивы тоже проверяются;
 - короткий срок брошенной сессии: `UPLOAD_SESSION_IDLE_TTL` (1 ч) без кусков, `UPLOAD_SESSION_TTL` (24 ч) максимум;
 - root и admin отменяют сессии тех, кем управляют (`DELETE /api/uploads/sessions/{id}`), блокировка и удаление
   пользователя отменяют все его сессии.

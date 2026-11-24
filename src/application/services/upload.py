@@ -99,6 +99,31 @@ async def start_task(
         raise
 
 
+async def check_quota(store, actor: Actor, size: int, session: bool) -> None:
+    if actor.role == UserRole.ROOT:
+        return
+    sessions, held = await store.user_disk(actor.user_id)
+    limit = settings.upload.USER_MAX_SESSIONS
+    if session and limit and sessions >= limit:
+        raise TooManyUploadSessionsError(
+            f"you already have {sessions} open upload sessions, finish or abort one",
+            limit=limit,
+        )
+    quota = settings.upload.USER_DISK_QUOTA_MB * 1024 * 1024
+    if quota and held + size > quota:
+        raise TempQuotaExceededError(
+            f"your uploads in progress already take {held} bytes on the server, "
+            f"the limit is {quota}",
+            limit=quota,
+            used=held,
+        )
+
+
+async def hold_quota(store, actor: Actor, task_id: UUID, size: int) -> None:
+    await check_quota(store, actor, size, False)
+    await store.use_disk(task_id, actor.user_id, size, settings.upload.LOCK_TTL)
+
+
 class UploadService:
     def __init__(
         self,
@@ -261,25 +286,6 @@ class UploadService:
                     window=rule.window,
                 )
 
-    async def _check_quota(self, actor: Actor, size: int, session: bool) -> None:
-        if actor.role == UserRole.ROOT:
-            return
-        sessions, held = await self._store.user_disk(actor.user_id)
-        limit = settings.upload.USER_MAX_SESSIONS
-        if session and limit and sessions >= limit:
-            raise TooManyUploadSessionsError(
-                f"you already have {sessions} open upload sessions, finish or abort one",
-                limit=limit,
-            )
-        quota = settings.upload.USER_DISK_QUOTA_MB * 1024 * 1024
-        if quota and held + size > quota:
-            raise TempQuotaExceededError(
-                f"your uploads in progress already take {held} bytes on the server, "
-                f"the limit is {quota}",
-                limit=quota,
-                used=held,
-            )
-
     async def _take_disk_slot(self, task: dict) -> None:
         if not await self._store.take_disk_slot(task["id"]):
             raise TooManyTasksError(
@@ -315,7 +321,7 @@ class UploadService:
         try:
             async with self._store.disk_lock():
                 needed = data.size * 2 if encrypt else data.size
-                await self._check_quota(actor, needed, False)
+                await hold_quota(self._store, actor, task["id"], needed)
                 reservation = await self._runtime.disk.reserve(task["id"], needed)
             await self._take_disk_slot(task)
             limit = min(data.size, task["params"]["limit"])
@@ -373,7 +379,7 @@ class UploadService:
             Path(task["params"]["file"]).touch(mode=0o600)
             async with self._store.disk_lock():
                 needed = task["bytes_total"] * (2 if task["params"]["encrypt"] else 1)
-                await self._check_quota(actor, needed, True)
+                await check_quota(self._store, actor, needed, True)
                 await self._runtime.disk.check(needed)
                 session = await self._save_session(task, 0)
         except BaseException:
@@ -434,6 +440,13 @@ class UploadService:
                         task, offset + size, session.get("started_at")
                     )
                 )
+            factor = 2 if task["params"]["encrypt"] else 1
+            await self._store.use_disk(
+                session_id,
+                actor.user_id,
+                task["bytes_total"] * factor,
+                settings.upload.LOCK_TTL,
+            )
             if task["params"]["encrypt"]:
                 await self._runtime.disk.park(session_id, task["bytes_total"])
             await self._store.drop_session(session_id)
@@ -498,7 +511,7 @@ class UploadService:
         try:
             async with self._store.disk_lock():
                 needed = size * 2 if task["params"]["encrypt"] else size
-                await self._check_quota(actor, needed, False)
+                await hold_quota(self._store, actor, task["id"], needed)
                 await self._runtime.disk.hold(task["id"], needed)
         except BaseException:
             await self._store.release(task["id"], task["path"])
