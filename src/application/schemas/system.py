@@ -1,4 +1,11 @@
+from uuid import UUID
+
 from pydantic import BaseModel
+
+
+class WebhookSecretServiceRead(BaseModel):
+    user_id: UUID
+    secret: str
 
 
 class AccountServiceRead(BaseModel):

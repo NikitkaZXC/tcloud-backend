@@ -475,10 +475,42 @@ flowchart LR
 
 На каждой смене стадии и не чаще раза в `UPLOAD_WEBHOOK_INTERVAL` во время прогресса воркер (а при отмене из очереди — API,
 код общий: `services/webhook.py`) отправляет на `callback_url`
-POST с телом задачи. Подпись — `X-Tcloud-Signature`. При сетевых ошибках и 5xx делается 3 повтора. Адрес проходит ту же
-проверку, что и ссылки. Не переданный `callback_url` берётся из настройки `uploads.webhook_url` (flows/settings.md).
+POST с телом задачи. Подпись — `X-Tcloud-Signature`, владелец задачи — `X-Tcloud-User` (ниже). При сетевых ошибках и
+5xx делается 3 повтора. Адрес проходит ту же проверку, что и ссылки. Не переданный `callback_url` берётся из настройки `uploads.webhook_url` (flows/settings.md).
 При создании задачи и сохранении настройки `check_webhook` сразу отклоняет не-`http(s)` и непубличные IP-литералы
 (`422 unsafe_url`), имена проверяются через DNS при отправке.
+
+### Проверка подписи
+
+У каждого пользователя свой ключ подписи: `key = HKDF-SHA256(ikm = APP_SECRET_KEY, salt = нет (32 нулевых байта),
+info = "tcloud-webhook:{user_id}", length = 32)` (`security/hashing.webhook_key`, библиотека `cryptography`). Заголовки
+запроса:
+
+| Заголовок | Значение |
+|---|---|
+| `X-Tcloud-User` | uuid владельца задачи (то же, что `user_id` в теле) |
+| `X-Tcloud-Signature` | `sha256=` + hex `HMAC-SHA256(key, сырое тело запроса)` |
+
+Получатель берёт свой ключ один раз: `GET /api/account/webhook-secret` → `{"user_id": uuid, "secret": "<64 hex>"}`
+(только свой, по кукам или `X-API-Key`). Проверка: `hmac.compare_digest(header, "sha256=" + HMAC(bytes.fromhex(secret),
+body).hexdigest())` по сырому телу до разбора JSON, плюс `X-Tcloud-User == user_id`. Ключ одного пользователя не
+подходит к вебхукам другого, а `APP_SECRET_KEY` наружу не выдаётся.
+
+**Изменение**: раньше подпись была `HMAC(APP_SECRET_KEY, body)` одним ключом на всех. Получатели должны перейти на
+ключ из `/api/account/webhook-secret`; старая подпись больше не присылается. Смена `APP_SECRET_KEY` меняет ключи всех
+пользователей (deployment.md, «Бэкапы и восстановление»).
+
+```mermaid
+sequenceDiagram
+    participant W as Воркер / API
+    participant H as callback_url
+    participant U as Пользователь
+    U->>W: GET /api/account/webhook-secret
+    W-->>U: {user_id, secret = HKDF(APP_SECRET_KEY, "tcloud-webhook:" + user_id)}
+    W->>H: POST тело задачи, X-Tcloud-User, X-Tcloud-Signature = sha256=HMAC(key, body)
+    H->>H: HMAC(secret, сырое тело) == подпись, X-Tcloud-User == user_id
+    H-->>W: 2xx (5xx и сеть — 3 повтора)
+```
 
 ## Пачки
 

@@ -19,7 +19,7 @@ from src.infrastructure.background import QueueUnavailableError
 from src.infrastructure.database.models import FileDB
 from src.infrastructure.enums import MediaKind, UploadQueue
 from src.infrastructure.media import Media
-from src.infrastructure.security import encrypt_file
+from src.infrastructure.security import encrypt_file, webhook_key
 from src.utilities.parsers import split_file
 from tests.api.conftest import (
     TELEGRAM_CONCURRENCY,
@@ -320,7 +320,7 @@ async def test_cancel_in_queue_sends_webhook(client, telegram, storage, remote):
     expected = (
         "sha256="
         + hmac.new(
-            settings.app.SECRET_KEY.get_secret_value().encode(), body, hashlib.sha256
+            webhook_key(headers["X-Tcloud-User"]), body, hashlib.sha256
         ).hexdigest()
     )
     assert headers["X-Tcloud-Signature"] == expected

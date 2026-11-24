@@ -1,9 +1,12 @@
 import asyncio
 import hashlib
 import hmac
+from uuid import UUID
 
 from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerificationError
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
 from src.config import settings
 
@@ -32,3 +35,12 @@ def hash_secret(value: str) -> str:
         value.encode(),
         hashlib.sha256,
     ).hexdigest()
+
+
+def webhook_key(user_id: UUID | str) -> bytes:
+    return HKDF(
+        algorithm=hashes.SHA256(),
+        length=32,
+        salt=None,
+        info=f"tcloud-webhook:{user_id}".encode(),
+    ).derive(settings.app.SECRET_KEY.get_secret_value().encode())

@@ -6,7 +6,12 @@ from src.api.dependencies import (
     rate_limit_api,
     rate_limit_by_ip,
 )
-from src.api.schemas import AccountResponse, HealthResponse, PublicHealthResponse
+from src.api.schemas import (
+    AccountResponse,
+    HealthResponse,
+    PublicHealthResponse,
+    WebhookSecretResponse,
+)
 from src.application.factory import get_service_account, get_service_health
 from src.application.schemas import Actor
 from src.application.services import AccountService, HealthService
@@ -47,3 +52,14 @@ async def account(
     account_service: AccountService = Depends(get_service_account),
 ) -> AccountResponse:
     return await account_service.get_account()
+
+
+@router.get(
+    path="/account/webhook-secret",
+    name="system:webhook-secret",
+    summary="Your key for checking X-Tcloud-Signature of webhooks",
+    status_code=status.HTTP_200_OK,
+    dependencies=[Depends(rate_limit_api)],
+)
+async def webhook_secret(actor: Actor = Depends(get_actor)) -> WebhookSecretResponse:
+    return AccountService.webhook_secret(actor)

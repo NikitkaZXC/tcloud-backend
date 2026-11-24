@@ -145,7 +145,8 @@ IP клиента — `request.client.host`. uvicorn берёт его из `X-F
   по распакованным байтам.
 - Не больше 5 редиректов, каждый проверяется заново. Прокси из окружения игнорируются.
 - Таймауты, жёсткий лимит размера при чтении.
-- Вебхук подписан: `X-Tcloud-Signature: sha256=HMAC(APP_SECRET_KEY, body)`.
+- Вебхук подписан ключом пользователя: `X-Tcloud-Signature: sha256=HMAC(HKDF(APP_SECRET_KEY, "tcloud-webhook:{user_id}"), body)`,
+  владелец — в `X-Tcloud-User`; ключ — `GET /api/account/webhook-secret` (background-tasks.md, «Проверка подписи»).
 
 ## Контейнер и секреты
 

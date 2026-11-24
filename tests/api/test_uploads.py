@@ -572,16 +572,27 @@ async def test_webhook_signed(client, storage, remote):
         await asyncio.sleep(0.02)
     stages = [json.loads(body)["stage"] for _, body in Remote.hooks]
     assert "done" in stages and "uploading_tg" in stages
+    secret = (await client.get("/account/webhook-secret")).json()
     for headers, body in Remote.hooks:
         expected = (
             "sha256="
             + hmac.new(
-                settings.app.SECRET_KEY.get_secret_value().encode(),
-                body,
-                hashlib.sha256,
+                bytes.fromhex(secret["secret"]), body, hashlib.sha256
             ).hexdigest()
         )
         assert headers["X-Tcloud-Signature"] == expected
+        assert headers["X-Tcloud-User"] == secret["user_id"]
+        assert json.loads(body)["user_id"] == secret["user_id"]
+
+
+async def test_webhook_secret_differs_per_user(client, make_user):
+    other = await make_user("hooked")
+    mine = (await client.get("/account/webhook-secret")).json()
+    theirs = (await other.get("/account/webhook-secret")).json()
+    assert theirs["user_id"] == other.user_id
+    assert len(bytes.fromhex(mine["secret"])) == 32
+    assert mine["secret"] != theirs["secret"]
+    assert mine["secret"] != settings.app.SECRET_KEY.get_secret_value().encode().hex()
 
 
 async def test_batch_from_urls(client, storage, remote):

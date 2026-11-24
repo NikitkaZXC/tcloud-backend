@@ -31,7 +31,12 @@ from .storage import (
     StorageResponse,
     StorageUpdate,
 )
-from .system import AccountResponse, HealthResponse, PublicHealthResponse
+from .system import (
+    AccountResponse,
+    HealthResponse,
+    PublicHealthResponse,
+    WebhookSecretResponse,
+)
 from .upload import (
     BATCH_MAX,
     BatchCreate,
@@ -69,6 +74,7 @@ __all__ = [
     "PreviewsClearResponse",
     "BATCH_MAX",
     "AccountResponse",
+    "WebhookSecretResponse",
     "AuthResponse",
     "AuthorizationResponse",
     "BatchCreate",

@@ -42,7 +42,12 @@ from .storage import (
     StorageServiceUpdate,
     TelegramStorageServiceRead,
 )
-from .system import AccountServiceRead, HealthDetailServiceRead, HealthServiceRead
+from .system import (
+    AccountServiceRead,
+    HealthDetailServiceRead,
+    HealthServiceRead,
+    WebhookSecretServiceRead,
+)
 from .task import (
     SKIPPED,
     BatchItemServiceRead,
@@ -85,6 +90,7 @@ __all__ = [
     "QrServiceRead",
     "SessionStateServiceRead",
     "AccountServiceRead",
+    "WebhookSecretServiceRead",
     "ArchiveSettingsServiceRead",
     "InterfaceSettingsServiceRead",
     "SettingsServiceRead",

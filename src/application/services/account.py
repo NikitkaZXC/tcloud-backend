@@ -1,10 +1,11 @@
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.application.schemas import AccountServiceRead
+from src.application.schemas import AccountServiceRead, Actor, WebhookSecretServiceRead
 from src.application.services.storage import root_settings
 from src.infrastructure.background import AppRuntime
 from src.infrastructure.limits import CHANNELS_MAX, CHANNELS_MAX_PREMIUM, file_limit
+from src.infrastructure.security import webhook_key
 from src.utilities.errors import TCloudError
 
 
@@ -51,4 +52,10 @@ class AccountService:
             channels_used=await self.channels_used(),
             channels_limit=CHANNELS_MAX_PREMIUM if premium else CHANNELS_MAX,
             previews_enabled=previews,
+        )
+
+    @staticmethod
+    def webhook_secret(actor: Actor) -> WebhookSecretServiceRead:
+        return WebhookSecretServiceRead(
+            user_id=actor.user_id, secret=webhook_key(actor.user_id).hex()
         )

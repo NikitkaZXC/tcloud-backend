@@ -15,7 +15,13 @@ from .exception import (
     TokenExpiredError,
     TokenInvalidError,
 )
-from .hashing import DUMMY_HASH, hash_password, hash_secret, verify_password
+from .hashing import (
+    DUMMY_HASH,
+    hash_password,
+    hash_secret,
+    verify_password,
+    webhook_key,
+)
 from .jwt import (
     JWTPayload,
     check_keys,
@@ -47,4 +53,5 @@ __all__ = [
     "hash_password",
     "hash_secret",
     "verify_password",
+    "webhook_key",
 ]

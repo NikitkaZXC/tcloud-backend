@@ -10,12 +10,16 @@ from src.infrastructure.integrations import UnsafeUrlError
 URL = "https://user:pass@hook.example:8443/secret/path?token=abc"
 
 
+class View(dict):
+    user_id = "0190f3c2-0000-7000-8000-000000000001"
+
+
 class FakeTasks:
     def __init__(self, session, store):
         pass
 
     async def get(self, task_id, actor):
-        return {"id": str(task_id)}
+        return View(id=str(task_id))
 
 
 @asynccontextmanager
@@ -57,3 +61,18 @@ async def test_webhook_logs_only_scheme_and_host(monkeypatch, messages, error):
     assert not any(
         part in m for m in logged for part in ("secret", "token", "pass", "8443")
     )
+
+
+def test_webhook_key_is_hkdf_of_secret_per_user():
+    import hashlib
+    import hmac
+
+    from src.config import settings
+    from src.infrastructure.security import webhook_key
+
+    secret = settings.app.SECRET_KEY.get_secret_value().encode()
+    prk = hmac.new(b"\0" * 32, secret, hashlib.sha256).digest()
+    info = f"tcloud-webhook:{View.user_id}".encode()
+    expected = hmac.new(prk, info + b"\x01", hashlib.sha256).digest()
+    assert webhook_key(View.user_id) == expected
+    assert webhook_key("another") != expected

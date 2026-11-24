@@ -11,10 +11,10 @@ from loguru import logger
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from src.application.services.task import TaskService
-from src.config import settings
 from src.infrastructure.cache import TaskStore
 from src.infrastructure.integrations import UnsafeUrlError
 from src.infrastructure.integrations.web import open_url
+from src.infrastructure.security import webhook_key
 
 
 async def send_hook(
@@ -23,12 +23,11 @@ async def send_hook(
     async with sessions() as session:
         view = await TaskService(session, store).get(UUID(str(task_id)), None)
     body = json.dumps(jsonable_encoder(view)).encode()
-    signature = hmac.new(
-        settings.app.SECRET_KEY.get_secret_value().encode(), body, hashlib.sha256
-    ).hexdigest()
+    signature = hmac.new(webhook_key(view.user_id), body, hashlib.sha256).hexdigest()
     headers = {
         "Content-Type": "application/json",
         "X-Tcloud-Signature": f"sha256={signature}",
+        "X-Tcloud-User": str(view.user_id),
     }
     parts = urlsplit(url)
     target = f"{parts.scheme}://{parts.hostname}"

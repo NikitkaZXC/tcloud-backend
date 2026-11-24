@@ -62,7 +62,7 @@ sequenceDiagram
 | Файлы | `GET /files/{id}`, `/files/{id}/download`, `/files/{id}/thumb`, `/files/search`, `DELETE /files/{id}` | метаданные, скачивание с `Range`, превью, поиск |
 | Загрузки | `POST /uploads`, `/uploads/sessions`, `/uploads/from-url`, `/uploads/batch` | загрузка целиком, частями, по ссылке, пачкой |
 | Задачи | `GET /tasks[/{id}]`, `POST /tasks/{id}/cancel\|priority\|retry`, `GET /tasks/{id}/archive` | статус, управление, готовый архив |
-| Настройки | `GET\|PATCH\|DELETE /account/settings`, `GET /account` | настройки пользователя, сведения об аккаунте Telegram |
+| Настройки | `GET\|PATCH\|DELETE /account/settings`, `GET /account`, `GET /account/webhook-secret` | настройки пользователя, сведения об аккаунте Telegram, ключ подписи вебхуков |
 | Здоровье | `GET /health` | БД, брокер, воркеры, Telegram, ClamAV, Redis |
 
 ## Быстрый старт

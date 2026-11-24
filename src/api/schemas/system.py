@@ -2,7 +2,11 @@ from typing import Literal
 
 from pydantic import BaseModel
 
-from src.application.schemas import AccountServiceRead, HealthServiceRead
+from src.application.schemas import (
+    AccountServiceRead,
+    HealthServiceRead,
+    WebhookSecretServiceRead,
+)
 
 
 class AccountResponse(AccountServiceRead):
@@ -15,3 +19,7 @@ class HealthResponse(HealthServiceRead):
 
 class PublicHealthResponse(BaseModel):
     status: Literal["ok", "degraded"]
+
+
+class WebhookSecretResponse(WebhookSecretServiceRead):
+    pass
