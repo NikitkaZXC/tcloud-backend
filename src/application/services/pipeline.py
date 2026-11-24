@@ -202,18 +202,25 @@ class UploadPipeline:
         params = task["params"]
         await self.stage(task, TaskStage.DOWNLOADING, None, step=TaskStep.DOWNLOADING)
         await self._disk_slot(task)
-        reservation = await self._runtime.disk.reserve(0)
+        factor = 2 if params.get("encrypt") else 1
+        reservation = await self._runtime.disk.reserve(
+            task["id"], (task.get("bytes_total") or 0) * factor
+        )
 
         def progress(done: int, total: int | None) -> None:
-            reservation.update(done, total)
+            reservation.update(done, (total or 0) * factor)
             self.progress(task["id"], done, total)
 
         try:
             await download(
                 params["url"], Path(params["file"]), params["limit"], progress
             )
-        finally:
-            reservation.release()
+        except BaseException:
+            await reservation.release()
+            raise
+        await reservation.release(
+            Path(params["file"]).stat().st_size if params.get("encrypt") else 0
+        )
         await self._handoff(task, UploadQueue.PREPARE, TaskStage.SCANNING, None)
 
     async def _disk_slot(self, task: dict) -> None:
@@ -259,16 +266,18 @@ class UploadPipeline:
         prepared = {**prepared, "send_path": str(target), "plain_size": plain_size}
         await self._store.update(task["id"], prepared=prepared)
         await self.step(task, TaskStep.ENCRYPTING, plain_size)
-        reservation = await self._runtime.disk.reserve(cipher_size(plain_size))
+        reservation = await self._runtime.disk.reserve(
+            task["id"], cipher_size(plain_size)
+        )
+
+        def progress(done: int) -> None:
+            reservation.update(done)
+            self.progress(task["id"], done, plain_size)
+
         try:
-            header = await asyncio.to_thread(
-                encrypt_file,
-                source,
-                target,
-                lambda done: self.progress(task["id"], done, plain_size),
-            )
+            header = await asyncio.to_thread(encrypt_file, source, target, progress)
         finally:
-            reservation.release()
+            await reservation.release()
         return {
             **prepared,
             "encryption_header": base64.b64encode(header).decode(),
@@ -626,8 +635,13 @@ class UploadPipeline:
         missing = len(params["file_ids"]) - len(files)
         sizes = [file.size for file in files]
         reservation = await self._runtime.disk.reserve(
-            sum(sizes) + max(sizes, default=0)
+            task["id"], sum(sizes) + max(sizes, default=0)
         )
+
+        def progress(done: int) -> None:
+            reservation.update(done)
+            self.progress(task["id"], done)
+
         try:
             pause = self._runtime.telegram_resume_at - time.monotonic()
             if pause > 0:
@@ -640,11 +654,11 @@ class UploadPipeline:
                 params["folder"],
                 params["format"],
                 Path(params["file"]),
-                lambda done: self.progress(task["id"], done),
+                progress,
                 lambda: self._checkpoint(task),
             )
         finally:
-            reservation.release()
+            await reservation.release()
         if missing:
             warnings.append(
                 task_warning(

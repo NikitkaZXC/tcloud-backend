@@ -1,66 +1,77 @@
 import asyncio
 import shutil
-import time
 from pathlib import Path
 from uuid import UUID
 
+from src.config import settings
 from src.infrastructure.background.exception import InsufficientStorageError
 
 MiB = 1024 * 1024
-SESSIONS_REFRESH = 1.0
+SYNC_INTERVAL = 1.0
+RESERVATION_TTL = 30
 
 
 class Reservation:
     def __init__(
-        self, budget: "DiskBudget", size: int, exclude: UUID | None, sessions: int
+        self, budget: "DiskBudget", owner: str, size: int, pending: int
     ) -> None:
-        self.budget, self.size, self.written = budget, size, 0
-        self.exclude, self.sessions = exclude, sessions
-        self.read_at = time.monotonic()
-        self.refresh: asyncio.Task | None = None
+        self.budget, self.owner, self.size, self.written = budget, owner, size, 0
+        self.pending = pending
+        self.keep = asyncio.create_task(self._keep())
+
+    def remaining(self) -> int:
+        return max(self.size - self.written, 0)
 
     def update(self, written: int, total: int | None = None) -> None:
         self.written = written
         self.size = max(self.size, total or 0, written)
-        if time.monotonic() - self.read_at > SESSIONS_REFRESH and (
-            self.refresh is None or self.refresh.done()
-        ):
-            self.refresh = asyncio.create_task(self._reload())
-        self.budget.require(0, self.sessions)
+        self.budget.require(self.remaining(), self.pending)
 
-    async def _reload(self) -> None:
-        self.read_at = time.monotonic()
-        self.sessions = await self.budget.sessions(self.exclude)
+    async def _keep(self) -> None:
+        while True:
+            await asyncio.sleep(SYNC_INTERVAL)
+            await self.budget.store.reserve_disk(
+                self.owner, self.remaining(), RESERVATION_TTL
+            )
+            self.pending = await self.budget.pending(self.owner)
 
-    def release(self) -> None:
-        self.budget.items.discard(self)
+    async def release(self, keep: int = 0) -> None:
+        self.keep.cancel()
+        await asyncio.gather(self.keep, return_exceptions=True)
+        await asyncio.shield(self.budget.park(self.owner, keep))
 
 
 class DiskBudget:
     def __init__(self, path: Path, min_free: int, store=None) -> None:
         self.path, self.min_free, self.store = path, min_free, store
-        self.items: set[Reservation] = set()
 
-    def free(self) -> int:
-        pending = sum(item.size - item.written for item in self.items)
-        return shutil.disk_usage(self.path).free - pending
+    async def pending(self, exclude: UUID | str | None = None) -> int:
+        return await self.store.reserved_bytes(
+            exclude
+        ) + await self.store.session_bytes(exclude)
 
-    async def sessions(self, exclude: UUID | None = None) -> int:
-        return await self.store.session_bytes(exclude) if self.store else 0
-
-    def require(self, size: int, sessions: int) -> None:
-        if self.free() - sessions - size < self.min_free:
+    def require(self, size: int, pending: int) -> None:
+        if shutil.disk_usage(self.path).free - pending - size < self.min_free:
             raise InsufficientStorageError(
                 f"not enough disk space for temporary files (need {size // MiB} MiB more)"
             )
 
-    async def check(self, size: int, exclude: UUID | None = None) -> int:
-        sessions = await self.sessions(exclude)
-        self.require(size, sessions)
-        return sessions
+    async def check(self, size: int, exclude: UUID | str | None = None) -> int:
+        pending = await self.pending(exclude)
+        self.require(size, pending)
+        return pending
 
-    async def reserve(self, size: int, exclude: UUID | None = None) -> Reservation:
-        sessions = await self.check(size, exclude)
-        reservation = Reservation(self, size, exclude, sessions)
-        self.items.add(reservation)
-        return reservation
+    async def park(self, owner: UUID | str, size: int) -> None:
+        if size:
+            await self.store.reserve_disk(str(owner), size, settings.upload.LOCK_TTL)
+        else:
+            await self.store.drop_disk(str(owner))
+
+    async def hold(self, owner: UUID | str, size: int) -> None:
+        await self.check(size, owner)
+        await self.park(owner, size)
+
+    async def reserve(self, owner: UUID | str, size: int) -> Reservation:
+        pending = await self.check(size, owner)
+        await self.store.reserve_disk(str(owner), size, RESERVATION_TTL)
+        return Reservation(self, str(owner), size, pending)

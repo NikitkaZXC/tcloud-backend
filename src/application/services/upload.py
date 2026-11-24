@@ -250,11 +250,12 @@ class UploadService:
         if not queued:
             return await self._tasks.get(task["id"], actor)
         path = Path(task["params"]["file"])
+        encrypt = task["params"]["encrypt"]
         reservation = None
         try:
             async with self._store.disk_lock():
                 reservation = await self._runtime.disk.reserve(
-                    data.size * 2 if task["params"]["encrypt"] else data.size
+                    task["id"], data.size * 2 if encrypt else data.size
                 )
             await self._take_disk_slot(task)
             limit = min(data.size, task["params"]["limit"])
@@ -264,11 +265,11 @@ class UploadService:
                     f"declared {data.size} bytes, received {received}"
                 )
         except BaseException:
+            if reservation:
+                await reservation.release()
             await self._drop_upload(task)
             raise
-        finally:
-            if reservation:
-                reservation.release()
+        await reservation.release(data.size if encrypt else 0)
         return await self._queue_device(actor, task)
 
     @staticmethod
@@ -356,15 +357,12 @@ class UploadService:
                 raise ChunkTooLargeError(
                     f"chunk is {size} bytes, at most {allowed} fit", limit=allowed
                 )
-            reservation = await self._runtime.disk.reserve(size, exclude=session_id)
-            try:
-                await append_body(
-                    body, Path(task["params"]["file"]), offset, size, reservation.update
-                )
-            finally:
-                reservation.release()
+            await self._runtime.disk.check(size, exclude=session_id)
+            await append_body(body, Path(task["params"]["file"]), offset, size)
             if offset + size < task["bytes_total"]:
                 return self._session_read(await self._save_session(task, offset + size))
+            if task["params"]["encrypt"]:
+                await self._runtime.disk.park(session_id, task["bytes_total"])
             await self._store.drop_session(session_id)
         return await self._queue_device(actor, task)
 
@@ -384,6 +382,16 @@ class UploadService:
     ) -> TaskServiceRead:
         task, queued = await self._new_task(actor, data, batch_id)
         if queued:
+            if data.size is not None:
+                try:
+                    async with self._store.disk_lock():
+                        await self._runtime.disk.hold(
+                            task["id"],
+                            data.size * 2 if task["params"]["encrypt"] else data.size,
+                        )
+                except BaseException:
+                    await self._store.release(task["id"], task["path"])
+                    raise
             await self._store.create(task)
             await start_task(self._runtime, task, UploadQueue.DOWNLOAD, 0)
         return await self._tasks.get(task["id"], actor)

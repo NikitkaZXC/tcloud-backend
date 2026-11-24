@@ -112,6 +112,18 @@ redis.call('ZADD', KEYS[1], ARGV[4], ARGV[1])
 return 1
 """
 
+RESERVED = """
+local dead = redis.call('ZRANGEBYSCORE', KEYS[2], '-inf', ARGV[1])
+for _, owner in ipairs(dead) do redis.call('HDEL', KEYS[1], owner) end
+redis.call('ZREMRANGEBYSCORE', KEYS[2], '-inf', ARGV[1])
+local total = 0
+local rows = redis.call('HGETALL', KEYS[1])
+for i = 1, #rows, 2 do
+    if rows[i] ~= ARGV[2] then total = total + tonumber(rows[i + 1]) end
+end
+return total
+"""
+
 KEEP_THUMB = """
 local now, ttl, cap = tonumber(ARGV[2]), tonumber(ARGV[3]), tonumber(ARGV[4])
 local size = string.len(ARGV[1])
@@ -392,6 +404,28 @@ class TaskStore:
             for session in map(json.loads, filter(None, values))
         )
 
+    async def reserve_disk(self, owner: str, size: int, ttl: float) -> None:
+        async with self._redis.pipeline(transaction=True) as pipe:
+            pipe.hset(self._key("disk", "reserved"), owner, size)
+            pipe.zadd(self._key("disk", "reserved", "exp"), {owner: time.time() + ttl})
+            await pipe.execute()
+
+    async def drop_disk(self, owner: UUID | str) -> None:
+        async with self._redis.pipeline(transaction=True) as pipe:
+            pipe.hdel(self._key("disk", "reserved"), str(owner))
+            pipe.zrem(self._key("disk", "reserved", "exp"), str(owner))
+            await pipe.execute()
+
+    async def reserved_bytes(self, exclude: UUID | str | None = None) -> int:
+        return int(
+            await self._run(
+                RESERVED,
+                [self._key("disk", "reserved"), self._key("disk", "reserved", "exp")],
+                time.time(),
+                str(exclude),
+            )
+        )
+
     async def drop_session(self, session_id: UUID | str) -> None:
         async with self._redis.pipeline(transaction=True) as pipe:
             pipe.delete(self._key("upload_session", session_id))
@@ -565,8 +599,9 @@ class TaskStore:
     async def activate(self, task_id: UUID) -> None:
         await self._redis.zadd(self._key("active"), {str(task_id): time.time()})
 
-    async def deactivate(self, task_id: UUID) -> None:
+    async def deactivate(self, task_id: UUID | str) -> None:
         await self._redis.zrem(self._key("active"), str(task_id))
+        await self.drop_disk(task_id)
 
     async def active_ids(self) -> list[str]:
         return await self._redis.zrange(self._key("active"), 0, -1)

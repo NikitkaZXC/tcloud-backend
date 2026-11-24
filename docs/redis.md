@@ -36,6 +36,7 @@ flowchart LR
         path[("path:{path}<br/>string NX")]
         active[("active<br/>zset")]
         disk[("disk<br/>zset")]
+        reserved[("disk:reserved hash<br/>disk:reserved:exp zset")]
         waiting[("waiting:{queue}<br/>zset")]
         archives[("archives<br/>zset")]
         worker[("worker:{queue}:{host}")]
@@ -52,11 +53,11 @@ flowchart LR
     end
     acs --> account
     ss --> account
-    us --> task & batch & owned & path & active & disk & waiting & session & job
+    us --> task & batch & owned & path & active & disk & reserved & waiting & session & job
     ts --> task & owned & waiting
-    sw --> active & task & archives & path & disk & waiting & session
-    pl --> task & waiting & disk & path & active & archives & activity
-    bf --> job & activity
+    sw --> active & task & archives & path & disk & reserved & waiting & session
+    pl --> task & waiting & disk & reserved & path & active & archives & activity
+    bf --> job & activity & reserved
     hb --> worker & workers
     fs --> activity & thumb
     ss --> activity & path & channel & photo
@@ -84,6 +85,8 @@ flowchart LR
 | `tcloud:thumb:{file_id}:{message_id}` | string | base64 превью открытого файла из Telegram для `GET /api/files/{id}/thumb` (`""` — превью нет) | `TaskStore.thumb`, `keep_thumb` (Lua `KEEP_THUMB`); `FileService.get_thumbnail` | `REDIS_CACHE_TTL` (180 с) |
 | `tcloud:thumbs`, `tcloud:thumbs:size`, `tcloud:thumbs:bytes` | zset, hash, string | учёт потолка кеша превью: zset ключ `thumb:…` → время записи, hash ключ → длина base64, сумма длин. `KEEP_THUMB` атомарно выкидывает записи старше TTL (их ключи уже истекли), прежнюю копию того же ключа и самые старые, пока новая не влезет в `REDIS_THUMB_CACHE_MB` (64 МБ); запись больше потолка не кешируется, `0` выключает кеш | `TaskStore.keep_thumb` | — (чистятся при каждой записи) |
 | `tcloud:account:premium`, `tcloud:account:channels` | string | JSON: Premium API-аккаунта (`true`/`false`, от него размер части большого файла) и `channels_used` (flows/storages.md, «Сколько каналов ещё можно создать») | `TaskStore.cached`/`keep`; `AccountService.is_premium`, `channels_used`, `UploadPipeline._spans` (worker-telegram, только для файлов > 2000 МиБ); `forget_account` — создание/удаление хранилища, `TELEGRAM_CHATS`, вход в API-сессию, события Telegram | `REDIS_CACHE_TTL` (180 с) |
+| `tcloud:disk:reserved` | hash | журнал резервов места: владелец (id задачи, у превью — id файла) → байты, которые ещё будут записаны в `tmp` (flows/uploads.md, «Место на диске») | `TaskStore.reserve_disk` (`DiskBudget.reserve`/`hold`/`park`, держатель — раз в секунду), `drop_disk` (`Reservation.release`, `deactivate`), `reserved_bytes` (Lua `RESERVED`: сумма живых без `exclude`, просроченные стирает) | — (срок записи — в `disk:reserved:exp`) |
+| `tcloud:disk:reserved:exp` | zset | владелец → срок записи (unix): живой держатель — now + 30 с (`RESERVATION_TTL`), продлевается раз в секунду; запись между этапами — now + `UPLOAD_LOCK_TTL` | те же | — |
 | `tcloud:job:{name}` | string | одна фоновая задача на имя (`job:previews` — дозаполнение превью; `job:upload:{session_id}` — приём куска сессии, `TaskStore.holding`, flows/uploads.md «частями»; `job:disk` — проверка места + запись резерва, `TaskStore.disk_lock`, TTL 5 с без продления, значение — случайный владелец), значение — id задачи Celery; `SET NX`, свой ключ продлевается (Lua `RENEW`), снимает только владелец (Lua `UNLOCK`) | `TaskStore.hold_job`, `release_job`; `PreviewBackfill` | 120 с (`JOB_TTL`), продлевается каждые 30 с |
 | `tcloud:upload_session:{id}` | string | JSON сессии загрузки частями: `task` (будущая задача целиком, с `params.file`), `offset` (принято байт), `expires_at` (unix) | `TaskStore.save_session` (создание и каждый кусок; заодно продлевает `path:{path}` на `UPLOAD_LOCK_TTL` и score в `disk`), `get_session`, `session_bytes`, `drop_session` (последний кусок, `DELETE`, уборка) | 2 × `UPLOAD_SESSION_TTL` (страховка; срок — `expires_at`) |
 | `tcloud:upload_sessions` | zset | id сессий → `expires_at`; `TaskSweeper.clean_tmp` не трогает файлы живых и удаляет просроченные | `save_session`, `sessions`, `session_bytes` (сумма резерва живых сессий для проверки диска), `drop_session` | — |

@@ -465,3 +465,52 @@ async def test_concurrent_device_uploads_reserve_disk_once(client, storage, disk
     disk["value"] = 10**12
     done = next(response for response in responses if response.status_code == 202)
     assert (await wait_task(client, done.json()["id"]))["status"] == "done"
+
+
+async def ledger() -> int:
+    return await store()._redis.hlen(store()._key("disk", "reserved"))
+
+
+async def test_finished_uploads_leave_ledger_empty(client, storage, remote):
+    data = os.urandom(30_000)
+    response = await client.post(
+        "/uploads", params={"path": path(storage, "a.bin")}, content=data
+    )
+    assert (await wait_task(client, response.json()["id"]))["status"] == "done"
+    session = await open_session(client, path(storage, "b.bin"), len(data))
+    last = await send_all(client, session, data)
+    assert (await wait_task(client, last.json()["id"]))["status"] == "done"
+    Remote.files["/c.bin"] = data
+    body = {"url": f"{remote}/c.bin", "path": path(storage, "c.bin")}
+    response = await client.post("/uploads/from-url", json=body)
+    assert (await wait_task(client, response.json()["id"]))["status"] == "done"
+    body = {"url": f"{remote}/missing.bin", "path": path(storage, "d.bin")}
+    response = await client.post("/uploads/from-url", json=body)
+    assert (await wait_task(client, response.json()["id"]))["status"] == "failed"
+    assert await ledger() == 0
+
+
+async def test_queued_archive_reserves_until_cancelled(
+    client, storage, disk, monkeypatch
+):
+    disk["value"] = 10**12
+    file = await upload(client, path(storage, "a.bin"), b"x" * 10_000)
+    started = []
+
+    async def queued(runtime, task, queue, generation):
+        await runtime.store.activate(task["id"])
+        started.append(task["id"])
+
+    monkeypatch.setattr("src.application.services.folder.start_task", queued)
+    disk["value"] = 25_000
+    response = await client.post(
+        "/folders/archive/selection", json={"files": [file["file"]["uuid"]]}
+    )
+    assert response.status_code == 202, response.text
+    assert await store().reserved_bytes() == 20_000
+    target = path(storage, "b.bin")
+    assert insufficient(await create(client, target, 10_000, encrypt="false"))
+    response = await client.post(f"/tasks/{started[0]}/cancel")
+    assert response.json()["status"] == "cancelled", response.text
+    assert await ledger() == 0
+    assert (await create(client, target, 10_000, encrypt="false")).status_code == 201

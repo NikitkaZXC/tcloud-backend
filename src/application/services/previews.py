@@ -107,7 +107,7 @@ class PreviewBackfill:
         )
         plain = temp_path(file.name)
         frame = temp_path("thumb.jpg")
-        reservation = await self._runtime.disk.reserve(file.size)
+        reservation = await self._runtime.disk.reserve(file.id, file.size)
         try:
             await write_body(
                 tracked(
@@ -120,6 +120,7 @@ class PreviewBackfill:
                 ),
                 plain,
                 file.size,
+                reservation.update,
             )
             source: Path = plain
             if file.kind == MediaKind.VIDEO:
@@ -128,7 +129,7 @@ class PreviewBackfill:
                 source = frame
             data = await asyncio.to_thread(preview, source)
         finally:
-            reservation.release()
+            await reservation.release()
             plain.unlink(missing_ok=True)
             frame.unlink(missing_ok=True)
         return seal(file.encryption_header, data)
