@@ -131,11 +131,13 @@ async def test_retry_failed_url_upload(client, telegram, storage, remote):
     task_id = (await client.post("/uploads/from-url", json=body)).json()["id"]
     failed = await wait_task(client, task_id)
     assert failed["error"]["code"] == "download_failed"
+    assert failed["source"] == "url" and failed["retryable"] is True
     Remote.files["/later.jpg"] = make_image()
     response = await client.post(f"/tasks/{task_id}/retry")
     assert response.status_code == 202 and response.json()["status"] == "queued"
     done = await wait_task(client, task_id)
     assert done["status"] == "done" and done["error"] is None
+    assert done["retryable"] is False
     assert len(telegram.messages()) == 1
 
 
@@ -146,6 +148,7 @@ async def test_retry_rules(client, telegram, storage):
     telegram.flood = 10**6
     failed = await upload(client, path(storage, "b.jpg"), make_image())
     assert failed["status"] == "failed"
+    assert failed["source"] == "device" and failed["retryable"] is False
     response = await client.post(f"/tasks/{failed['id']}/retry")
     assert (
         response.status_code == 409

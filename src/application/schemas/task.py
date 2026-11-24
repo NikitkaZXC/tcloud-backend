@@ -44,6 +44,8 @@ class TaskServiceRead(BaseModel):
     step: str | None = None
     step_progress: float | None = None
     priority: str
+    source: str | None = None
+    retryable: bool = False
     path: str
     bytes_done: int
     bytes_total: int | None

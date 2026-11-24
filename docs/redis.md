@@ -101,6 +101,7 @@ flowchart LR
 | Поле | Что |
 |---|---|
 | `id`, `batch_id`, `user_id`, `path`, `created_at`, `updated_at` | идентичность и владелец |
+| `source` | `device` / `url` / `archive` (копия `params.source` на верхнем уровне, чтобы `TaskService` не читал `params`); у старых задач нет |
 | `status`, `stage`, `priority`, `priority_level`, `generation` | состояние (background-tasks.md, «Статусы и стадии») |
 | `step` | шаг внутри стадии (`TaskStep`, flows/uploads.md «Шаги»); пишется при смене, `step_progress` считается при чтении |
 | `bytes_done`, `bytes_total`, `stage_started` | прогресс; `speed`/`eta` считаются при чтении (`TaskService.render`) |

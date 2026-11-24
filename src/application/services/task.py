@@ -24,7 +24,7 @@ from src.application.schemas import (
 )
 from src.infrastructure.cache import TaskStore
 from src.infrastructure.database.repositories import FileRepository
-from src.infrastructure.enums import TaskStatus, TaskStep
+from src.infrastructure.enums import TaskSource, TaskStatus, TaskStep
 
 VIEW_FIELDS = (
     "batch_id",
@@ -33,6 +33,7 @@ VIEW_FIELDS = (
     "stage",
     "step",
     "priority",
+    "source",
     "path",
     "bytes_done",
     "bytes_total",
@@ -69,6 +70,8 @@ class TaskService:
             file=file,
             queue_position=position,
             cancel_requested=bool(task.get("cancel")),
+            retryable=task.get("source") == TaskSource.URL
+            and task["status"] in (TaskStatus.FAILED, TaskStatus.CANCELLED),
         )
         view = TaskServiceRead(**fields)
         for warning in task.get("warnings") or []:

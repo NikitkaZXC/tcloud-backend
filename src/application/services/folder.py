@@ -386,6 +386,7 @@ class FolderService:
             "step": UploadQueue.ARCHIVE.step,
             "priority": level,
             "priority_level": level.level,
+            "source": TaskSource.ARCHIVE,
             "path": join_path(storage_id, base),
             "bytes_done": 0,
             "bytes_total": sum(sizes),

@@ -140,5 +140,6 @@ async def test_archives_respect_the_quota(client, storage, make_user, monkeypatc
     )
     assert response.status_code == 202
     task = await wait_task(user, response.json()["id"])
-    assert task["status"] == "done"
+    assert task["status"] == "done" and task["source"] == "archive"
+    assert task["retryable"] is False
     assert await store().user_disk(user.user_id) == (0, task["archive"]["size"])

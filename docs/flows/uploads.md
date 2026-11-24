@@ -329,8 +329,13 @@ DEK файла и ложится в `files.thumbnail`; `/thumb` его расш�
 
 `GET /api/tasks/{id}`: `status` (`queued/running/done/failed/cancelled`), `stage`, `step`, `step_progress`, `priority`, `bytes_done`/`bytes_total`,
 `progress`, `speed`, `eta`, `queue_position` (номер в очереди, 1 — следующая), `waiting` (очередь, FloodWait, повтор),
-`cancel_requested`, `error`, `warnings`, `warning_details`, `file`.
+`cancel_requested`, `error`, `warnings`, `warning_details`, `file`, `source`, `retryable`.
 Задача хранится 7 дней (`UPLOAD_TASK_TTL`). Вебхук описан в background-tasks.md.
+
+Для фронтенда: `source` — откуда задача: `device` (`POST /api/uploads` и загрузка частями), `url` (по ссылке, пачка),
+`archive` (сборка архива); `null` у задач, созданных до этого поля (поле задачи `source` в Redis, копия
+`params.source`). `retryable: boolean` — `true` только у `source = url` в статусе `failed` или `cancelled`: показывать
+«Повторить» (`POST /api/tasks/{id}/retry`) только при нём; права на папку всё равно проверяются при повторе.
 
 Опрос многих задач одним запросом: `GET /api/tasks?ids={id}&ids={id}…` — до 100 id (больше → `422 validation_error`),
 повторы схлопываются; ответ как у пачки — `{items, summary}`, в `items` только существующие задачи, которые вы видите

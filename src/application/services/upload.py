@@ -230,6 +230,7 @@ class UploadService:
             "step": queue.step,
             "priority": priority,
             "priority_level": priority.level,
+            "source": source,
             "path": path,
             "bytes_done": 0,
             "bytes_total": data.size,

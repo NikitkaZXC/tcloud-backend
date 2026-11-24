@@ -71,3 +71,16 @@ def test_step_progress_only_for_measured_running_steps():
     assert (
         render(status="done", step="sending", bytes_done=200, bytes_total=200) is None
     )
+
+
+def test_only_failed_or_cancelled_url_tasks_are_retryable():
+    def view(**values):
+        return TaskService.render(_task(**values), None)
+
+    assert view(source="url", status="failed").retryable is True
+    assert view(source="url", status="cancelled").retryable is True
+    assert view(source="url", status="running").retryable is False
+    assert view(source="device", status="failed").retryable is False
+    assert view(source="archive", status="failed").source == "archive"
+    legacy = view(status="failed")
+    assert legacy.source is None and legacy.retryable is False
