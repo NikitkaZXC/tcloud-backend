@@ -57,6 +57,7 @@ services:
       - sh
       - -c
       - exec celery --app=src.infrastructure.background.celery.app worker --pool=threads --concurrency="$${UPLOAD_DOWNLOAD_CONCURRENCY:-4}" --queues=uploads.download --hostname=download@%h --loglevel=INFO
+    mem_limit: ${WORKER_MEM_LIMIT:-2g}
     depends_on:
       <<: *worker-depends
       app: {condition: service_started}
@@ -70,6 +71,7 @@ services:
       - sh
       - -c
       - exec celery --app=src.infrastructure.background.celery.app worker --pool=threads --concurrency="$${UPLOAD_PREPARE_CONCURRENCY:-4}" --queues=uploads.prepare --hostname=prepare@%h --loglevel=INFO
+    mem_limit: ${WORKER_MEM_LIMIT:-2g}
     depends_on:
       <<: *worker-depends
       app: {condition: service_started}
@@ -84,6 +86,7 @@ services:
       - sh
       - -c
       - exec celery --app=src.infrastructure.background.celery.app worker --pool=threads --concurrency="$${TELEGRAM_CONCURRENCY:-2}" --queues=uploads.telegram,archives.build --hostname=telegram@%h --loglevel=INFO
+    mem_limit: ${WORKER_MEM_LIMIT:-2g}
     depends_on:
       <<: *worker-depends
       app: {condition: service_started}

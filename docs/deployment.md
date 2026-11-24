@@ -39,6 +39,11 @@ volume удалён или сессию завершили в Telegram. Без �
   `TELEGRAM_CONCURRENCY` и `TELEGRAM_UPLOAD_WORKERS`. `worker-download` и `worker-prepare` можно масштабировать
   репликами (`docker compose up --scale worker-prepare=2`), потоков на реплику — `UPLOAD_DOWNLOAD_CONCURRENCY` и
   `UPLOAD_PREPARE_CONCURRENCY`.
+- Память воркеров ограничена: `mem_limit: ${WORKER_MEM_LIMIT:-2g}` у `worker-download`, `worker-prepare` и
+  `worker-telegram` (переменная в `.env` или окружении compose, формат Docker: `1g`, `3g`). Файл-бомба для Pillow,
+  ffprobe или сборка архива убивает только контейнер воркера (OOM), не весь хост; задача после рестарта воркера
+  повторяется или помечается потерянной (background-tasks.md, «Сбои»). При многих потоках
+  (`*_CONCURRENCY`) лимит поднимайте.
 - Flower — `127.0.0.1:5555` с basic auth (`FLOWER_USER` / `FLOWER_PASSWORD`); наружу — только через reverse proxy с TLS.
   Flower не получает `.env` и volumes: в compose ему переданы только `RABBITMQ_USER`, `RABBITMQ_PASSWORD`,
   `FLOWER_USER`, `FLOWER_PASSWORD`, и он запускается как `celery --broker=amqp://… flower` без `--app`: приложение
