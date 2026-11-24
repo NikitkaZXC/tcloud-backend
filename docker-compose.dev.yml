@@ -1,8 +1,13 @@
 name: tcloud-dev
 
+x-logging: &logging
+  driver: json-file
+  options: {max-size: 50m, max-file: "5"}
+
 services:
   postgres:
     image: postgres:18
+    logging: *logging
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-tcloud}
       POSTGRES_USER: ${POSTGRES_USER:-tcloud}
@@ -18,6 +23,7 @@ services:
 
   rabbitmq:
     image: rabbitmq:4-management-alpine
+    logging: *logging
     hostname: rabbitmq
     environment:
       RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-tcloud}
@@ -33,6 +39,7 @@ services:
 
   redis:
     image: redis:8
+    logging: *logging
     ports:
       - "127.0.0.1:6379:6379"
     healthcheck:
@@ -42,6 +49,7 @@ services:
 
   clamav:
     image: clamav/clamav:1.5.4-debian
+    logging: *logging
     ports:
       - "127.0.0.1:3310:3310"
     volumes:
@@ -52,6 +60,7 @@ services:
     profiles: [app]
     build: .
     restart: unless-stopped
+    logging: *logging
     env_file: .env
     environment: &app-env
       POSTGRES_HOST: postgres

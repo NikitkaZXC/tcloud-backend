@@ -1,5 +1,9 @@
 name: tcloud
 
+x-logging: &logging
+  driver: json-file
+  options: {max-size: 50m, max-file: "5"}
+
 x-app: &app
   build: .
   image: tcloud:latest
@@ -22,6 +26,7 @@ x-app: &app
   read_only: true
   tmpfs: [/tmp]
   restart: unless-stopped
+  logging: *logging
 
 x-worker-depends: &worker-depends
   postgres: {condition: service_healthy}
@@ -109,6 +114,7 @@ services:
       interval: 5s
       retries: 10
     restart: unless-stopped
+    logging: *logging
 
   rabbitmq:
     image: rabbitmq:4-alpine
@@ -124,6 +130,7 @@ services:
       interval: 10s
       retries: 10
     restart: unless-stopped
+    logging: *logging
 
   redis:
     image: redis:8
@@ -137,6 +144,7 @@ services:
       interval: 5s
       retries: 10
     restart: unless-stopped
+    logging: *logging
 
   clamav:
     image: clamav/clamav:1.5.4-debian
@@ -144,6 +152,7 @@ services:
       - clamdb:/var/lib/clamav
       - ./docker/clamd.conf:/etc/clamav/clamd.conf:ro
     restart: unless-stopped
+    logging: *logging
 
 volumes:
   pgdata:

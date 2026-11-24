@@ -40,6 +40,8 @@ volume удалён или сессию завершили в Telegram. Без �
   Очереди durable, сообщения persistent; Redis с `appendonly yes` — очередь и статусы переживают рестарт.
 - Обрыв сети воркера с брокером (проверено до 3 мин) процесс не роняет: Celery переподключается сам (pidbox-очередь
   не эксклюзивная, background-tasks.md). Страховка — `restart: unless-stopped` у API и воркеров в prod и dev compose.
+- Логи контейнеров (prod и dev compose): драйвер `json-file` с ротацией `max-size: 50m`, `max-file: "5"` — до
+  250 МБ на контейнер (якорь `x-logging`), иначе логи Docker растут без предела и забивают диск.
 - Первый старт ClamAV качает базы несколько минут — до этого загрузки отвечают `503 scanner_unavailable`.
 - ClamAV (`docker/clamd.conf`, integrations.md): `MaxFileSize 2147483645` (потолок libclamav), `StreamMaxLength`/
   `MaxScanSize 4000M`, `MaxScanTime` 30 мин; файлы больше `CLAMAV_MAX_FILE_SIZE` не сканируются (`too_big_to_scan`).
