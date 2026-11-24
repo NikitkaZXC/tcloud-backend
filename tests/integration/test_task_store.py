@@ -111,6 +111,25 @@ async def test_claim_once_per_queue_and_generation(store):
     assert not await store.claim(uuid7(), "uploads.prepare", 0, False)
 
 
+async def test_redelivery_waits_while_the_first_run_beats(store):
+    task_id = await queued(store)
+    assert await store.claim(task_id, "uploads.prepare", 0, False) == 1
+    await store.touch(task_id)
+    assert await store.claim(task_id, "uploads.prepare", 0, True) == tasks.CLAIM_BUSY
+    assert await store.claim(task_id, "uploads.prepare", 0, True, waited=True) == 2
+    await store.update(task_id, beat_at=0)
+    assert await store.claim(task_id, "uploads.prepare", 0, True, waited=True) == 1
+
+
+async def test_waited_redelivery_skips_a_task_that_moved_on(store):
+    task_id = await queued(store)
+    await store.claim(task_id, "uploads.prepare", 0, False)
+    await store.update(task_id, waiting={"reason": "queue:uploads.telegram"})
+    assert not await store.claim(task_id, "uploads.prepare", 0, True, waited=True)
+    await store.claim(task_id, "uploads.telegram", 0, False)
+    assert not await store.claim(task_id, "uploads.prepare", 0, True, waited=True)
+
+
 async def test_claim_refuses_finished_tasks(store):
     task_id = await queued(store)
     await store.update(task_id, status="cancelled")

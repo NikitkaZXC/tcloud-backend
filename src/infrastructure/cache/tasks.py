@@ -17,6 +17,8 @@ ACTIVITY_TTL = 5
 ACTIVITY_TAIL = 1
 ACTIVITY_REFRESH = 1
 ACTIVITY_KINDS = ("read", "write")
+CLAIM_BUSY = 2
+BUSY_BEATS = 3
 
 UNLOCK = """
 if redis.call('GET', KEYS[1]) == ARGV[1] then
@@ -57,7 +59,16 @@ CLAIM = FINISHED + FIELD + """
 if redis.call('EXISTS', KEYS[1]) == 0 then return 0 end
 if (field('generation') or 0) ~= tonumber(ARGV[2]) then return 0 end
 if finished[field('status')] then return 0 end
-if field('claimed') == ARGV[1] and ARGV[3] ~= '1' then return 0 end
+local claimed = field('claimed')
+if ARGV[3] == '2' then
+    if claimed ~= ARGV[1] then return 0 end
+    local waiting = waiting_queue()
+    if waiting and waiting ~= ARGV[1] then return 0 end
+end
+if claimed == ARGV[1] then
+    if ARGV[3] == '0' then return 0 end
+    if (field('beat_at') or 0) > tonumber(ARGV[5]) then return 2 end
+end
 redis.call('HSET', KEYS[1], 'claimed', cjson.encode(ARGV[1]),
     'status', cjson.encode('running'), 'waiting', 'null')
 redis.call('ZREM', KEYS[2], ARGV[4])
@@ -230,16 +241,22 @@ class TaskStore:
         return await self._redis.lrange(self._key("batch", batch_id), 0, -1)
 
     async def claim(
-        self, task_id: UUID, queue: str, generation: int, redelivered: bool
-    ) -> bool:
-        return bool(
+        self,
+        task_id: UUID,
+        queue: str,
+        generation: int,
+        redelivered: bool,
+        waited: bool = False,
+    ) -> int:
+        return int(
             await self._run(
                 CLAIM,
                 [self._key("task", task_id), self._key("waiting", queue)],
                 queue,
                 generation,
-                int(redelivered),
+                2 if waited else int(redelivered),
                 str(task_id),
+                time.time() - settings.upload.HEARTBEAT_INTERVAL * BUSY_BEATS,
             )
         )
 

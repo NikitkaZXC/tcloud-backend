@@ -103,7 +103,7 @@ flowchart LR
 | `cancel` | флаг отмены во время работы |
 | `prepared` | результат проверки: `send_path`, `thumb`, `media`, `sha256`, `as_file`, `warnings`, у шифрования `encryption_header`, `plain_size`, `thumbnail` (base64 превью до ~27 КБ; после записи в `files` вместе с `committed` заменяется на `null`) |
 | `sent`, `committed` | отправлено в Telegram / записано в `files` — защита от дублей при повторной доставке |
-| `beat_at` | heartbeat задачи для `TaskSweeper` |
+| `beat_at` | heartbeat задачи для `TaskSweeper` и `CLAIM` (повторная доставка ждёт, пока он свежий) |
 
 Чтение полей: `GET /api/tasks/{id}`, `GET /api/tasks?ids=`, пачки и вебхуки (`TaskService.get`/`get_many`) читают
 только поля для ответа (`VIEW_FIELDS` в `services/task.py`, `HMGET` конвейером) — без `prepared`, `params`, `sent`;

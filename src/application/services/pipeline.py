@@ -20,7 +20,7 @@ from src.application.services.temp import remove_task_files, temp_path
 from src.application.services.webhook import send_hook
 from src.config import settings
 from src.infrastructure.background import WorkerRuntime, enqueue
-from src.infrastructure.cache import TaskStore
+from src.infrastructure.cache import CLAIM_BUSY, TaskStore
 from src.infrastructure.database.models import FileDB
 from src.infrastructure.database.repositories import (
     FileRepository,
@@ -96,7 +96,15 @@ class UploadPipeline:
     async def run(
         self, queue: UploadQueue, task_id: UUID, generation: int, redelivered: bool
     ) -> None:
-        if not await self._store.claim(task_id, queue, generation, redelivered):
+        claimed = await self._store.claim(task_id, queue, generation, redelivered)
+        if claimed == CLAIM_BUSY:
+            logger.info("Task {} redelivered to {} while still running", task_id, queue)
+        while claimed == CLAIM_BUSY:
+            await asyncio.sleep(settings.upload.HEARTBEAT_INTERVAL)
+            claimed = await self._store.claim(
+                task_id, queue, generation, redelivered, waited=True
+            )
+        if not claimed:
             logger.info("Task {} skipped in {}: stale or cancelled", task_id, queue)
             return
         self._loop = asyncio.get_running_loop()
