@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
+from loguru import logger
 from redis.asyncio import Redis
 
 from src.config import settings
@@ -34,6 +35,9 @@ end
 return 0
 """
 JOB_TTL = 120
+DISK_LOCK_TTL_MS = 5000
+DISK_LOCK_WAIT = 10
+DISK_LOCK_POLL = 0.02
 
 
 FINISHED = "local finished = {done = true, failed = true, cancelled = true}\n"
@@ -321,6 +325,20 @@ class TaskStore:
             keep.cancel()
             await asyncio.shield(self.release_job(name, owner))
 
+    @asynccontextmanager
+    async def disk_lock(self) -> AsyncIterator[None]:
+        key, owner = self._key("job", "disk"), uuid4().hex
+        deadline = time.monotonic() + DISK_LOCK_WAIT
+        while not await self._redis.set(key, owner, nx=True, px=DISK_LOCK_TTL_MS):
+            if time.monotonic() > deadline:
+                logger.warning("Disk check lock is still busy, checking without it")
+                break
+            await asyncio.sleep(DISK_LOCK_POLL)
+        try:
+            yield
+        finally:
+            await asyncio.shield(self._run(UNLOCK, [key], owner))
+
     async def save_session(self, session: dict) -> None:
         task = session["task"]
         async with self._redis.pipeline(transaction=True) as pipe:
@@ -354,10 +372,14 @@ class TaskStore:
             for (item, until), value in zip(expiry, values)
         ]
 
-    async def session_bytes(self) -> int:
-        ids = await self._redis.zrangebyscore(
-            self._key("upload_sessions"), time.time(), "+inf"
-        )
+    async def session_bytes(self, exclude: UUID | str | None = None) -> int:
+        ids = [
+            item
+            for item in await self._redis.zrangebyscore(
+                self._key("upload_sessions"), time.time(), "+inf"
+            )
+            if item != str(exclude)
+        ]
         if not ids:
             return 0
         values = await self._redis.mget(

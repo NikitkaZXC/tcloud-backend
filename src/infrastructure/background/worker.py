@@ -59,6 +59,7 @@ class WorkerRuntime:
             )
             self._redis = create_redis()
             self.store = TaskStore(self._redis)
+            self.disk.store = self.store
             self.scanner = self._make_scanner()
             self.handoff_lock = asyncio.Lock()
         return await coroutine

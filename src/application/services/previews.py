@@ -107,7 +107,7 @@ class PreviewBackfill:
         )
         plain = temp_path(file.name)
         frame = temp_path("thumb.jpg")
-        reservation = self._runtime.disk.reserve(file.size)
+        reservation = await self._runtime.disk.reserve(file.size)
         try:
             await write_body(
                 tracked(

@@ -14,7 +14,7 @@ from src.application.services import TaskSweeper
 from src.application.services.temp import append_body
 from src.config import settings
 from src.infrastructure.cache import TaskStore
-from tests.api.conftest import path, upload, wait_task
+from tests.api.conftest import Remote, path, upload, wait_task
 from tests.factories import make_image
 
 CHUNK = 10_000
@@ -374,3 +374,94 @@ async def test_device_upload_sees_encrypted_session(client, storage, disk):
     assert response.status_code == 202
     disk["value"] = 10**12
     assert (await wait_task(client, response.json()["id"]))["status"] == "done"
+
+
+def disk_lock_key() -> str:
+    return store()._key("job", "disk")
+
+
+async def test_concurrent_sessions_reserve_disk_once(
+    client, storage, disk, monkeypatch
+):
+    save = store().save_session
+
+    async def slow_save(session):
+        await asyncio.sleep(0.2)
+        await save(session)
+
+    monkeypatch.setattr(store(), "save_session", slow_save)
+    responses = await asyncio.gather(
+        create(client, path(storage, "a.bin"), 30_000, encrypt="false"),
+        create(client, path(storage, "b.bin"), 30_000, encrypt="false"),
+    )
+    assert sorted(response.status_code for response in responses) == [201, 507]
+    assert not await store()._redis.exists(disk_lock_key())
+
+
+async def test_session_chunk_not_blocked_by_own_reservation(client, storage, disk):
+    disk["value"] = 35_000
+    session = await open_session(
+        client, path(storage, "a.bin"), 30_000, encrypt="false"
+    )
+    response = await put(client, session["session_id"], 0, b"x" * CHUNK)
+    assert response.status_code == 200, response.text
+    assert response.json()["offset"] == CHUNK
+
+
+async def test_session_chunk_sees_other_sessions(client, storage, disk):
+    first = await open_session(client, path(storage, "a.bin"), 25_000, encrypt="false")
+    await open_session(client, path(storage, "b.bin"), 20_000, encrypt="false")
+    disk["value"] = 25_000
+    assert insufficient(await put(client, first["session_id"], 0, b"x" * CHUNK))
+    assert not await store()._redis.exists(disk_lock_key())
+
+
+async def test_url_download_sees_session_reservation(
+    client, storage, disk, remote, worker
+):
+    worker.disk.min_free = 0
+    Remote.files["/big.bin"] = b"x" * 25_000
+    session = await open_session(
+        client, path(storage, "a.bin"), 30_000, encrypt="false"
+    )
+    body = {"url": f"{remote}/big.bin", "path": path(storage, "big.bin")}
+    response = await client.post("/uploads/from-url", json=body)
+    task = await wait_task(client, response.json()["id"])
+    assert task["status"] == "failed"
+    assert task["error"]["code"] == "insufficient_storage"
+    await client.delete(f"/uploads/sessions/{session['session_id']}")
+    response = await client.post("/uploads/from-url", json=body)
+    assert (await wait_task(client, response.json()["id"]))["status"] == "done"
+
+
+async def test_disk_lock_waits_for_holder_and_releases_on_error(client):
+    await store()._redis.set(disk_lock_key(), "crashed", px=200)
+    started = asyncio.get_running_loop().time()
+    with pytest.raises(RuntimeError):
+        async with store().disk_lock():
+            assert await store()._redis.get(disk_lock_key()) != "crashed"
+            raise RuntimeError
+    assert asyncio.get_running_loop().time() - started >= 0.1
+    assert not await store()._redis.exists(disk_lock_key())
+
+
+async def test_concurrent_device_uploads_reserve_disk_once(client, storage, disk):
+    async def slow(data: bytes):
+        await asyncio.sleep(0.2)
+        yield data
+
+    responses = await asyncio.gather(
+        *(
+            client.post(
+                "/uploads",
+                params={"path": path(storage, name), "encrypt": "false"},
+                content=slow(b"x" * 30_000),
+                headers={"Content-Length": "30000"},
+            )
+            for name in ("a.bin", "b.bin")
+        )
+    )
+    assert sorted(response.status_code for response in responses) == [202, 507]
+    disk["value"] = 10**12
+    done = next(response for response in responses if response.status_code == 202)
+    assert (await wait_task(client, done.json()["id"]))["status"] == "done"

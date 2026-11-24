@@ -159,10 +159,7 @@ class UploadService:
                 f"file is {data.size} bytes, the server limit is {limit}", limit=limit
             )
         if data.size is not None:
-            self._runtime.disk.check(
-                (data.size * 2 if encrypt else data.size)
-                + await self._store.session_bytes()
-            )
+            await self._runtime.disk.check(data.size * 2 if encrypt else data.size)
         await self._check_active()
         await self._storages.get_db(storage_id)
         existing = await self._files.get_by_path(storage_id, folder, name)
@@ -253,8 +250,12 @@ class UploadService:
         if not queued:
             return await self._tasks.get(task["id"], actor)
         path = Path(task["params"]["file"])
-        reservation = self._runtime.disk.reserve(data.size)
+        reservation = None
         try:
+            async with self._store.disk_lock():
+                reservation = await self._runtime.disk.reserve(
+                    data.size * 2 if task["params"]["encrypt"] else data.size
+                )
             await self._take_disk_slot(task)
             limit = min(data.size, task["params"]["limit"])
             received = await write_body(body, path, limit, reservation.update)
@@ -266,7 +267,8 @@ class UploadService:
             await self._drop_upload(task)
             raise
         finally:
-            reservation.release()
+            if reservation:
+                reservation.release()
         return await self._queue_device(actor, task)
 
     @staticmethod
@@ -299,7 +301,11 @@ class UploadService:
         try:
             await self._take_disk_slot(task)
             Path(task["params"]["file"]).touch(mode=0o600)
-            session = await self._save_session(task, 0)
+            async with self._store.disk_lock():
+                await self._runtime.disk.check(
+                    task["bytes_total"] * (2 if task["params"]["encrypt"] else 1)
+                )
+                session = await self._save_session(task, 0)
         except BaseException:
             await self._drop_upload(task)
             raise
@@ -350,7 +356,7 @@ class UploadService:
                 raise ChunkTooLargeError(
                     f"chunk is {size} bytes, at most {allowed} fit", limit=allowed
                 )
-            reservation = self._runtime.disk.reserve(remaining)
+            reservation = await self._runtime.disk.reserve(size, exclude=session_id)
             try:
                 await append_body(
                     body, Path(task["params"]["file"]), offset, size, reservation.update

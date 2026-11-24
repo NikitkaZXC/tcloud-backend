@@ -34,7 +34,7 @@ class AppRuntime:
         self.blacklist = blacklist
         self.rate_limits = rate_limits
         self.disk = DiskBudget(
-            settings.upload.TMP_DIR, settings.upload.MIN_FREE_DISK_MB * MiB
+            settings.upload.TMP_DIR, settings.upload.MIN_FREE_DISK_MB * MiB, store
         )
         self.media = MediaCache()
         self._tasks: set[asyncio.Task] = set()
