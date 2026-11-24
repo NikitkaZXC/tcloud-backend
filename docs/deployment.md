@@ -21,6 +21,11 @@ volume удалён или сессию завершили в Telegram. Без �
   фронтенда, задайте в `.env` `APP_DOCS_URL=/docs` и `APP_OPENAPI_URL=/openapi.json`, выполните
   `docker compose -f docker-compose.prod.yml up -d app` и откройте `http://127.0.0.1:8000/docs` на сервере или через
   `ssh -L 8000:127.0.0.1:8000`, не публикуя через прокси; потом уберите переменные и пересоздайте `app` так же.
+- **`FORWARDED_ALLOW_IPS`** (в `.env`, compose передаёт его API, по умолчанию `127.0.0.1`): адреса, от которых uvicorn
+  верит `X-Forwarded-For`. Если reverse proxy в другом контейнере (nginx фронтенда), задайте IP или подсеть его
+  docker-сети (`docker network inspect …`, например `172.18.0.0/16`), **никогда `*`**. Иначе API видит у всех
+  клиентов один IP прокси: лимиты по IP (`SIGNIN_IP`, `REFRESH_IP`, `HEALTH_IP`) общие на всех, один перебор паролей
+  отрезает вход всем (security.md, «Rate limiting»).
 - Порт — `127.0.0.1:8000`. Для доступа снаружи — reverse proxy с TLS: фронтенд на `site.com`, на бэк — только `/api/*`, с сохранением `Host` (иначе проверка `Origin` отклонит запросы, см. security.md).
 - `make env` кладёт RS256-ключи JWT в `certs/` (в git и образ не попадают), compose монтирует их в `/certs` read-only.
   Куки `Secure` (`JWT_SECURE=true`): снаружи нужен TLS. Приложение в контейнере — uid 1000: на Linux, если вы не uid 1000,
