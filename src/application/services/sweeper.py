@@ -77,6 +77,24 @@ class TaskSweeper:
             Path(archive).unlink(missing_ok=True)
             await self._store.forget_archive(archive)
             removed += 1
+        for session_id, until, session in await self._store.sessions():
+            if session and until > now:
+                used.add(Path(session["task"]["params"]["file"]))
+                continue
+            async with self._store.holding(f"upload:{session_id}") as held:
+                session = await self._store.get_session(session_id)
+                if not held or (session and session["expires_at"] > now):
+                    used.update(task_files(session["task"]) if session else ())
+                    continue
+                await self._store.drop_session(session_id)
+                if session:
+                    task = session["task"]
+                    Path(task["params"]["file"]).unlink(missing_ok=True)
+                    await self._store.release(task["id"], task["path"])
+                    logger.info(
+                        "Upload session {} expired: {}", session_id, task["path"]
+                    )
+                    removed += 1
         for item in settings.upload.TMP_DIR.iterdir():
             try:
                 if item not in used and item.stat().st_mtime < old:

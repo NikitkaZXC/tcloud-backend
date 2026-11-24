@@ -81,6 +81,15 @@ class TaskListServiceRead(BaseModel):
     summary: TaskSummaryServiceRead
 
 
+class UploadSessionServiceRead(BaseModel):
+    session_id: UUID
+    path: str
+    size: int
+    offset: int
+    chunk_size: int
+    expires_at: datetime
+
+
 class UploadServiceCreate(BaseModel):
     path: str
     size: int | None = None

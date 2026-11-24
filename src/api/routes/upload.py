@@ -2,7 +2,7 @@ from typing import Annotated
 from urllib.parse import quote
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, Query, Request, status
+from fastapi import APIRouter, Depends, Header, Query, Request, Response, status
 from fastapi.responses import FileResponse
 
 from src.api.dependencies import get_actor, rate_limit_by_user
@@ -15,10 +15,12 @@ from src.api.schemas import (
     TaskListResponse,
     TaskResponse,
     UploadParams,
+    UploadSessionParams,
+    UploadSessionResponse,
     UrlUploadCreate,
 )
 from src.application.factory import get_service_task, get_service_upload
-from src.application.schemas import Actor, UploadServiceCreate
+from src.application.schemas import Actor, TaskServiceRead, UploadServiceCreate
 from src.application.services import TaskService, UploadService
 from src.config import settings
 from src.infrastructure.archive import MEDIA_TYPES
@@ -51,6 +53,97 @@ async def create_upload(
 ) -> TaskResponse:
     data = UploadServiceCreate(**params.model_dump(), size=content_length)
     return await upload_service.upload(actor, data, request.stream())
+
+
+@router.post(
+    path="/uploads/sessions",
+    dependencies=[
+        Depends(rate_limit_by_user("upload", settings.rate_limit.UPLOAD_USER))
+    ],
+    name="uploads:sessions:create",
+    summary="Start a resumable upload sent in chunks; a skipped upload answers with its done task",
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_upload_session(
+    params: Annotated[UploadSessionParams, Query()],
+    response: Response,
+    actor: Actor = Depends(get_actor),
+    upload_service: UploadService = Depends(get_service_upload),
+) -> UploadSessionResponse | TaskResponse:
+    data = UploadServiceCreate(**params.model_dump())
+    result = await upload_service.create_session(actor, data)
+    if isinstance(result, TaskServiceRead):
+        response.status_code = status.HTTP_200_OK
+    return result
+
+
+@router.put(
+    path="/uploads/sessions/{session_id}",
+    dependencies=[
+        Depends(rate_limit_by_user("upload", settings.rate_limit.UPLOAD_USER))
+    ],
+    name="uploads:sessions:put",
+    summary="Send the chunk that starts at offset; the last chunk queues the task (202)",
+    status_code=status.HTTP_200_OK,
+)
+async def put_upload_chunk(
+    session_id: UUID,
+    offset: Annotated[int, Query(ge=0)],
+    request: Request,
+    response: Response,
+    content_length: Annotated[FileSize | None, Header()] = None,
+    actor: Actor = Depends(get_actor),
+    upload_service: UploadService = Depends(get_service_upload),
+) -> UploadSessionResponse | TaskResponse:
+    result = await upload_service.put_chunk(
+        actor, session_id, offset, content_length, request.stream()
+    )
+    if isinstance(result, TaskServiceRead):
+        response.status_code = status.HTTP_202_ACCEPTED
+    return result
+
+
+@router.get(
+    path="/uploads/sessions/{session_id}",
+    name="uploads:sessions:get",
+    summary="State of a resumable upload: received offset, size, chunk size, expiry",
+    status_code=status.HTTP_200_OK,
+)
+async def get_upload_session(
+    session_id: UUID,
+    actor: Actor = Depends(get_actor),
+    upload_service: UploadService = Depends(get_service_upload),
+) -> UploadSessionResponse:
+    return await upload_service.get_session(actor, session_id)
+
+
+@router.head(
+    path="/uploads/sessions/{session_id}",
+    name="uploads:sessions:head",
+    summary="Received offset of a resumable upload in the Upload-Offset header",
+    status_code=status.HTTP_200_OK,
+)
+async def head_upload_session(
+    session_id: UUID,
+    actor: Actor = Depends(get_actor),
+    upload_service: UploadService = Depends(get_service_upload),
+) -> Response:
+    session = await upload_service.get_session(actor, session_id)
+    return Response(headers={"Upload-Offset": str(session.offset)})
+
+
+@router.delete(
+    path="/uploads/sessions/{session_id}",
+    name="uploads:sessions:delete",
+    summary="Abort a resumable upload: the received part is deleted and the path freed",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_upload_session(
+    session_id: UUID,
+    actor: Actor = Depends(get_actor),
+    upload_service: UploadService = Depends(get_service_upload),
+) -> None:
+    await upload_service.abort_session(actor, session_id)
 
 
 @router.post(

@@ -7,8 +7,15 @@ from src.application.schemas import (
     TaskCountsServiceRead,
     TaskListServiceRead,
     TaskServiceRead,
+    UploadSessionServiceRead,
 )
-from src.utilities.formatters import OnConflict, Priority, SendAs, TcloudPath
+from src.utilities.formatters import (
+    FileSize,
+    OnConflict,
+    Priority,
+    SendAs,
+    TcloudPath,
+)
 
 BATCH_MAX = 100
 
@@ -21,6 +28,14 @@ class UploadParams(BaseModel):
     allow_unscannable: bool | None = None
     encrypt: bool | None = None
     callback_url: str | None = None
+
+
+class UploadSessionParams(UploadParams):
+    size: FileSize
+
+
+class UploadSessionResponse(UploadSessionServiceRead):
+    pass
 
 
 class UrlUploadCreate(UploadParams):

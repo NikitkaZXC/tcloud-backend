@@ -303,6 +303,63 @@ class TaskStore:
     async def release_job(self, name: str, owner: str) -> None:
         await self._run(UNLOCK, [self._key("job", name)], owner)
 
+    async def _keep_job(self, name: str, owner: str) -> None:
+        while True:
+            await asyncio.sleep(JOB_TTL / 4)
+            await self.hold_job(name, owner)
+
+    @asynccontextmanager
+    async def holding(self, name: str) -> AsyncIterator[bool]:
+        owner = uuid4().hex
+        if not await self.hold_job(name, owner):
+            yield False
+            return
+        keep = asyncio.create_task(self._keep_job(name, owner))
+        try:
+            yield True
+        finally:
+            keep.cancel()
+            await asyncio.shield(self.release_job(name, owner))
+
+    async def save_session(self, session: dict) -> None:
+        task = session["task"]
+        async with self._redis.pipeline(transaction=True) as pipe:
+            pipe.set(
+                self._key("upload_session", task["id"]),
+                encode(session),
+                ex=2 * settings.upload.SESSION_TTL,
+            )
+            pipe.zadd(
+                self._key("upload_sessions"), {str(task["id"]): session["expires_at"]}
+            )
+            pipe.expire(self._key("path", task["path"]), settings.upload.LOCK_TTL)
+            pipe.zadd(self._key("disk"), {str(task["id"]): time.time()}, xx=True)
+            await pipe.execute()
+
+    async def get_session(self, session_id: UUID | str) -> dict | None:
+        value = await self._redis.get(self._key("upload_session", session_id))
+        return None if value is None else json.loads(value)
+
+    async def sessions(self) -> list[tuple[str, float, dict | None]]:
+        expiry = await self._redis.zrange(
+            self._key("upload_sessions"), 0, -1, withscores=True
+        )
+        if not expiry:
+            return []
+        values = await self._redis.mget(
+            [self._key("upload_session", item) for item, _ in expiry]
+        )
+        return [
+            (item, until, None if value is None else json.loads(value))
+            for (item, until), value in zip(expiry, values)
+        ]
+
+    async def drop_session(self, session_id: UUID | str) -> None:
+        async with self._redis.pipeline(transaction=True) as pipe:
+            pipe.delete(self._key("upload_session", session_id))
+            pipe.zrem(self._key("upload_sessions"), str(session_id))
+            await pipe.execute()
+
     async def touch(self, task_id: UUID) -> None:
         await self._redis.hset(self._key("task", task_id), "beat_at", time.time())
 

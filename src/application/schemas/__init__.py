@@ -54,6 +54,7 @@ from .task import (
     TaskWaitingServiceRead,
     TaskWarningServiceRead,
     UploadServiceCreate,
+    UploadSessionServiceRead,
     task_warning,
 )
 from .user import (
@@ -116,6 +117,7 @@ __all__ = [
     "TelegramFileServiceRead",
     "TelegramStorageServiceRead",
     "UploadServiceCreate",
+    "UploadSessionServiceRead",
     "caption_token",
     "telegram_link",
     "Actor",

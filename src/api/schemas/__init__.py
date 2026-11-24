@@ -42,6 +42,8 @@ from .upload import (
     TaskListResponse,
     TaskResponse,
     UploadParams,
+    UploadSessionParams,
+    UploadSessionResponse,
     UrlUploadCreate,
 )
 from .user import (
@@ -97,6 +99,8 @@ __all__ = [
     "TaskListResponse",
     "TaskResponse",
     "UploadParams",
+    "UploadSessionParams",
+    "UploadSessionResponse",
     "UrlUploadCreate",
     "ApiKeyCreate",
     "ApiKeyResponse",

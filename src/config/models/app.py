@@ -28,6 +28,7 @@ class AppSettings(BaseSettings):
         "Content-Disposition",
         "Content-Range",
         "Retry-After",
+        "Upload-Offset",
     ]
 
     @property

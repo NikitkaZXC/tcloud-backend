@@ -1,13 +1,17 @@
+import time
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime
 from pathlib import Path
 from uuid import UUID, uuid7
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.application.exception import (
+    ChunkTooLargeError,
     EncryptRequiresFileError,
     FileTooLargeError,
     LengthRequiredError,
+    OffsetMismatchError,
     PathConflictError,
     SessionNotAuthorizedError,
     SizeMismatchError,
@@ -17,6 +21,8 @@ from src.application.exception import (
     TaskNotRetryableError,
     TooManyTasksError,
     UploadInProgressError,
+    UploadSessionBusyError,
+    UploadSessionNotFoundError,
 )
 from src.application.schemas import (
     SKIPPED,
@@ -25,11 +31,17 @@ from src.application.schemas import (
     BatchServiceRead,
     TaskServiceRead,
     UploadServiceCreate,
+    UploadSessionServiceRead,
 )
 from src.application.services.access import require
 from src.application.services.storage import StorageService, root_settings
 from src.application.services.task import TaskService
-from src.application.services.temp import remove_task_files, temp_path, write_body
+from src.application.services.temp import (
+    append_body,
+    remove_task_files,
+    temp_path,
+    write_body,
+)
 from src.application.services.webhook import send_hook
 from src.config import settings
 from src.infrastructure.background import AppRuntime, enqueue
@@ -208,6 +220,27 @@ class UploadService:
             raise UploadInProgressError(f"{path} is already being uploaded")
         return task, True
 
+    async def _take_disk_slot(self, task: dict) -> None:
+        if not await self._store.take_disk_slot(task["id"]):
+            raise TooManyTasksError(
+                f"{settings.upload.MAX_FILES_ON_DISK} files are already on the "
+                "server waiting for Telegram, try later",
+                retry_after=30,
+            )
+
+    async def _drop_upload(self, task: dict) -> None:
+        Path(task["params"]["file"]).unlink(missing_ok=True)
+        await self._store.release(task["id"], task["path"])
+
+    async def _queue_device(self, actor: Actor, task: dict) -> TaskServiceRead:
+        try:
+            await self._store.create(task)
+            await start_task(self._runtime, task, UploadQueue.PREPARE, 0)
+        except BaseException:
+            await self._drop_upload(task)
+            raise
+        return await self._tasks.get(task["id"], actor)
+
     async def upload(
         self, actor: Actor, data: UploadServiceCreate, body: AsyncIterator[bytes]
     ) -> TaskServiceRead:
@@ -219,27 +252,123 @@ class UploadService:
         path = Path(task["params"]["file"])
         reservation = self._runtime.disk.reserve(data.size)
         try:
-            if not await self._store.take_disk_slot(task["id"]):
-                raise TooManyTasksError(
-                    f"{settings.upload.MAX_FILES_ON_DISK} files are already on the "
-                    "server waiting for Telegram, try later",
-                    retry_after=30,
-                )
+            await self._take_disk_slot(task)
             limit = min(data.size, task["params"]["limit"])
             received = await write_body(body, path, limit, reservation.update)
             if received != data.size:
                 raise SizeMismatchError(
                     f"declared {data.size} bytes, received {received}"
                 )
-            await self._store.create(task)
-            await start_task(self._runtime, task, UploadQueue.PREPARE, 0)
         except BaseException:
-            path.unlink(missing_ok=True)
-            await self._store.release(task["id"], task["path"])
+            await self._drop_upload(task)
             raise
         finally:
             reservation.release()
-        return await self._tasks.get(task["id"], actor)
+        return await self._queue_device(actor, task)
+
+    @staticmethod
+    def _session_read(session: dict) -> UploadSessionServiceRead:
+        task = session["task"]
+        return UploadSessionServiceRead(
+            session_id=task["id"],
+            path=task["path"],
+            size=task["bytes_total"],
+            offset=session["offset"],
+            chunk_size=settings.upload.CHUNK_SIZE,
+            expires_at=datetime.fromtimestamp(session["expires_at"], UTC),
+        )
+
+    async def _save_session(self, task: dict, offset: int) -> dict:
+        session = {
+            "task": task,
+            "offset": offset,
+            "expires_at": time.time() + settings.upload.SESSION_TTL,
+        }
+        await self._store.save_session(session)
+        return session
+
+    async def create_session(
+        self, actor: Actor, data: UploadServiceCreate
+    ) -> UploadSessionServiceRead | TaskServiceRead:
+        task, queued = await self._new_task(actor, data, None)
+        if not queued:
+            return await self._tasks.get(task["id"], actor)
+        try:
+            await self._take_disk_slot(task)
+            Path(task["params"]["file"]).touch(mode=0o600)
+            session = await self._save_session(task, 0)
+        except BaseException:
+            await self._drop_upload(task)
+            raise
+        return self._session_read(session)
+
+    async def _get_session(self, actor: Actor, session_id: UUID) -> dict:
+        session = await self._store.get_session(session_id)
+        if (
+            not session
+            or session["task"]["user_id"] != str(actor.user_id)
+            or session["expires_at"] < time.time()
+        ):
+            raise UploadSessionNotFoundError("upload session not found")
+        return session
+
+    async def get_session(
+        self, actor: Actor, session_id: UUID
+    ) -> UploadSessionServiceRead:
+        return self._session_read(await self._get_session(actor, session_id))
+
+    async def put_chunk(
+        self,
+        actor: Actor,
+        session_id: UUID,
+        offset: int,
+        size: int | None,
+        body: AsyncIterator[bytes],
+    ) -> UploadSessionServiceRead | TaskServiceRead:
+        await self._get_session(actor, session_id)
+        if size is None:
+            raise LengthRequiredError("Content-Length header is required")
+        async with self._store.holding(f"upload:{session_id}") as held:
+            if not held:
+                raise UploadSessionBusyError(
+                    "another chunk of this upload is still being received",
+                    retry_after=5,
+                )
+            session = await self._get_session(actor, session_id)
+            task = session["task"]
+            if offset != session["offset"]:
+                raise OffsetMismatchError(
+                    f"the next chunk starts at {session['offset']}",
+                    offset=session["offset"],
+                )
+            remaining = task["bytes_total"] - offset
+            allowed = min(settings.upload.CHUNK_SIZE, remaining)
+            if size > allowed:
+                raise ChunkTooLargeError(
+                    f"chunk is {size} bytes, at most {allowed} fit", limit=allowed
+                )
+            reservation = self._runtime.disk.reserve(remaining)
+            try:
+                await append_body(
+                    body, Path(task["params"]["file"]), offset, size, reservation.update
+                )
+            finally:
+                reservation.release()
+            if offset + size < task["bytes_total"]:
+                return self._session_read(await self._save_session(task, offset + size))
+            await self._store.drop_session(session_id)
+        return await self._queue_device(actor, task)
+
+    async def abort_session(self, actor: Actor, session_id: UUID) -> None:
+        await self._get_session(actor, session_id)
+        async with self._store.holding(f"upload:{session_id}") as held:
+            if not held:
+                raise UploadSessionBusyError(
+                    "a chunk of this upload is still being received", retry_after=5
+                )
+            session = await self._get_session(actor, session_id)
+            await self._store.drop_session(session_id)
+            await self._drop_upload(session["task"])
 
     async def upload_url(
         self, actor: Actor, data: UploadServiceCreate, batch_id: UUID | None = None

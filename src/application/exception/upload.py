@@ -77,3 +77,27 @@ class EncryptRequiresFileError(TCloudError):
     """Raised when encryption is requested for a file sent as Telegram media."""
 
     code = "encrypt_requires_file"
+
+
+class UploadSessionNotFoundError(TCloudError):
+    """Raised when an upload session does not exist, expired or belongs to another user."""
+
+    code = "upload_session_not_found"
+
+
+class UploadSessionBusyError(TCloudError):
+    """Raised when another chunk of the same upload session is still being received."""
+
+    code = "upload_session_busy"
+
+
+class OffsetMismatchError(TCloudError):
+    """Raised when a chunk does not start at the received offset of its session."""
+
+    code = "offset_mismatch"
+
+
+class ChunkTooLargeError(TCloudError):
+    """Raised when a chunk is larger than the chunk size or the rest of the file."""
+
+    code = "chunk_too_large"

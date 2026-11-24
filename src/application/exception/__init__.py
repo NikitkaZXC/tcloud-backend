@@ -30,9 +30,11 @@ from .storage import (
 from .upload import (
     ArchiveExpiredError,
     ArchiveNotReadyError,
+    ChunkTooLargeError,
     EncryptRequiresFileError,
     FileTooLargeError,
     LengthRequiredError,
+    OffsetMismatchError,
     SizeMismatchError,
     TaskCancelledError,
     TaskFinishedError,
@@ -41,6 +43,8 @@ from .upload import (
     TaskNotRetryableError,
     TooManyTasksError,
     UploadInProgressError,
+    UploadSessionBusyError,
+    UploadSessionNotFoundError,
 )
 from .user import (
     AccountLockedError,
@@ -92,6 +96,10 @@ __all__ = [
     "LengthRequiredError",
     "TooManyTasksError",
     "UploadInProgressError",
+    "UploadSessionBusyError",
+    "UploadSessionNotFoundError",
+    "OffsetMismatchError",
+    "ChunkTooLargeError",
     "AccountLockedError",
     "ApiKeyNotFoundError",
     "ForbiddenError",
