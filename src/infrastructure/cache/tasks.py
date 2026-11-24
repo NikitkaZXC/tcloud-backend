@@ -354,6 +354,22 @@ class TaskStore:
             for (item, until), value in zip(expiry, values)
         ]
 
+    async def session_bytes(self) -> int:
+        ids = await self._redis.zrangebyscore(
+            self._key("upload_sessions"), time.time(), "+inf"
+        )
+        if not ids:
+            return 0
+        values = await self._redis.mget(
+            [self._key("upload_session", item) for item in ids]
+        )
+        return sum(
+            session["task"]["bytes_total"]
+            * (2 if session["task"]["params"]["encrypt"] else 1)
+            - session["offset"]
+            for session in map(json.loads, filter(None, values))
+        )
+
     async def drop_session(self, session_id: UUID | str) -> None:
         async with self._redis.pipeline(transaction=True) as pipe:
             pipe.delete(self._key("upload_session", session_id))

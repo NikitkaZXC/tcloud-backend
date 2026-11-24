@@ -345,7 +345,11 @@ class FolderService:
                 "the upload Telegram session is not logged in, use /api/telegram/upload"
             )
         sizes = [file.size for file in files]
-        self._runtime.disk.check(sum(sizes) + max(sizes, default=0))
+        self._runtime.disk.check(
+            sum(sizes)
+            + max(sizes, default=0)
+            + await self._runtime.store.session_bytes()
+        )
         level = TaskPriority(priority)
         task = {
             "id": uuid7(),

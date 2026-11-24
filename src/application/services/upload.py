@@ -159,7 +159,10 @@ class UploadService:
                 f"file is {data.size} bytes, the server limit is {limit}", limit=limit
             )
         if data.size is not None:
-            self._runtime.disk.check(data.size * 2 if encrypt else data.size)
+            self._runtime.disk.check(
+                (data.size * 2 if encrypt else data.size)
+                + await self._store.session_bytes()
+            )
         await self._check_active()
         await self._storages.get_db(storage_id)
         existing = await self._files.get_by_path(storage_id, folder, name)

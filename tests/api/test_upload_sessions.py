@@ -1,7 +1,9 @@
 import asyncio
 import hashlib
 import os
+import shutil
 import uuid
+from collections import namedtuple
 from pathlib import Path
 
 import pytest
@@ -16,6 +18,7 @@ from tests.api.conftest import path, upload, wait_task
 from tests.factories import make_image
 
 CHUNK = 10_000
+Usage = namedtuple("Usage", "total used free")
 
 
 @pytest.fixture(autouse=True)
@@ -292,3 +295,82 @@ async def test_parallel_puts_write_one_chunk(client, storage):
     last = await put(client, session["session_id"], CHUNK, data[CHUNK:])
     done = await wait_task(client, last.json()["id"])
     assert done["file"]["sha256"] == hashlib.sha256(data).hexdigest()
+
+
+@pytest.fixture
+def disk(monkeypatch):
+    free = {"value": 50_000}
+    monkeypatch.setattr(main.app.state.runtime.disk, "min_free", 0)
+    monkeypatch.setattr(
+        shutil, "disk_usage", lambda target: Usage(10**12, 0, free["value"])
+    )
+    return free
+
+
+async def create(client, target: str, size: int, **options):
+    return await client.post(
+        "/uploads/sessions", params={"path": target, "size": size, **options}
+    )
+
+
+def insufficient(response) -> bool:
+    return (
+        response.status_code == 507
+        and response.json()["error"]["code"] == "insufficient_storage"
+    )
+
+
+async def test_sessions_reserve_disk_until_abort(client, storage, disk):
+    first = await open_session(client, path(storage, "a.bin"), 30_000, encrypt="false")
+    target = path(storage, "b.bin")
+    assert insufficient(await create(client, target, 30_000, encrypt="false"))
+    await put(client, first["session_id"], 0, b"x" * CHUNK)
+    disk["value"] -= CHUNK
+    assert insufficient(await create(client, target, 30_000, encrypt="false"))
+    response = await client.delete(f"/uploads/sessions/{first['session_id']}")
+    assert response.status_code == 204
+    disk["value"] += CHUNK
+    assert (await create(client, target, 30_000, encrypt="false")).status_code == 201
+
+
+async def test_finished_session_frees_reservation(client, storage, disk):
+    data = os.urandom(30_000)
+    session = await open_session(
+        client, path(storage, "a.bin"), len(data), encrypt="false"
+    )
+    target = path(storage, "b.bin")
+    assert insufficient(await create(client, target, 30_000, encrypt="false"))
+    last = await send_all(client, session, data)
+    assert last.status_code == 202, last.text
+    assert (await create(client, target, 30_000, encrypt="false")).status_code == 201
+    disk["value"] = 10**12
+    assert (await wait_task(client, last.json()["id"]))["status"] == "done"
+
+
+async def test_expired_session_frees_reservation(client, storage, disk):
+    session = await open_session(
+        client, path(storage, "a.bin"), 30_000, encrypt="false"
+    )
+    target = path(storage, "b.bin")
+    assert insufficient(await create(client, target, 30_000, encrypt="false"))
+    saved = await store().get_session(session["session_id"])
+    await store().save_session({**saved, "expires_at": 0})
+    assert (await create(client, target, 30_000, encrypt="false")).status_code == 201
+
+
+async def test_device_upload_sees_encrypted_session(client, storage, disk):
+    await open_session(client, path(storage, "a.bin"), 20_000)
+    response = await client.post(
+        "/uploads",
+        params={"path": path(storage, "b.bin"), "encrypt": "false"},
+        content=b"x" * 15_000,
+    )
+    assert insufficient(response)
+    response = await client.post(
+        "/uploads",
+        params={"path": path(storage, "c.bin"), "encrypt": "false"},
+        content=b"x" * 5_000,
+    )
+    assert response.status_code == 202
+    disk["value"] = 10**12
+    assert (await wait_task(client, response.json()["id"]))["status"] == "done"
