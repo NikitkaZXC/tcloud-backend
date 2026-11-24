@@ -2,6 +2,7 @@
 set -e
 
 [ -f .env ] || cp .env.exemple .env
+chmod 600 .env
 
 secret() {
     python3 -c "import secrets; print(secrets.token_urlsafe($1))"
