@@ -16,6 +16,9 @@ class FlakyStore:
         if self.touches == 1:
             raise ConnectionError("redis blip")
 
+    async def renew(self, task_id, path):
+        pass
+
     async def cancel_requested(self, task_id):
         self.checks += 1
         if self.checks == 1:
@@ -27,7 +30,7 @@ async def test_beat_survives_a_redis_error(monkeypatch):
     monkeypatch.setattr(settings.upload, "HEARTBEAT_INTERVAL", 0.01)
     store = FlakyStore()
     beat = asyncio.create_task(
-        UploadPipeline(SimpleNamespace(store=store))._beat("task")
+        UploadPipeline(SimpleNamespace(store=store))._beat("task", "tcloud/x/a")
     )
     while store.touches < 3:
         await asyncio.sleep(0.01)

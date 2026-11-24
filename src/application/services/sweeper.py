@@ -49,6 +49,7 @@ class TaskSweeper:
                 else:
                     await self._store.deactivate(task_id)
                 continue
+            await self._store.renew(task_id, task["path"])
             if not self._stale(task) or sizes.get(self._queue(task), 1):
                 continue
             if task_id not in self._suspects:

@@ -77,6 +77,18 @@ def task_files(task: dict) -> list[Path]:
     return [Path(item) for item in paths if item]
 
 
+async def used_files(store: TaskStore) -> set[Path]:
+    tasks = await store.get_many(await store.active_ids())
+    used = {path for task in tasks for path in task_files(task)}
+    used.update(Path(archive) for archive in await store.archives())
+    used.update(
+        Path(session["task"]["params"]["file"])
+        for _, _, session in await store.sessions()
+        if session
+    )
+    return used
+
+
 def remove_task_files(task: dict) -> None:
     for item in task_files(task):
         item.unlink(missing_ok=True)

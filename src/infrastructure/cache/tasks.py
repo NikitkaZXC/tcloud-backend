@@ -34,6 +34,20 @@ if redis.call('GET', KEYS[1]) == ARGV[1] then
 end
 return 0
 """
+RENEW_TASK = """
+local now, ttl = tonumber(ARGV[2]), tonumber(ARGV[3])
+if redis.call('GET', KEYS[1]) == ARGV[1] then redis.call('EXPIRE', KEYS[1], ttl) end
+for _, key in ipairs({KEYS[2], KEYS[3]}) do
+    if redis.call('ZSCORE', key, ARGV[1]) then redis.call('ZADD', key, now, ARGV[1]) end
+end
+local parked = redis.call('ZSCORE', KEYS[4], ARGV[1])
+if parked and tonumber(parked) > now + tonumber(ARGV[4]) then
+    redis.call('ZADD', KEYS[4], now + ttl, ARGV[1])
+end
+if redis.call('ZSCORE', KEYS[5], ARGV[1]) then redis.call('ZADD', KEYS[5], now + ttl, ARGV[1]) end
+return 1
+"""
+PARKED_AFTER = 60
 JOB_TTL = 120
 DISK_LOCK_TTL_MS = 5000
 DISK_LOCK_WAIT = 10
@@ -491,6 +505,22 @@ class TaskStore:
             pipe.delete(self._key("upload_session", session_id))
             pipe.zrem(self._key("upload_sessions"), str(session_id))
             await pipe.execute()
+
+    async def renew(self, task_id: UUID | str, path: str) -> None:
+        await self._run(
+            RENEW_TASK,
+            [
+                self._key("path", path),
+                self._key("active"),
+                self._key("disk"),
+                self._key("disk", "reserved", "exp"),
+                self._key("disk", "usage", "exp"),
+            ],
+            str(task_id),
+            time.time(),
+            settings.upload.LOCK_TTL,
+            PARKED_AFTER,
+        )
 
     async def touch(self, task_id: UUID) -> None:
         await self._redis.hset(self._key("task", task_id), "beat_at", time.time())

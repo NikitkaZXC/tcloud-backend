@@ -125,7 +125,7 @@ class UploadPipeline:
             UploadQueue.TELEGRAM: self._send,
             UploadQueue.ARCHIVE: self._archive,
         }[queue]
-        beat = self._runtime.spawn(self._beat(task_id))
+        beat = self._runtime.spawn(self._beat(task_id, task["path"]))
         watch = self._runtime.spawn(self._watch(task["id"]))
         kind = {UploadQueue.TELEGRAM: "write", UploadQueue.ARCHIVE: "read"}.get(queue)
         activity = (
@@ -146,10 +146,11 @@ class UploadPipeline:
             beat.cancel()
             watch.cancel()
 
-    async def _beat(self, task_id: UUID) -> None:
+    async def _beat(self, task_id: UUID, path: str) -> None:
         while True:
             try:
                 await self._store.touch(task_id)
+                await self._store.renew(task_id, path)
             except Exception as error:
                 logger.warning("Task {}: heartbeat failed: {!r}", task_id, error)
             await asyncio.sleep(settings.upload.HEARTBEAT_INTERVAL)

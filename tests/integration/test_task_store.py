@@ -1,4 +1,5 @@
 import asyncio
+import time
 from types import SimpleNamespace
 from uuid import uuid7
 
@@ -362,3 +363,30 @@ async def test_lua_runs_by_sha(store, redis):
     stats = await redis.info("commandstats")
     assert stats["cmdstat_evalsha"]["calls"] >= 6
     assert "cmdstat_eval" not in stats
+
+
+async def test_renew_extends_long_lived_task_keys(store, redis):
+    task_id, other = uuid7(), uuid7()
+    path = f"tcloud/{uuid7()}/a.bin"
+    old = 1000.0
+    await redis.set(store._key("path", path), str(task_id), ex=5)
+    await redis.zadd(store._key("active"), {str(task_id): old})
+    await redis.zadd(store._key("disk"), {str(task_id): old})
+    await store.reserve_disk(str(task_id), 10, settings.upload.LOCK_TTL)
+    await store.reserve_disk(str(other), 10, 30)
+    await redis.zadd(store._key("disk", "usage", "exp"), {str(task_id): old})
+    await store.renew(task_id, path)
+    await store.renew(other, path)
+    assert await redis.ttl(store._key("path", path)) > 5
+    now = time.time()
+    for key in ("active", "disk"):
+        assert await redis.zscore(store._key(key), str(task_id)) > now - 5
+        assert await redis.zscore(store._key(key), str(other)) is None
+    exp = store._key("disk", "reserved", "exp")
+    assert await redis.zscore(exp, str(task_id)) > now + settings.upload.LOCK_TTL - 5
+    assert await redis.zscore(exp, str(other)) < now + 60
+    usage = await redis.zscore(store._key("disk", "usage", "exp"), str(task_id))
+    assert usage > now + settings.upload.LOCK_TTL - 5
+    await redis.set(store._key("path", path), "someone else", ex=5)
+    await store.renew(task_id, path)
+    assert await redis.ttl(store._key("path", path)) <= 5

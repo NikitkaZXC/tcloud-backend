@@ -1,5 +1,8 @@
 import io
+import os
+import time
 import zipfile
+from uuid import uuid7
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -373,6 +376,25 @@ async def test_root_password_follows_env(client, anonymous, monkeypatch):
         "/auth/signin", json={"login": "root", "password": "changed-password"}
     )
     assert response.status_code == 204
+
+
+async def test_startup_keeps_old_files_of_live_tasks(client, monkeypatch):
+    store = main.app.state.runtime.store
+    tmp = settings.upload.TMP_DIR
+    kept, orphan, archive = tmp / "kept.bin", tmp / "orphan.bin", tmp / "a.zip"
+    for item in (kept, orphan, archive):
+        item.write_bytes(b"x")
+        os.utime(item, (1, 1))
+    task_id = uuid7()
+    await store.create(
+        {"id": task_id, "path": "tcloud/x/kept.bin", "params": {"file": str(kept)}}
+    )
+    await store.activate(task_id)
+    await store.keep_archive(str(archive), time.time() + 60)
+    await prepare(main.app.state.runtime)
+    assert kept.exists() and archive.exists() and not orphan.exists()
+    await store.release(task_id, "tcloud/x/kept.bin")
+    await store.forget_archive(str(archive))
 
 
 async def test_storage_stats_count_only_readable_files(client, storage, make_user):
