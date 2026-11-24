@@ -48,6 +48,7 @@ STATUS_BY_CODE = {
     "task_not_queued": status.HTTP_409_CONFLICT,
     "task_not_retryable": status.HTTP_409_CONFLICT,
     "archive_not_ready": status.HTTP_409_CONFLICT,
+    "archive_in_progress": status.HTTP_409_CONFLICT,
     "archive_expired": status.HTTP_410_GONE,
     "too_many_tasks": status.HTTP_429_TOO_MANY_REQUESTS,
     "send_quota_exceeded": status.HTTP_429_TOO_MANY_REQUESTS,

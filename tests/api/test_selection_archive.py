@@ -203,3 +203,50 @@ async def test_encrypted_files_are_decrypted(client, telegram, storage):
     with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
         assert archive.read("s.txt") == text
     assert any("b.txt" in warning for warning in task["warnings"])
+
+
+async def test_files_inside_selected_folders_are_limited(client, storage, monkeypatch):
+    for index in range(3):
+        await stored(client, storage, f"a/{index}.pdf")
+    monkeypatch.setattr(settings.upload, "ARCHIVE_MAX_FILES", 2)
+    response = await select(client, folders=[path(storage, "a")])
+    assert response.status_code == 422 and code(response) == "too_many_items"
+    assert response.json()["error"]["limit"] == 2
+    response = await client.post(
+        "/folders/archive", params={"path": path(storage, "a")}
+    )
+    assert code(response) == "too_many_items"
+    monkeypatch.setattr(settings.upload, "ARCHIVE_MAX_FILES", 0)
+    monkeypatch.setattr(settings.upload, "ARCHIVE_MAX_SIZE_MB", 1)
+    big = await stored(
+        client, storage, "b/big.bin", b"x" * (1024 * 1024 + 1), encrypt="false"
+    )
+    response = await select(client, files=[big["uuid"]])
+    assert response.status_code == 413 and code(response) == "too_large"
+    assert response.json()["error"]["limit"] == 1024 * 1024
+    response = await client.post(
+        "/folders/archive", params={"path": path(storage, "b")}
+    )
+    assert code(response) == "too_large"
+    task, _ = await build(client, folders=[path(storage, "a")])
+    assert task["status"] == "done"
+
+
+async def test_one_running_archive_per_user(client, storage, make_user, monkeypatch):
+    await stored(client, storage, "a/x.pdf")
+    store = main.app.state.runtime.store
+    first = await select(client, folders=[path(storage, "a")])
+    assert first.status_code == 202
+    task_id = first.json()["id"]
+    await store.update(task_id, status="running")
+    await store.activate(task_id)
+    second = await client.post("/folders/archive", params={"path": path(storage, "a")})
+    assert second.status_code == 409 and code(second) == "archive_in_progress"
+    other = await make_user("other-archiver", "admin")
+    third = await other.post("/folders/archive", params={"path": path(storage, "a")})
+    assert third.status_code == 202
+    await wait_task(other, third.json()["id"])
+    await store.update(task_id, status="done")
+    again = await client.post("/folders/archive", params={"path": path(storage, "a")})
+    assert again.status_code == 202
+    await wait_task(client, again.json()["id"])

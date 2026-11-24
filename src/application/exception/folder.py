@@ -35,3 +35,9 @@ class StorageMismatchError(TCloudError):
     """Raised when selected files and folders belong to different storages."""
 
     code = "storage_mismatch"
+
+
+class ArchiveInProgressError(TCloudError):
+    """Raised when the user already has an archive task that is not finished."""
+
+    code = "archive_in_progress"

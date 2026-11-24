@@ -1,5 +1,4 @@
 import contextlib
-import lzma
 import os
 import shutil
 import tarfile
@@ -20,11 +19,12 @@ MEDIA_TYPES = {
     ArchiveFormat.TAR_BZ2: "application/x-bzip2",
     ArchiveFormat.TAR_XZ: "application/x-xz",
 }
-SEVEN_Z_FILTERS = [{"id": py7zr.FILTER_LZMA2, "preset": 9 | lzma.PRESET_EXTREME}]
+LEVEL = 6
+SEVEN_Z_FILTERS = [{"id": py7zr.FILTER_LZMA2, "preset": LEVEL}]
 TAR_MODES = {
-    ArchiveFormat.TAR_GZ: ("w|gz", {"compresslevel": 9}),
-    ArchiveFormat.TAR_BZ2: ("w|bz2", {"compresslevel": 9}),
-    ArchiveFormat.TAR_XZ: ("w|xz", {"preset": 9 | lzma.PRESET_EXTREME}),
+    ArchiveFormat.TAR_GZ: ("w|gz", {"compresslevel": LEVEL}),
+    ArchiveFormat.TAR_BZ2: ("w|bz2", {"compresslevel": LEVEL}),
+    ArchiveFormat.TAR_XZ: ("w|xz", {"preset": LEVEL}),
 }
 
 
@@ -64,7 +64,7 @@ class ArchiveWriter:
                 info = zipfile.ZipInfo(name, time.localtime(mtime)[:6])
                 info.file_size = size
                 info.compress_type = zipfile.ZIP_DEFLATED
-                info.compress_level = 9
+                info.compress_level = LEVEL
                 info.external_attr = 0o644 << 16
                 with self._zip.open(info, "w") as entry:
                     shutil.copyfileobj(data, entry, CHUNK)

@@ -90,6 +90,7 @@ curl -H "X-API-Key: $TCLOUD_KEY" --data-binary @photo.jpg \
 | `UPLOAD_MIN_FREE_DISK_MB` | `1024` | резерв диска, иначе `507` |
 | `UPLOAD_TASK_TTL`, `UPLOAD_ARCHIVE_TTL` | 7 дней, 24 ч | жизнь задач и готовых архивов |
 | `UPLOAD_ARCHIVE_MAX_ITEMS` | `1000` | выбранных элементов в архиве |
+| `UPLOAD_ARCHIVE_MAX_FILES`, `UPLOAD_ARCHIVE_MAX_SIZE_MB` | `10000`, `10240` (0 — без лимита) | файлов и МиБ в одном архиве (`422 too_many_items`, `413 too_large`) |
 | `UPLOAD_CHUNK_SIZE`, `UPLOAD_SESSION_TTL` | 64 МиБ, 24 ч | кусок и срок сессии загрузки частями (≤ `client_max_body_size` прокси; TTL ≤ `UPLOAD_LOCK_TTL`) |
 | `LOG_LEVEL` | `INFO` | loguru |
 

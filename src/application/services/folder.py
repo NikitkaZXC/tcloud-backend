@@ -8,7 +8,9 @@ from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.application.exception import (
+    ArchiveInProgressError,
     EmptySelectionError,
+    FileTooLargeError,
     FolderNotFoundError,
     ForbiddenError,
     InvalidCursorError,
@@ -329,6 +331,34 @@ class FolderService:
             if allowed(actor, file.storage_id, file.folder_path, Permission.READ)
         ]
 
+    @staticmethod
+    def _check_archive_limits(count: int, size: int) -> None:
+        files = settings.upload.ARCHIVE_MAX_FILES
+        if files and count > files:
+            raise TooManyItemsError(
+                f"an archive takes at most {files} files, this one has {count}",
+                limit=files,
+            )
+        limit = settings.upload.ARCHIVE_MAX_SIZE_MB * 1024 * 1024
+        if limit and size > limit:
+            raise FileTooLargeError(
+                f"files of an archive take at most {limit} bytes, these take {size}",
+                limit=limit,
+            )
+
+    async def _archive_running(self, actor: Actor) -> bool:
+        store = self._runtime.store
+        tasks = await store.get_many(
+            await store.active_ids(), ("user_id", "status", "params")
+        )
+        return any(
+            task.get("user_id") == str(actor.user_id)
+            and task["params"]["source"] == TaskSource.ARCHIVE
+            and task["status"] not in TaskStatus.finished()
+            for task in tasks
+            if task.get("params")
+        )
+
     async def _queue_archive(
         self,
         actor: Actor,
@@ -344,9 +374,8 @@ class FolderService:
                 "the upload Telegram session is not logged in, use /api/telegram/upload"
             )
         sizes = [file.size for file in files]
+        self._check_archive_limits(len(files), sum(sizes))
         task_id = uuid7()
-        async with self._runtime.store.disk_lock():
-            await self._runtime.disk.hold(task_id, sum(sizes) + max(sizes, default=0))
         level = task_priority(actor, priority)
         task = {
             "id": task_id,
@@ -375,7 +404,15 @@ class FolderService:
                 "file": str(temp_path(f"archive.{archive_format}")),
             },
         }
-        await self._runtime.store.create(task)
+        store = self._runtime.store
+        async with store.disk_lock():
+            if await self._archive_running(actor):
+                raise ArchiveInProgressError(
+                    "your previous archive is still being built, wait or cancel it"
+                )
+            await self._runtime.disk.hold(task_id, sum(sizes) + max(sizes, default=0))
+            await store.create(task)
+            await store.activate(task_id)
         await start_task(self._runtime, task, UploadQueue.ARCHIVE, 0)
         logger.info(
             "Archive of {} files from {} as {} queued",

@@ -15,6 +15,7 @@ from .file import (
     ThumbnailNotFoundError,
 )
 from .folder import (
+    ArchiveInProgressError,
     EmptySelectionError,
     FolderNotFoundError,
     InvalidCursorError,
@@ -63,6 +64,7 @@ from .user import (
 )
 
 __all__ = [
+    "ArchiveInProgressError",
     "EmptySearchError",
     "AlreadyAuthorizedError",
     "CurrentSessionError",

@@ -178,3 +178,14 @@ async def test_failed_build_closes_the_writer(archive_format, tmp_path, monkeypa
         assert writer._zip.fp is None
     if writer._tar:
         assert writer._tar.closed
+
+
+def test_compression_level_is_six():
+    from src.infrastructure import archive
+
+    assert archive.LEVEL == 6
+    assert archive.SEVEN_Z_FILTERS[0]["preset"] == 6
+    assert {
+        options.get("compresslevel", options.get("preset"))
+        for _, options in archive.TAR_MODES.values()
+    } == {6}

@@ -159,7 +159,9 @@ flowchart TD
 | Ошибка | Код | Когда |
 |---|---|---|
 | `422` | `empty_selection` | `files` и `folders` пустые |
-| `422` | `too_many_items` | `len(files) + len(folders)` > `UPLOAD_ARCHIVE_MAX_ITEMS` (1000), в ответе `limit` |
+| `422` | `too_many_items` | `len(files) + len(folders)` > `UPLOAD_ARCHIVE_MAX_ITEMS` (1000) или файлов в архиве после раскрытия папок > `UPLOAD_ARCHIVE_MAX_FILES` (10000), в ответе `limit` |
+| `413` | `too_large` | сумма размеров файлов архива > `UPLOAD_ARCHIVE_MAX_SIZE_MB` (10240 МиБ), в ответе `limit` в байтах |
+| `409` | `archive_in_progress` | у пользователя уже есть незаконченная задача-архив |
 | `422` | `storage_mismatch` | файлы и папки из разных хранилищ |
 | `422` | `invalid_path` / `validation_error` | плохой путь папки / плохой UUID, `format`, `name`, `priority` |
 | `403` | `forbidden` | нет чтения выбранного файла или папки |
@@ -169,11 +171,14 @@ flowchart TD
 
 | `format` | Сжатие |
 |---|---|
-| `zip` (по умолчанию) | deflate, уровень 9; открывается везде |
-| `7z` | LZMA2, preset `9e` (py7zr) |
-| `tar.gz` | gzip, уровень 9 |
-| `tar.bz2` | bzip2, уровень 9 |
-| `tar.xz` | xz, preset `9e` — самый плотный и самый медленный |
+| `zip` (по умолчанию) | deflate, уровень 6; открывается везде |
+| `7z` | LZMA2, preset `6` (py7zr) |
+| `tar.gz` | gzip, уровень 6 |
+| `tar.bz2` | bzip2, уровень 6 |
+| `tar.xz` | xz, preset `6` — самый плотный и самый медленный |
+
+Уровень один на все форматы — `archive.LEVEL = 6` (решение владельца): `9`/`9e` почти не уменьшали архив, но в разы
+дольше занимали единственный `worker-telegram` и ели память (LZMA `9e` — сотни МиБ на поток).
 
 RAR не поддерживается: его создаёт только проприетарная утилита RARLAB. Фото и видео уже сжаты, поэтому архив из
 медиа почти не меньше самих файлов.
@@ -192,8 +197,9 @@ sequenceDiagram
     C->>A: POST /api/folders/archive или /archive/selection
     A->>A: настройки archives.*, права, общая папка, дедупликация
     A->>DB: читаемые файлы (read_scopes), список фиксируется
-    A->>A: сессия upload есть? DiskBudget.check(сумма + самый большой)
-    A->>R: create (stage archiving), activate, join_queue(archives.build)
+    A->>A: сессия upload есть? файлов ≤ ARCHIVE_MAX_FILES, сумма ≤ ARCHIVE_MAX_SIZE_MB
+    A->>R: под job:disk: нет своего активного архива? DiskBudget.hold(сумма + самый большой), create, activate
+    A->>R: join_queue(archives.build)
     A->>Q: archives.build
     A-->>C: 202 задача
     Q->>T: сообщение
@@ -210,8 +216,13 @@ sequenceDiagram
     A-->>C: файл, только автору, 409 archive_not_ready, 410 archive_expired
 ```
 
-- до постановки в очередь проверяются права, папка, вход сессии `upload` и место на диске: `DiskBudget` должен
-  вместить сумму размеров плюс самый большой файл, иначе `507 insufficient_storage`;
+- до постановки в очередь проверяются права, папка, вход сессии `upload`, лимиты архива и место на диске:
+  файлов не больше `UPLOAD_ARCHIVE_MAX_FILES` (10000, `422 too_many_items`), сумма размеров не больше
+  `UPLOAD_ARCHIVE_MAX_SIZE_MB` (10240 МиБ, `413 too_large`; `0` — без лимита у обоих), `DiskBudget` должен вместить
+  сумму размеров плюс самый большой файл (`507 insufficient_storage`);
+- у пользователя одновременно не больше одной незаконченной задачи-архива (`409 archive_in_progress`): проверка
+  активных задач (`active`), резерв диска и создание задачи идут под общей блокировкой `job:disk`, поэтому два
+  параллельных запроса не проходят оба; после `done`/`failed`/`cancelled` можно собирать следующий;
 - собирает `worker-telegram` (очередь `archives.build`, та же сессия Telethon и общая пауза FloodWait, см.
   background-tasks.md): файлы по одному качаются из Telegram во временный файл в `UPLOAD_TMP_DIR` и дописываются в
   архив там же (права `0600`, сжатие — в потоке, не в event loop); каждая часть удаляется сразу после добавления;
