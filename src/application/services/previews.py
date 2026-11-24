@@ -92,7 +92,9 @@ class PreviewBackfill:
                 logger.warning("File {}: no preview: {!r}", file.id, error)
                 return False
             async with self._runtime.session_factory() as session:
-                await FileRepository(session).set_thumbnail(file.id, data)
+                await FileRepository(session).set_thumbnail(
+                    file.id, file.encryption_header, data
+                )
                 await session.commit()
             return True
 

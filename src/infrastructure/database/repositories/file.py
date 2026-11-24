@@ -131,10 +131,14 @@ class FileRepository:
             (row[0], row[1]) for row in (await self._session.execute(statement)).all()
         ]
 
-    async def set_thumbnail(self, file_id: UUID, data: bytes) -> None:
+    async def set_thumbnail(self, file_id: UUID, header: bytes, data: bytes) -> None:
         await self._session.execute(
             update(FileDB)
-            .where(FileDB.id == file_id, FileDB.thumbnail.is_(None))
+            .where(
+                FileDB.id == file_id,
+                FileDB.encryption_header == header,
+                FileDB.thumbnail.is_(None),
+            )
             .values(thumbnail=data, updated_at=FileDB.updated_at)
         )
         await self._session.flush()

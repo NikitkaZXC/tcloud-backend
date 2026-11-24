@@ -3,12 +3,13 @@ import io
 
 import pytest
 from PIL import Image
-from sqlalchemy import text
+from sqlalchemy import text, update
 
 from src.application.services import PreviewBackfill
 from src.application.services.file import BACKFILL_TASK
 from src.infrastructure.background import enqueue
 from src.infrastructure.cache import TaskStore
+from src.infrastructure.database.models import FileDB
 from src.infrastructure.enums import TaskPriority, UploadQueue
 from src.infrastructure.integrations import TelegramFloodWaitError
 from tests.api.conftest import path, upload
@@ -212,3 +213,32 @@ async def test_backfill_job_lock(redis):
     assert not await store.hold_job("previews", "b")
     await store.release_job("previews", "a")
     assert await store.hold_job("previews", "b")
+
+
+async def test_backfill_skips_a_file_replaced_meanwhile(
+    client, storage, engine, redis, monkeypatch
+):
+    await upload(client, path(storage, "a.jpg"), make_image(), encrypt="true")
+    await drop_previews(engine)
+    original = PreviewBackfill._make
+    made = []
+
+    async def make(self, file, chat_id):
+        data = await original(self, file, chat_id)
+        async with self._runtime.session_factory() as session:
+            await session.execute(
+                update(FileDB)
+                .where(FileDB.id == file.id)
+                .values(encryption_header=b"h" * len(file.encryption_header))
+            )
+            await session.commit()
+        made.append(file.id)
+        return data
+
+    monkeypatch.setattr(PreviewBackfill, "_make", make)
+    assert (await client.post("/files/previews/backfill")).status_code == 202
+    for _ in range(200):
+        if made and not await redis.keys("*:job:*"):
+            break
+        await asyncio.sleep(0.05)
+    assert made and await previews(engine) == {"a.jpg": False}
