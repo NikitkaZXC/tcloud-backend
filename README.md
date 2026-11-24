@@ -15,6 +15,7 @@
 - Листинг папки постранично (`GET /api/folders`: серверная сортировка по имени/типу/размеру/датам с ICU-правилами ru/en, keyset-курсор, по 20 элементов); размеры и число файлов папок в листинге, число каналов аккаунта в `GET /api/account`.
 - Индикаторы чтения и записи по хранилищам для всех клиентов сразу (`GET /api/storages/activity`, метки в Redis на 5 с).
 - Превью фото и видео (`GET /api/files/{id}/thumb`, JPEG ≤ 320 px, с `ETag`): из Telegram, у зашифрованных файлов — своё, зашифрованное в БД; старые файлы без превью дозаполняет фоновая задача root (`POST /api/files/previews/backfill`); root может выключить превью для всех (`uploads.previews`) и стереть сохранённые (`DELETE /api/files/previews`).
+- Загрузка с устройства одним запросом или частями с докачкой после обрыва (`POST /api/uploads/sessions`, куски по 64 МиБ, [docs/flows/uploads.md](docs/flows/uploads.md)).
 - Шифрование по умолчанию (AES-256-GCM, ключ сервера `APP_ENCRYPTION_KEY`) для всех файлов, кроме `send_as=media`; `encrypt=false` выключает. В Telegram только шифротекст.
 - Вход в Telegram через API: QR или код, двухэтапная проверка, старые сессии tcloud отзываются сами.
 - Удалили файл руками в Telegram — запись в БД пропадает сама (события Telethon, плюс проверка при скачивании).
@@ -105,6 +106,7 @@ curl -H "X-API-Key: $TCLOUD_KEY" --data-binary @photo.jpg \
 | `UPLOAD_MIN_FREE_DISK_MB` | `1024` | резерв диска, иначе `507` |
 | `UPLOAD_TASK_TTL`, `UPLOAD_ARCHIVE_TTL` | 7 дней, 24 ч | жизнь задач и готовых архивов |
 | `UPLOAD_ARCHIVE_MAX_ITEMS` | `1000` | выбранных элементов в архиве |
+| `UPLOAD_CHUNK_SIZE`, `UPLOAD_SESSION_TTL` | 64 МиБ, 24 ч | кусок и срок сессии загрузки частями (≤ `client_max_body_size` прокси; TTL ≤ `UPLOAD_LOCK_TTL`) |
 | `LOG_LEVEL` | `INFO` | loguru |
 
 Полный список с остальными интервалами (`UPLOAD_HEARTBEAT_INTERVAL`, `UPLOAD_SWEEP_INTERVAL`, `UPLOAD_RETRIES`, …) —

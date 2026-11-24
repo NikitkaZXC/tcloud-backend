@@ -38,7 +38,7 @@
 | `REFRESH_IP` | 60 / 60 с | IP | `POST /api/auth/refresh`, `POST /api/auth/logout` (свои счётчики) |
 | `HEALTH_IP` | 120 / 60 с | IP | `GET /api/health` |
 | `TELEGRAM_LOGIN_USER` | 10 / 600 с | пользователь | `POST /api/telegram/{session}/qr`, `/code`, `/sign-in`, `/password` |
-| `UPLOAD_USER` | 300 / 60 с | пользователь | `POST /api/uploads`, `/uploads/from-url` (общий счётчик; 429 до чтения тела) |
+| `UPLOAD_USER` | 300 / 60 с | пользователь | `POST /api/uploads`, `/uploads/from-url`, `/uploads/sessions`, каждый `PUT /uploads/sessions/{id}` (общий счётчик; 429 до чтения тела) |
 | `UPLOAD_BATCH_USER` | 30 / 60 с | пользователь | `POST /api/uploads/batch` |
 | `ARCHIVE_USER` | 30 / 3600 с | пользователь | `POST /api/folders/archive`, `/folders/archive/selection` |
 | `PREVIEWS_BACKFILL_USER` | 3 / 3600 с | пользователь | `POST /api/files/previews/backfill` |
@@ -94,7 +94,7 @@ IP клиента — `request.client.host`. uvicorn берёт его из `X-F
   `APP_IS_ALLOWED_CREDENTIALS`, `APP_ALLOWED_METHODS`, `APP_ALLOWED_HEADERS`. Нужен для dev-сервера фронтенда на другом
   порту (`["http://localhost:3000"]`). Список пустой по умолчанию: чужой браузерный JS ответов не видит.
   Тот же список пропускает `OriginCheckMiddleware`, так что адрес фронтенда добавляется в одно место.
-- Фронтенду открыты заголовки (`APP_EXPOSED_HEADERS`) `Accept-Ranges`, `Content-Disposition`, `Content-Range`, `Retry-After`.
+- Фронтенду открыты заголовки (`APP_EXPOSED_HEADERS`) `Accept-Ranges`, `Content-Disposition`, `Content-Range`, `Retry-After`, `Upload-Offset`.
 - Фронтенд должен быть на том же сайте (например `app.example.com` и `api.example.com`): куки `SameSite=lax` и
   `Cross-Origin-Resource-Policy: same-site` не работают между разными сайтами. Другой сайт потребует `JWT_SAME_SITE=none`
   (только с `JWT_SECURE=true`) и смены CORP — это ослабляет защиту, решать отдельно.

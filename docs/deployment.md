@@ -37,6 +37,10 @@ volume удалён или сессию завершили в Telegram. Без �
   не эксклюзивная, background-tasks.md). Страховка — `restart: unless-stopped` у API и воркеров в prod и dev compose.
 - Первый старт ClamAV качает базы несколько минут — до этого загрузки отвечают `503 scanner_unavailable`.
 - Пароль Postgres задаётся при первом создании volume `pgdata`; сменить его в `.env` позже — значит пересоздать volume.
+- Размер тела запроса на прокси: обычный `POST /api/uploads` несёт файл целиком, поэтому у nginx фронтенда для `/api/`
+  стоят `client_max_body_size 0` и `proxy_request_buffering off`. Если прокси ограничивает тело (свой nginx, CDN с
+  лимитом ~100 МБ), большие файлы грузите сессиями частями (flows/uploads.md): тело одного `PUT` не больше
+  `UPLOAD_CHUNK_SIZE` (64 МиБ), так что лимит прокси должен быть ≥ `UPLOAD_CHUNK_SIZE` — иначе уменьшите его.
 - Reverse proxy перед API (nginx фронтенда): тела файлов нельзя сжимать — `GET /api/files/{id}/download` и
   `GET /api/tasks/{id}/archive` отдают `Cache-Control: no-transform` и точный `Content-Length` (на нём держатся `Range`
   и прогресс в браузере). nginx `no-transform` не учитывает, а `gzip_proxied` смотрит только на запросы с `Via`,

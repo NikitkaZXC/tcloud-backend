@@ -44,6 +44,7 @@ flowchart LR
         revoked[("revoked:{jti}")]
         rate[("rate_limit:{scope}:{ip|user}:{id}<br/>zset")]
         job[("job:{name}")]
+        session[("upload_session:{id}<br/>upload_sessions zset")]
         channel[("channel:{chat_id}")]
         photo[("channel_photo:{chat_id}")]
         thumb[("thumb:{file}:{message}<br/>thumbs zset, thumbs:size, thumbs:bytes")]
@@ -51,9 +52,9 @@ flowchart LR
     end
     acs --> account
     ss --> account
-    us --> task & batch & owned & path & active & disk & waiting
+    us --> task & batch & owned & path & active & disk & waiting & session & job
     ts --> task & owned & waiting
-    sw --> active & task & archives & path & disk & waiting
+    sw --> active & task & archives & path & disk & waiting & session
     pl --> task & waiting & disk & path & active & archives & activity
     bf --> job & activity
     hb --> worker & workers
@@ -83,7 +84,9 @@ flowchart LR
 | `tcloud:thumb:{file_id}:{message_id}` | string | base64 превью открытого файла из Telegram для `GET /api/files/{id}/thumb` (`""` — превью нет) | `TaskStore.thumb`, `keep_thumb` (Lua `KEEP_THUMB`); `FileService.get_thumbnail` | `REDIS_CACHE_TTL` (180 с) |
 | `tcloud:thumbs`, `tcloud:thumbs:size`, `tcloud:thumbs:bytes` | zset, hash, string | учёт потолка кеша превью: zset ключ `thumb:…` → время записи, hash ключ → длина base64, сумма длин. `KEEP_THUMB` атомарно выкидывает записи старше TTL (их ключи уже истекли), прежнюю копию того же ключа и самые старые, пока новая не влезет в `REDIS_THUMB_CACHE_MB` (64 МБ); запись больше потолка не кешируется, `0` выключает кеш | `TaskStore.keep_thumb` | — (чистятся при каждой записи) |
 | `tcloud:account:premium`, `tcloud:account:channels` | string | JSON: Premium API-аккаунта (`true`/`false`, от него размер части большого файла) и `channels_used` (flows/storages.md, «Сколько каналов ещё можно создать») | `TaskStore.cached`/`keep`; `AccountService.is_premium`, `channels_used`, `UploadPipeline._spans` (worker-telegram, только для файлов > 2000 МиБ); `forget_account` — создание/удаление хранилища, `TELEGRAM_CHATS`, вход в API-сессию, события Telegram | `REDIS_CACHE_TTL` (180 с) |
-| `tcloud:job:{name}` | string | одна фоновая задача на имя (`job:previews` — дозаполнение превью), значение — id задачи Celery; `SET NX`, свой ключ продлевается (Lua `RENEW`), снимает только владелец (Lua `UNLOCK`) | `TaskStore.hold_job`, `release_job`; `PreviewBackfill` | 120 с (`JOB_TTL`), продлевается каждые 30 с |
+| `tcloud:job:{name}` | string | одна фоновая задача на имя (`job:previews` — дозаполнение превью; `job:upload:{session_id}` — приём куска сессии, `TaskStore.holding`, flows/uploads.md «частями»), значение — id задачи Celery; `SET NX`, свой ключ продлевается (Lua `RENEW`), снимает только владелец (Lua `UNLOCK`) | `TaskStore.hold_job`, `release_job`; `PreviewBackfill` | 120 с (`JOB_TTL`), продлевается каждые 30 с |
+| `tcloud:upload_session:{id}` | string | JSON сессии загрузки частями: `task` (будущая задача целиком, с `params.file`), `offset` (принято байт), `expires_at` (unix) | `TaskStore.save_session` (создание и каждый кусок; заодно продлевает `path:{path}` на `UPLOAD_LOCK_TTL` и score в `disk`), `get_session`, `drop_session` (последний кусок, `DELETE`, уборка) | 2 × `UPLOAD_SESSION_TTL` (страховка; срок — `expires_at`) |
+| `tcloud:upload_sessions` | zset | id сессий → `expires_at`; `TaskSweeper.clean_tmp` не трогает файлы живых и удаляет просроченные | `save_session`, `sessions`, `drop_session` | — |
 | `tcloud:revoked:{jti}` | string | отозванный access-токен (logout, refresh, смена пароля) | `TokenBlacklist.revoke/revoked` | `JWT_ACCESS_TOKEN_EXPIRATION_MINUTES` |
 | `tcloud:rate_limit:{scope}:ip:{ip}`, `tcloud:rate_limit:{scope}:user:{user_id}`, `tcloud:rate_limit:signin_login:{login}` | zset | скользящее окно: время Redis (мс) каждого принятого запроса, Lua `RATE_LIMIT_SCRIPT`; правила и scope — security.md, «Rate limiting»; Redis недоступен — запрос пропускается (fail open) | `RateLimitStore.hit` (из `api/dependencies/rate_limit.py`) | окно правила (`PEXPIRE` на каждом обращении) |
 

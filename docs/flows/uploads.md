@@ -16,6 +16,80 @@ background-tasks.md («Путь загрузки целиком», «Стату�
 удаляется, путь освобождается, задача не создаётся, в лог — строка `INFO` без трассировки (обработчик в
 `api/exception/handlers.py`, ответ `400 client_disconnected` уже никто не читает).
 
+## С устройства — частями (с докачкой)
+
+Для больших файлов и нестабильной сети: файл уходит кусками, обрыв связи стоит максимум одного куска. Обычный
+`POST /api/uploads` работает как прежде. Код — `UploadService.create_session` / `put_chunk` / `abort_session`.
+
+| Запрос | Ответ |
+|---|---|
+| `POST /api/uploads/sessions?size=N&path=...` + те же `send_as`, `on_conflict`, `priority`, `allow_unscannable`, `encrypt`, `callback_url` (умолчания из настроек) | `201 {session_id, path, size, offset: 0, chunk_size, expires_at}`; для `on_conflict=skip` и существующего файла — `200` с готовой задачей (`status: done`, предупреждение `skipped_exists`), сессии нет |
+| `PUT /api/uploads/sessions/{id}?offset=K`, тело — кусок, `Content-Length` обязателен | не последний кусок — `200` с тем же объектом сессии (новый `offset`); последний — `202` с задачей `queued` (та же форма, что у `POST /api/uploads`) |
+| `GET /api/uploads/sessions/{id}` | `200` объект сессии |
+| `HEAD /api/uploads/sessions/{id}` | `200`, заголовок `Upload-Offset` (открыт для CORS) |
+| `DELETE /api/uploads/sessions/{id}` | `204`: принятая часть удалена, путь и слот освобождены |
+
+- **Создание** делает все проверки `POST /api/uploads` сразу, по `size`: путь, права, вебхук, сессия Telegram,
+  `uploads.max_file_size` (`413 too_large`), место на диске (×2 при шифровании), `UPLOAD_MAX_ACTIVE_TASKS`, конфликт
+  (`409 conflict` с `suggested_name`; `keep_both` сразу выбирает свободное имя — оно в `path` ответа; `skip` — см.
+  таблицу), занятость пути (`409 upload_in_progress`). Затем путь блокируется (`path:{path}`, как у идущей загрузки),
+  берётся слот `UPLOAD_MAX_FILES_ON_DISK` (`429 too_many_tasks`) и создаётся пустой временный файл. `session_id` — это
+  будущий id задачи. `size` ≥ 1.
+- **Кусок**: `offset` должен равняться принятому, иначе `409 offset_mismatch` с `{offset}` — текущим смещением, с него и
+  продолжать. Кусок не больше `chunk_size` (`UPLOAD_CHUNK_SIZE`, 64 МиБ) и не больше остатка файла, иначе
+  `413 chunk_too_large` с `{limit}` — сколько можно прислать; размер куска внутри этого предела любой (рекомендуется
+  ровно `chunk_size`). Тело короче `Content-Length` → `400 size_mismatch`, длиннее → `413 too_large`, без заголовка →
+  `411 length_required`. При любой ошибке и при обрыве посреди куска файл обрезается до принятого смещения — битых
+  данных не остаётся, кусок просто шлётся заново. Последний кусок ставит задачу в очередь тем же кодом, что и
+  `POST /api/uploads` после приёма тела (`UploadService._queue_device`); сессия удаляется, дальше — обычная задача.
+- **Параллельно** куски одной сессии не принимаются: на время приёма куска берётся Redis-блокировка
+  `job:upload:{id}` (120 с, продлевается каждые 30 с, снимается в конце, в том числе при обрыве); второй `PUT` или
+  `DELETE` в это время — `409 upload_session_busy` с `retry_after`. Смещение перечитывается уже под блокировкой.
+- **Срок**: сессия живёт `UPLOAD_SESSION_TTL` (24 ч) с последнего принятого куска (`expires_at`), каждый кусок
+  продлевает её, блокировку пути (`UPLOAD_LOCK_TTL`) и слот диска. Держите `UPLOAD_SESSION_TTL` ≤ `UPLOAD_LOCK_TTL`.
+  Просроченная сессия сразу отвечает `404`, а `TaskSweeper.clean_tmp` удаляет её файл, ключи и освобождает путь
+  (background-tasks.md, «Сбои»).
+- **Доступ**: сессия видна только создателю; другим (и admin, и root) — `404 upload_session_not_found`, как и
+  несуществующей или истёкшей. Права на папку проверяются при создании.
+- **Лимиты**: `POST` и `PUT` считаются в `UPLOAD_USER` (300 / 60 с), остальные — общее `API_USER`. Пока сессия не
+  завершена, задачи нет: она не входит в `UPLOAD_MAX_ACTIVE_TASKS` и не видна в `/api/tasks` — так же, как тело
+  обычной загрузки во время приёма. Слот `UPLOAD_MAX_FILES_ON_DISK` сессия держит с создания до конца задачи или отмены.
+  Место на диске проверяется при создании и резервируется (остаток файла) на время приёма каждого куска.
+- **Прокси**: тело одного запроса — не больше `chunk_size`, поэтому `client_max_body_size` прокси должен быть ≥ 64 МиБ
+  (deployment.md).
+
+```mermaid
+sequenceDiagram
+    participant C as Клиент
+    participant A as API
+    participant R as Redis
+    C->>A: POST /uploads/sessions?size&path
+    A->>R: path NX, disk slot, upload_session:{id}
+    A-->>C: 201 session_id, chunk_size, offset 0
+    loop пока offset < size
+        C->>A: PUT /uploads/sessions/{id}?offset=K (кусок)
+        A->>R: job:upload:{id} NX
+        A->>A: дописать tmp с K (ошибка/обрыв: обрезать до K)
+        A->>R: offset += длина, продлить срок
+        A-->>C: 200 {offset} / 409 offset_mismatch {offset}
+    end
+    A->>R: задача queued, очередь uploads.prepare
+    A-->>C: 202 задача
+    Note over C,A: обрыв: HEAD → Upload-Offset, продолжить PUT с него
+```
+
+### Для фронтенда
+
+- Новые ручки: `POST /api/uploads/sessions`, `PUT|GET|HEAD|DELETE /api/uploads/sessions/{session_id}`.
+- Объект сессии `UploadSession`: `{session_id: uuid, path: string, size: number, offset: number, chunk_size: number,
+  expires_at: string (ISO)}`. `PUT` и `POST` могут вернуть вместо него `Task` (`202` / `200`): есть поле `id` и нет
+  `session_id` — загрузка закончилась, дальше опрашивать `/api/tasks/{id}`.
+- Ошибки: `404 upload_session_not_found`, `409 offset_mismatch` (`offset`), `409 upload_session_busy` (`retry_after`),
+  `413 chunk_too_large` (`limit`); плюс прежние `411 length_required`, `400 size_mismatch`, `413 too_large`,
+  `409 conflict`, `409 upload_in_progress`, `429 too_many_tasks`, `507 insufficient_storage`.
+- Заголовок `Upload-Offset` (ответ `HEAD`) открыт в `APP_EXPOSED_HEADERS`.
+- Отмена до конца — `DELETE`; после `202` — обычная отмена задачи.
+
 ## По ссылке
 
 `POST /api/uploads/from-url {url, path, send_as, on_conflict, priority, allow_unscannable, encrypt, callback_url}`: имя файла берётся из `path`,
@@ -25,7 +99,7 @@ background-tasks.md («Путь загрузки целиком», «Стату�
 
 `POST /api/uploads/batch {items: [...]}`: до 100 загрузок по ссылкам (поля как у `from-url`). В ответе `batch_id`
 и по каждому пункту `task` или `error`. Общий прогресс: `GET /api/tasks?batch_id=`. Файлы с устройства загружаются
-параллельными `POST /api/uploads`, очередь и лимиты одни и те же.
+параллельными `POST /api/uploads` (или сессиями частями, выше), очередь и лимиты одни и те же.
 
 ## `priority`
 
