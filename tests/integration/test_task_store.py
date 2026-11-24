@@ -390,3 +390,19 @@ async def test_renew_extends_long_lived_task_keys(store, redis):
     await redis.set(store._key("path", path), "someone else", ex=5)
     await store.renew(task_id, path)
     assert await redis.ttl(store._key("path", path)) <= 5
+
+
+async def test_disk_lock_gives_up_waiting_and_keeps_the_foreign_lock(
+    store, redis, monkeypatch
+):
+    monkeypatch.setattr(tasks, "DISK_LOCK_WAIT", 0.05)
+    key = store._key("job", "disk")
+    await redis.set(key, "someone", px=5000)
+    started = time.monotonic()
+    async with store.disk_lock():
+        assert time.monotonic() - started >= 0.05
+    assert await redis.get(key) == "someone"
+    await redis.delete(key)
+    async with store.disk_lock():
+        assert await redis.get(key) not in (None, "someone")
+    assert await redis.get(key) is None

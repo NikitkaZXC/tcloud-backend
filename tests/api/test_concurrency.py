@@ -209,3 +209,34 @@ async def test_zero_limits_mean_unlimited(client, storage, monkeypatch):
     assert response.status_code == 202
     for holder in holders:
         await store.release(holder, "x")
+
+
+async def test_broker_down_fails_the_new_task_and_frees_everything(
+    client, storage, monkeypatch
+):
+    from src.application.services import upload as upload_service
+    from src.infrastructure.background import QueueUnavailableError
+
+    async def down(*args, **kwargs):
+        raise QueueUnavailableError("broker is down")
+
+    monkeypatch.setattr(upload_service, "enqueue", down)
+    store = main.app.state.runtime.store
+    target = path(storage, "down.bin")
+    response = await client.post(
+        "/uploads", params={"path": target}, content=b"x" * 100
+    )
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "queue_unavailable"
+    assert not await store.path_locked(target)
+    assert await store.active_ids() == []
+    assert not list(settings.upload.TMP_DIR.iterdir())
+    response = await client.post(
+        "/uploads/from-url",
+        json={"url": "https://example.com/a.bin", "path": path(storage, "u.bin")},
+    )
+    assert response.status_code == 503
+    assert not await store.path_locked(path(storage, "u.bin"))
+    me = (await client.get("/users/me")).json()["id"]
+    statuses = await store.statuses(me)
+    assert statuses and set(statuses) == {"failed"}

@@ -36,6 +36,13 @@
   - воркер убит после отправки, но до записи в `files` — второй воркер не отправляет заново, а дописывает строку
     с тем же message_id.
   Проверено мутациями: без `sent` в задаче тест падает с двумя сообщениями, без `x-max-priority` падают тесты порядка.
+- Гонки и защита ресурсов из аудита: `tests/api/test_replace_races.py` (`replace` после удаления цели, пропажа сообщения
+  при параллельной замене, старые сообщения удаляются после коммита и при повторной доставке; пауза отправки через
+  `FakeTelegram.sent_hook` и `threading.Event`), `tests/api/test_quota.py` (параллельные `POST /api/uploads`, файлы в
+  очереди, завершённая сессия и архивы в квоте), `tests/api/test_auth_tokens.py` (ветки JWT: истёк, нет `exp`, `none`,
+  HS256, не тот `token_type`, удалённый пользователь; заблокированный по ключу, куке и refresh — `403`),
+  `tests/unit/test_webhook.py` (один вебхук в полёте, повтор со свежим состоянием), `tests/unit/test_telegram_client.py`
+  (ветки `TelegramClient` и `TelegramLogin` на фейковом Telethon), `tests/unit/test_ci.py` (права токена CI и SHA-пины).
 - `tests/fakes.py` — `FakeTelegram` (каналы и сообщения в памяти, задержка, FloodWait, сетевые сбои, счётчик
   одновременных отправок) и `FakeScanner`. `tests/factories.py` — образцы медиа (Pillow, ffmpeg lavfi).
 - Гонки: 100 параллельных загрузок при 2 потоках worker-telegram, ожидание в очереди `uploads.telegram`, пауза FloodWait,

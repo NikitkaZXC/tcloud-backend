@@ -629,3 +629,19 @@ async def test_unknown_body_fields_are_rejected(client, anonymous, storage, make
         assert response.status_code == 422, (url, response.text)
     assert (await anonymous.get("/users/me")).status_code == 401
     assert (await client.get(f"/users/{user.user_id}")).json()["blocked"] is False
+
+
+async def test_user_lookup_and_root_login_clash(client, make_user, monkeypatch):
+    from src.application.exception import UserExistsError
+
+    user = await make_user("lookup")
+    listed = (await client.get("/users")).json()
+    assert {"root", "lookup"} <= {item["login"] for item in listed}
+    one = await client.get(f"/users/{user.user_id}")
+    assert one.status_code == 200 and one.json()["login"] == "lookup"
+    missing = await client.get(f"/users/{uuid7()}")
+    assert missing.status_code == 404
+    assert (await user.get("/users")).status_code == 403
+    monkeypatch.setattr(settings.root, "LOGIN", "lookup")
+    with pytest.raises(UserExistsError):
+        await prepare(main.app.state.runtime)

@@ -300,3 +300,86 @@ async def test_download_needs_its_own_session(
     out = await client.post("/telegram/download/logout")
     assert out.json()["authorized"] is False and not download_session.exists()
     assert (await client.get(f"/files/{file_id}/download")).status_code == 503
+
+
+async def test_qr_crash_and_finish_failure_mark_the_login_failed(
+    client, logins, monkeypatch
+):
+    from tests.fakes import FakeLogin
+
+    async def crash(self):
+        raise RuntimeError("boom")
+
+    async def failed():
+        return ((await state(client, "api"))["login"] or {}).get("step") == "failed"
+
+    monkeypatch.setattr(FakeLogin, "wait_qr", crash)
+    await client.post("/telegram/api/qr")
+    await until(failed)
+    assert (await state(client, "api"))["login"]["error"]["code"] == "internal"
+    assert logins[TelegramSession.API].closed
+    monkeypatch.undo()
+    monkeypatch.setattr(FakeLogin, "finish", crash)
+    await client.post("/telegram/api/qr")
+    logins[TelegramSession.API].scanned.set()
+    await until(failed)
+    assert (await state(client, "api"))["login"]["error"]["code"] == "internal"
+
+
+async def test_unauthorized_new_api_session_fails_the_login(client, telegram, logins):
+    telegram.session = None
+    telegram.authorized = False
+    await client.post("/telegram/api/qr")
+    logins[TelegramSession.API].scanned.set()
+
+    async def finished():
+        return (await state(client, "api"))["login"] is None
+
+    await until(finished)
+    assert (await state(client, "api"))["authorized"] is False
+
+
+async def test_qr_start_and_sign_in_errors_drop_the_login(client, logins, monkeypatch):
+    from src.infrastructure.integrations import TelegramUnavailableError
+    from tests.fakes import FakeLogin
+
+    async def down(self, *args):
+        raise TelegramUnavailableError("network is down")
+
+    monkeypatch.setattr(FakeLogin, "qr", down)
+    assert (await client.post("/telegram/api/qr")).status_code == 503
+    assert (await state(client, "api"))["login"] is None
+    assert logins[TelegramSession.API].closed
+    monkeypatch.undo()
+    await client.post("/telegram/api/code", json={"phone": "+79991234567"})
+    monkeypatch.setattr(FakeLogin, "sign_in", down)
+    response = await client.post("/telegram/api/sign-in", json={"code": "12345"})
+    assert response.status_code == 503
+    assert (await state(client, "api"))["login"] is None
+
+
+async def test_keepalive_and_sweep_survive_errors(monkeypatch):
+    from types import SimpleNamespace
+
+    from src.application.services import auth
+    from src.infrastructure.integrations import TelegramUnavailableError
+
+    pokes = []
+
+    async def poke():
+        pokes.append(1)
+        raise TelegramUnavailableError("down")
+
+    clients = SimpleNamespace(ensure_connected=poke, authorized=True)
+    service = auth.AuthService(SimpleNamespace(telegram=clients, download=clients))
+    monkeypatch.setattr(auth, "KEEPALIVE_INTERVAL", 0.01)
+    keepalive = asyncio.create_task(service.run_keepalive())
+    await until(lambda: asyncio.sleep(0, len(pokes) >= 4))
+    assert not keepalive.done()
+    keepalive.cancel()
+
+    async def broken():
+        raise RuntimeError("boom")
+
+    service.sweep = broken
+    await service.sweep_quietly()
