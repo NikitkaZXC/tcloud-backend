@@ -119,7 +119,7 @@ class UserAuthService:
             raise InvalidCredentialsError("wrong login or password")
         if user.blocked:
             logger.warning("Sign in rejected: user {} is blocked", user.id)
-            raise UserBlockedError("user is blocked")
+            raise InvalidCredentialsError("wrong login or password")
         user.failed_logins = 0
         user.locked_until = None
         user.last_login_at = now

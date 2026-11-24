@@ -208,8 +208,12 @@ async def test_block_logs_user_out(client, make_user):
     response = await other.post(
         "/auth/signin", json={"login": "blocked", "password": "blocked-password"}
     )
+    wrong = await other.post(
+        "/auth/signin", json={"login": "blocked", "password": "wrong-password"}
+    )
     await other.aclose()
-    assert response.status_code == 403 and code(response) == "user_blocked"
+    assert response.status_code == 401 and code(response) == "invalid_credentials"
+    assert response.json() == wrong.json()
 
 
 async def test_api_keys(client, make_user, anonymous):

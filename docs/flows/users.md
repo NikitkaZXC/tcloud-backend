@@ -24,6 +24,9 @@ Admin не может создать, изменить или удалить д�
 - `POST /api/auth/signin` `{"login", "password"}` → `204` и две куки: `access` (JWT RS256, 15 минут, `JWT_ACCESS_TOKEN_EXPIRATION_MINUTES`)
   и `refresh` (случайная строка, 30 дней, `JWT_REFRESH_TOKEN_EXPIRATION_DAYS`). Обе `HttpOnly`, `SameSite=lax`,
   `Secure` (по умолчанию включён: `JWT_SECURE=false` нужен для http без TLS, например в Safari или в скриптах).
+- Заблокированный пользователь при входе получает тот же `401 invalid_credentials`, что и при неверном пароле
+  (пароль всё равно проверяется argon2, время ответа одинаковое): по ответу нельзя узнать, что пароль верный, а
+  аккаунт заблокирован. `403 user_blocked` остаётся у уже выданных кук, refresh и API-ключей.
 - `POST /api/auth/refresh` меняет пару: старый refresh отзывается, его access попадает в blacklist. Если приходит уже
   отозванный refresh (его украли и использовали), отзываются **все** сессии пользователя (reuse detection).
 - `POST /api/auth/logout` отзывает текущую сессию, `POST /api/auth/logout/all` отзывает все.
@@ -56,8 +59,8 @@ sequenceDiagram
     else неверный пароль
         U->>DB: failed_logins + 1, на JWT_MAX_FAILED_LOGINS — locked_until
         U-->>C: 401 invalid_credentials или 429 account_locked
-    else blocked
-        U-->>C: 403 user_blocked
+    else blocked (пароль верный)
+        U-->>C: 401 invalid_credentials (как неверный пароль)
     end
     U->>DB: удалить истёкшие refresh, INSERT refresh_tokens (HMAC, access_jti)
     A-->>C: 204, куки access (JWT RS256) и refresh
