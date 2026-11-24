@@ -6,16 +6,19 @@ from src.utilities.parsers.exception import InvalidPathError
 ROOT = "tcloud"
 PATH_MAX = 1024
 SEGMENT_MAX = 255
+BIDI_CONTROLS = frozenset(
+    "\u061c\u200e\u200f\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069"
+)
 
 
 def check_segment(segment: str) -> None:
     if segment in ("", ".", ".."):
         raise InvalidPathError("empty, '.' and '..' path segments are not allowed")
     if "\\" in segment or any(
-        unicodedata.category(char) in ("Cc", "Cf") for char in segment
+        char in BIDI_CONTROLS or unicodedata.category(char) == "Cc" for char in segment
     ):
         raise InvalidPathError(
-            "control and format characters and '\\' are not allowed in paths"
+            "control and bidi control characters and '\\' are not allowed in paths"
         )
     if len(segment.encode()) > SEGMENT_MAX:
         raise InvalidPathError(f"path segment is longer than {SEGMENT_MAX} bytes")
