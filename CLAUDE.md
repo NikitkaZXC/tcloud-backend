@@ -68,6 +68,7 @@ Layers: `api → application → infrastructure`; `utilities` are shared. `src/a
 ## Rules
 
 - Plan first, then implement by the plan. Important decisions go to the owner as multiple-choice questions.
+- README stays short: overview, diagrams, main endpoints table, launch, links; details go into `docs/`.
 - Tests for every new feature (the more the better). Keep `docs/`, `README.md` and this file current in the same change; schema changes → `docs/database.md`.
 - When code changes a flow shown in `docs/`, update the doc and its diagram in the same commit (Mermaid blocks; check they render with `mmdc` installed outside the repo). New Redis keys → `docs/redis.md`.
 - Every new query with a filter or sort gets an index. All our ids are UUID. Never edit existing migrations.

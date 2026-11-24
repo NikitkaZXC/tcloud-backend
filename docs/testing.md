@@ -8,6 +8,8 @@
 | `make test-all` / `make test-cov` | всё / с покрытием |
 | `make test-docker` | всё в контейнере с ffmpeg и Postgres (`docker-compose.test.yml`) — так же, как в CI |
 
+- Если `uv run pytest` падает из-за старых путей в `.venv`, запускайте `.venv/bin/python -m pytest` или пересоздайте
+  окружение (`rm -rf .venv && uv sync`).
 - Маркеры `unit`/`integration`/`api` ставятся по папке автоматически; `ffmpeg` — тесты, которым нужен ffmpeg,
   без него они пропускаются.
 - Postgres: testcontainers (`postgres:18`) или готовый сервер через `TEST_POSTGRES_HOST`/`TEST_POSTGRES_PORT`
