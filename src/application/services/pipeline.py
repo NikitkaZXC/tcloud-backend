@@ -19,7 +19,7 @@ from src.application.services.storage import root_settings
 from src.application.services.temp import remove_task_files, temp_path
 from src.application.services.webhook import send_hook
 from src.config import settings
-from src.infrastructure.background import WorkerRuntime, enqueue
+from src.infrastructure.background import QueueUnavailableError, WorkerRuntime, enqueue
 from src.infrastructure.cache import CLAIM_BUSY, TaskStore
 from src.infrastructure.database.models import FileDB
 from src.infrastructure.database.repositories import (
@@ -58,6 +58,8 @@ from src.utilities.parsers import split_file
 TELEGRAM_PHOTO_SUFFIXES = {"image/jpeg": ".jpg", "image/png": ".png"}
 DISK_SLOT_POLL = 1.0
 CANCEL_POLL = 1.0
+BROKER_WAIT = 600.0
+BROKER_RETRY = 5.0
 PROGRESS_FIELDS = ("cancel", "params")
 PREVIEW_KINDS = {MediaKind.PHOTO, MediaKind.ANIMATION, MediaKind.VIDEO}
 
@@ -159,18 +161,34 @@ class UploadPipeline:
         self, task: dict, queue: UploadQueue, stage: TaskStage, total: int | None
     ) -> None:
         await self._checkpoint(task)
-        await self.stage(
-            task, stage, total, waiting={"reason": f"queue:{queue}"}, step=queue.step
-        )
-        current = await self._store.get(task["id"])
-        async with self._runtime.handoff_lock:
-            await self._store.join_queue(task["id"], queue, current["priority_level"])
-            await enqueue(
-                queue,
-                current["priority_level"],
-                task_id=str(task["id"]),
-                generation=current.get("generation") or 0,
-            )
+        waiting = {"reason": f"queue:{queue}"}
+        await self.stage(task, stage, total, waiting=waiting, step=queue.step)
+        deadline = time.monotonic() + BROKER_WAIT
+        while True:
+            current = await self._store.get(task["id"])
+            try:
+                async with self._runtime.handoff_lock:
+                    await self._store.join_queue(
+                        task["id"], queue, current["priority_level"]
+                    )
+                    await enqueue(
+                        queue,
+                        current["priority_level"],
+                        task_id=str(task["id"]),
+                        generation=current.get("generation") or 0,
+                    )
+                return
+            except QueueUnavailableError:
+                if time.monotonic() > deadline:
+                    raise
+                logger.warning(
+                    "Task {}: broker unavailable, handoff to {} retried in {:.0f} s",
+                    task["id"],
+                    queue,
+                    BROKER_RETRY,
+                )
+                await self._wait(task, "broker", BROKER_RETRY)
+                await self._store.update(task["id"], waiting=waiting)
 
     async def _download(self, task: dict) -> None:
         params = task["params"]

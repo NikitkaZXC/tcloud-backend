@@ -12,9 +12,10 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 import main
-from src.application.services import UploadPipeline
+from src.application.services import UploadPipeline, pipeline
 from src.application.services.temp import temp_path
 from src.config import settings
+from src.infrastructure.background import QueueUnavailableError
 from src.infrastructure.database.models import FileDB
 from src.infrastructure.enums import MediaKind, UploadQueue
 from src.infrastructure.media import Media
@@ -425,3 +426,35 @@ async def test_task_counts_are_per_user(client, telegram, storage, make_user):
         main.app.state.runtime.store._key("task", queued)
     )
     assert (await client.get("/tasks/counts")).json()["total"] == 2
+
+
+def flaky_enqueue(monkeypatch, failures: int) -> list:
+    calls = []
+    original = pipeline.enqueue
+
+    async def enqueue(*args, **kwargs):
+        calls.append(args[0])
+        if len(calls) <= failures:
+            raise QueueUnavailableError("upload queue is not available")
+        await original(*args, **kwargs)
+
+    monkeypatch.setattr(pipeline, "enqueue", enqueue)
+    monkeypatch.setattr(pipeline, "BROKER_RETRY", 0.01)
+    return calls
+
+
+async def test_handoff_waits_for_the_broker(client, telegram, storage, monkeypatch):
+    calls = flaky_enqueue(monkeypatch, 2)
+    task = await upload(client, path(storage, "b.jpg"), make_image())
+    assert task["status"] == "done", task
+    assert calls == [UploadQueue.TELEGRAM] * 3
+
+
+async def test_handoff_fails_when_the_broker_stays_down(
+    client, telegram, storage, monkeypatch
+):
+    flaky_enqueue(monkeypatch, 1000)
+    monkeypatch.setattr(pipeline, "BROKER_WAIT", 0.05)
+    task = await upload(client, path(storage, "b.jpg"), make_image())
+    assert (task["status"], task["error"]["code"]) == ("failed", "queue_unavailable")
+    assert telegram.messages() == []
