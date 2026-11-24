@@ -367,7 +367,7 @@ query, списки — повтором параметра (`kind=photo&kind=vi
 | `kind` | `photo`, `video`, `audio`, `animation`, `document`, несколько через повтор |
 | `mime` | точные MIME (`image/jpeg`, `application/pdf`), до 50, без учёта регистра; `photo.JPG` и `photo.jpeg` — оба `image/jpeg` |
 | `size_min`, `size_max` | байты открытого размера (`files.size`), включительно |
-| `date_from`, `date_to` | ISO 8601, по `updated_at` — время последней загрузки содержимого (`replace` его обновляет), включительно |
+| `date_from`, `date_to` | ISO 8601, по `updated_at` — время последней загрузки содержимого (`replace` его обновляет), включительно; время без зоны считается UTC (можно смешивать с `Z`/`+03:00`) |
 | `encrypted` | `true` / `false` |
 | `sort` | `relevance` (по умолчанию): сначала точное совпадение имени, потом имена, начинающиеся с `q`, потом остальные, внутри — по имени; без `q` — по имени. `name`, `size`, `date` |
 | `order` | `asc` / `desc`; по умолчанию `asc` для `relevance`/`name`, `desc` для `size`/`date` |

@@ -171,6 +171,16 @@ async def test_filters_by_size_date_and_encryption(client, tree):
     assert (await search(client, encrypted="true"))["total"] == 7
 
 
+async def test_naive_dates_are_utc(client, tree):
+    now = datetime.now(UTC).replace(tzinfo=None)
+    naive = (now - timedelta(hours=1)).isoformat()
+    aware = (now + timedelta(hours=1)).isoformat() + "Z"
+    assert (await search(client, date_from=naive))["total"] == 8
+    assert (await search(client, date_from=naive, date_to=aware))["total"] == 8
+    later = (now + timedelta(hours=1)).isoformat()
+    assert (await search(client, date_from=later))["total"] == 0
+
+
 async def test_scopes_folder_storage_and_everywhere(client, storage, tree):
     other = (await client.post("/storages", json={"name": "Другое"})).json()
     await put(client, other, "отчёт другой.txt", TEXT)

@@ -1,7 +1,7 @@
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from src.application.schemas import (
     ActivityServiceRead,
@@ -44,6 +44,13 @@ class FileSearchParams(BaseModel):
     lang: Literal["ru", "en"] = "en"
     limit: int = Field(50, ge=1, le=SEARCH_LIMIT_MAX)
     offset: int = Field(0, ge=0, le=SEARCH_OFFSET_MAX)
+
+    @field_validator("date_from", "date_to")
+    @classmethod
+    def as_utc(cls, value: datetime | None) -> datetime | None:
+        if value and value.tzinfo is None:
+            return value.replace(tzinfo=UTC)
+        return value
 
     @model_validator(mode="after")
     def check_ranges(self) -> "FileSearchParams":
