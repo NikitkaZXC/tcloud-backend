@@ -11,8 +11,12 @@ SEGMENT_MAX = 255
 def check_segment(segment: str) -> None:
     if segment in ("", ".", ".."):
         raise InvalidPathError("empty, '.' and '..' path segments are not allowed")
-    if "\\" in segment or any(unicodedata.category(char) == "Cc" for char in segment):
-        raise InvalidPathError("control characters and '\\' are not allowed in paths")
+    if "\\" in segment or any(
+        unicodedata.category(char) in ("Cc", "Cf") for char in segment
+    ):
+        raise InvalidPathError(
+            "control and format characters and '\\' are not allowed in paths"
+        )
     if len(segment.encode()) > SEGMENT_MAX:
         raise InvalidPathError(f"path segment is longer than {SEGMENT_MAX} bytes")
 
