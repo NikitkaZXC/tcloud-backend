@@ -23,7 +23,7 @@ PING_TTL = 5.0
 class ClamAVClient:
     _pinged: tuple[float, bool] | None = None
 
-    def __init__(self, host: str, port: int, timeout: float = 900) -> None:
+    def __init__(self, host: str, port: int, timeout: float = 1860) -> None:
         self.host, self.port, self.timeout = host, port, timeout
 
     async def _command(

@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from src.config import settings
 from src.infrastructure.integrations.antivirus import (
     ClamAVClient,
     InfectedFileError,
@@ -126,3 +127,15 @@ def test_clamd_config_is_strict():
         assert config[option] == "yes", option
     assert config["HeuristicScanPrecedence"] == "no"
     assert int(config["MaxScanTime"]) >= int(config["ReadTimeout"]) * 1000
+
+
+def test_scan_limit_mirrors_clamd_config():
+    config = dict(
+        line.split(maxsplit=1)
+        for line in (ROOT / "docker" / "clamd.conf").read_text().splitlines()
+        if line and not line.startswith("#")
+    )
+    assert int(config["MaxFileSize"]) == settings.antivirus.MAX_FILE_SIZE
+    assert settings.antivirus.MAX_FILE_SIZE <= 2147483645
+    assert config["StreamMaxLength"] == config["MaxScanSize"] == "4000M"
+    assert settings.antivirus.TIMEOUT * 1000 > int(config["MaxScanTime"])

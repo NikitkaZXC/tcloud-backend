@@ -354,14 +354,24 @@ class UploadPipeline:
         )
         await self.step(task, TaskStep.SCANNING, size)
         warnings: list[dict] = []
+        limit = settings.antivirus.MAX_FILE_SIZE
         try:
-            await self._retry(
-                task,
-                lambda: self._runtime.scanner.scan(
-                    path, lambda done: self.progress(task["id"], done, size)
-                ),
-                ScannerUnavailableError,
-            )
+            if size > limit:
+                warnings.append(
+                    task_warning(
+                        "too_big_to_scan",
+                        f"file is bigger than the antivirus limit ({limit} bytes), not scanned",
+                        limit=limit,
+                    )
+                )
+            else:
+                await self._retry(
+                    task,
+                    lambda: self._runtime.scanner.scan(
+                        path, lambda done: self.progress(task["id"], done, size)
+                    ),
+                    ScannerUnavailableError,
+                )
         except UnscannableFileError as error:
             if not task["params"].get("allow_unscannable"):
                 raise

@@ -70,7 +70,13 @@ flowchart TD
 ## ClamAV
 
 Контейнер `clamav/clamav:*-debian` (alpine-теги собраны только под amd64). `docker/clamd.conf` поднимает лимиты
-потока до 4000 МБ (по умолчанию clamd режет на 100 МБ) и включает строгие проверки, см. security.md.
+до потолка ClamAV (по умолчанию clamd режет на 100 МБ) и включает строгие проверки, см. security.md:
+`MaxFileSize 2147483645` (libclamav не сканирует файлы больше 2 ГиБ − 3 байта и сам урезает больший `MaxFileSize`
+до этого значения), `StreamMaxLength`/`MaxScanSize 4000M` (максимум clamd, < 4 ГБ; `MaxScanSize` — сколько байт всего
+распаковывается из архива), `MaxScanTime` 30 мин, `ReadTimeout`/`CommandReadTimeout` 15 мин (простой сокета).
+`CLAMAV_MAX_FILE_SIZE` равен `MaxFileSize` (`test_scan_limit_mirrors_clamd_config`): файлы больше в ClamAV не
+отправляются вовсе (иначе ответ был бы `Heuristics.Limits.Exceeded.MaxFileSize`). `CLAMAV_TIMEOUT` (1860 с) — сколько
+клиент ждёт ответа после потока, больше `MaxScanTime`, чтобы clamd успел ответить лимитом, а не обрывом.
 Первый старт качает базы несколько минут.
 
 Ответы `clamd` делятся на два класса:
@@ -78,7 +84,8 @@ flowchart TD
 | Ответ | Код | Что значит |
 |---|---|---|
 | `Heuristics.Encrypted.*` | `unscannable` | зашифрованный архив, PDF или документ: внутрь не заглянуть |
-| `Heuristics.Limits.Exceeded.*` | `unscannable` | упёрлись в лимит (размер, число файлов, вложенность, время) — проверено не всё |
+| `Heuristics.Limits.Exceeded.*` | `unscannable` | упёрлись в лимит (размер вложенного файла, `MaxScanSize`, число файлов, вложенность, время) — проверено не всё; это свойство содержимого (zip-бомба, глубокая вложенность), поэтому идёт под `allow_unscannable` |
+| — (файл больше `CLAMAV_MAX_FILE_SIZE`, в clamd не отправлялся) | — | принимается с предупреждением `too_big_to_scan` независимо от `allow_unscannable` |
 | `Heuristics.OLE2.ContainsMacros*` | `unscannable` | Office с макросами |
 | любой другой `FOUND` (сигнатуры, `PUA.*`, `Heuristics.Broken.*`, фишинг) | `infected` | отклоняется всегда |
 

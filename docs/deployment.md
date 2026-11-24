@@ -36,6 +36,14 @@ volume удалён или сессию завершили в Telegram. Без �
 - Обрыв сети воркера с брокером (проверено до 3 мин) процесс не роняет: Celery переподключается сам (pidbox-очередь
   не эксклюзивная, background-tasks.md). Страховка — `restart: unless-stopped` у API и воркеров в prod и dev compose.
 - Первый старт ClamAV качает базы несколько минут — до этого загрузки отвечают `503 scanner_unavailable`.
+- ClamAV (`docker/clamd.conf`, integrations.md): `MaxFileSize 2147483645` (потолок libclamav), `StreamMaxLength`/
+  `MaxScanSize 4000M`, `MaxScanTime` 30 мин; файлы больше `CLAMAV_MAX_FILE_SIZE` не сканируются (`too_big_to_scan`).
+  Меняя `MaxFileSize`, меняйте и `CLAMAV_MAX_FILE_SIZE`. Память: базы сигнатур ≈ 1–1,5 ГБ RAM, при обновлении баз
+  (`ConcurrentDatabaseReload` по умолчанию) clamd на время держит две копии — закладывайте 3–4 ГБ RAM на контейнер.
+  `INSTREAM` пишет поток во временный файл clamd на диске (не в память): на каждую одновременную проверку нужно до
+  2 ГиБ места в контейнере плюс распакованное содержимое архивов (до `MaxScanSize`). Проверок одновременно не больше
+  потоков `worker-prepare` (`UPLOAD_PREPARE_CONCURRENCY` × реплики). Проверка 2 ГиБ занимает минуты; клиент ждёт ответа
+  до `CLAMAV_TIMEOUT` (1860 с).
 - Пароль Postgres задаётся при первом создании volume `pgdata`; сменить его в `.env` позже — значит пересоздать volume.
 - Размер тела запроса на прокси: обычный `POST /api/uploads` несёт файл целиком, поэтому у nginx фронтенда для `/api/`
   стоят `client_max_body_size 0` и `proxy_request_buffering off`. Если прокси ограничивает тело (свой nginx, CDN с

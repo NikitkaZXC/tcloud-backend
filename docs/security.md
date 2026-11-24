@@ -67,8 +67,12 @@ IP клиента — `request.client.host`. uvicorn берёт его из `X-F
    не-медиа не может называться `.jpg`/`.mp4`/… (иначе Telegram показал бы его как фото или видео).
 4. ClamAV (`clamd INSTREAM`) со строгим `docker/clamd.conf`: `AlertExceedsMax` (без неё файл, упёршийся в лимит,
    проходит непроверенным), `AlertEncrypted`, `AlertOLE2Macros`, `AlertBrokenExecutables`, `DetectPUA`, `HeuristicAlerts`,
-   `MaxRecursion 16`, `MaxFiles 10000`, `MaxScanTime` 15 мин. Вирус, PUA, битый исполняемый → `infected`.
-   Зашифрованное, Office с макросами, превышен лимит → `unscannable` (см. integrations.md). Недоступен → загрузка
+   `MaxRecursion 16`, `MaxFiles 10000`, `MaxScanTime` 30 мин, `MaxFileSize` = потолок ClamAV 2147483645 байт,
+   `MaxScanSize`/`StreamMaxLength 4000M`. Вирус, PUA, битый исполняемый → `infected`.
+   Зашифрованное, Office с макросами, превышен лимит содержимого → `unscannable` (см. integrations.md).
+   Файл больше `CLAMAV_MAX_FILE_SIZE` (= `MaxFileSize`) ClamAV проверить не может вовсе: он не отправляется в clamd и
+   принимается с предупреждением `too_big_to_scan` даже без `allow_unscannable` (решение владельца; честный предел —
+   такие файлы проходят только проверку типа и декодеры). Скачивание не-медиа остаётся sandboxed («Скачивание»). Недоступен → загрузка
    отклоняется (fail-closed), перед этим `UPLOAD_RETRIES` повторов — ClamAV может просто перезапускаться.
 5. `allow_unscannable=true` в загрузке принимает `unscannable` с предупреждением в задаче. Вирусы он не пропускает:
    найденная сигнатура важнее эвристики (`HeuristicScanPrecedence no`).

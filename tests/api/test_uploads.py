@@ -253,6 +253,33 @@ async def test_allow_unscannable_does_not_pass_viruses(client, telegram, storage
     assert task["error"]["code"] == "infected" and telegram.messages() == []
 
 
+async def test_file_over_scan_limit_accepted_unscanned(
+    client, telegram, storage, monkeypatch
+):
+    data = b"ENCRYPTED EICAR" + b"x" * 100
+    monkeypatch.setattr(settings.antivirus, "MAX_FILE_SIZE", len(data) - 1)
+    task = await upload(client, path(storage, "huge.bin"), data)
+    assert task["status"] == "done", task
+    assert task["warning_details"][0] == {
+        "code": "too_big_to_scan",
+        "params": {"limit": len(data) - 1},
+        "message": f"file is bigger than the antivirus limit ({len(data) - 1} bytes),"
+        " not scanned",
+    }
+    assert len(telegram.messages()) == 1
+
+
+@pytest.mark.parametrize(
+    ("content", "code"), [(b"PK ENCRYPTED", "unscannable"), (b"EICAR", "infected")]
+)
+async def test_file_at_scan_limit_is_scanned(
+    client, telegram, storage, monkeypatch, content, code
+):
+    monkeypatch.setattr(settings.antivirus, "MAX_FILE_SIZE", len(content))
+    task = await upload(client, path(storage, "a.zip"), content)
+    assert task["error"]["code"] == code and telegram.messages() == []
+
+
 async def test_extension_mismatch(client, storage):
     task = await upload(client, path(storage, "photo.mp4"), make_image())
     assert task["error"]["code"] == "extension_mismatch"

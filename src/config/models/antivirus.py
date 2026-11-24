@@ -8,4 +8,5 @@ class AntivirusSettings(BaseSettings):
 
     HOST: str = "clamav"
     PORT: int = 3310
-    TIMEOUT: float = 900
+    TIMEOUT: float = 1860
+    MAX_FILE_SIZE: int = 2147483645
