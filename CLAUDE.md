@@ -17,6 +17,7 @@ make test | test-integration | test-api | test-all | test-cov
 make test-docker                  # whole suite in Docker with ffmpeg (tests needing ffmpeg are skipped locally without it)
 make format                       # black + isort
 make check                        # pip-audit + migration checks
+# CI: .github/workflows/ci.yml (lint, test with Postgres/Redis/RabbitMQ/ffmpeg, audit); Dependabot: .github/dependabot.yml (weekly, minor/patch grouped)
 make load-up && make load-app && make load && make load-down   # locust stand with fake Telegram
 uv run alembic revision --autogenerate -m "msg"
 ```

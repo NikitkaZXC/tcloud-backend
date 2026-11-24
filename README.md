@@ -69,6 +69,7 @@ curl -H "X-API-Key: $TCLOUD_KEY" --data-binary @photo.jpg \
 
 Логи dev-стенда: `docker compose -f docker-compose.dev.yml logs -f app worker-download worker-prepare worker-telegram`.
 Прочие цели: `make install` (`uv sync`), `make format` (black + isort), `make check` (pip-audit + проверка миграций).
+CI (`.github/workflows/ci.yml`, на push и pull request): `lint` (black/isort `--check`), `test` (весь `pytest` с Postgres, Redis, RabbitMQ и ffmpeg), `audit` (pip-audit). Dependabot (`.github/dependabot.yml`) раз в неделю обновляет uv, Docker, docker-compose и GitHub Actions; minor/patch сгруппированы.
 Подробно — [docs/development.md](docs/development.md), прод — [docs/deployment.md](docs/deployment.md).
 
 ## Настройки
