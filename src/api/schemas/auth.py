@@ -1,5 +1,6 @@
 from pydantic import BaseModel
 
+from src.api.schemas.base import RequestBody
 from src.application.schemas import (
     AuthorizationServiceRead,
     AuthServiceRead,
@@ -9,15 +10,15 @@ from src.application.schemas import (
 from src.utilities.formatters import LoginCode, Password, PhoneNumber
 
 
-class CodeStart(BaseModel):
+class CodeStart(RequestBody):
     phone: PhoneNumber
 
 
-class CodeSignIn(BaseModel):
+class CodeSignIn(RequestBody):
     code: LoginCode
 
 
-class PasswordSignIn(BaseModel):
+class PasswordSignIn(RequestBody):
     password: Password
 
 

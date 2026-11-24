@@ -602,3 +602,30 @@ async def test_upload_only_user_sees_no_metadata_of_existing_files(
         "/uploads", params={"path": target, "on_conflict": "skip"}, content=b"x"
     )
     assert response.json()["file"]["name"] == "secret-salary.pdf"
+
+
+async def test_unknown_body_fields_are_rejected(client, anonymous, storage, make_user):
+    user = await make_user("strict")
+    cases = [
+        (anonymous.post, "/auth/signin", {"login": "root", "password": "x", "otp": 1}),
+        (client.post, "/storages", {"name": "s", "colour": "red"}),
+        (client.patch, f"/storages/{storage['id']}", {"title": "s"}),
+        (client.post, "/folders", {"path": path(storage, "a"), "parents": True}),
+        (client.patch, f"/users/{user.user_id}", {"blocked": True, "admin": True}),
+        (client.post, "/users", {"login": "x-y", "password": "x" * 8, "email": "e"}),
+        (client.post, f"/users/{user.user_id}/api-keys", {"name": "k", "scope": "all"}),
+        (
+            client.post,
+            "/uploads/batch",
+            {
+                "items": [
+                    {"url": "https://example.com/a", "path": path(storage, "a"), "x": 1}
+                ]
+            },
+        ),
+    ]
+    for call, url, body in cases:
+        response = await call(url, json=body)
+        assert response.status_code == 422, (url, response.text)
+    assert (await anonymous.get("/users/me")).status_code == 401
+    assert (await client.get(f"/users/{user.user_id}")).json()["blocked"] is False

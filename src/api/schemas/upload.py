@@ -2,6 +2,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, model_validator
 
+from src.api.schemas.base import RequestBody
 from src.application.schemas import (
     BatchServiceRead,
     TaskCountsServiceRead,
@@ -38,12 +39,12 @@ class UploadSessionResponse(UploadSessionServiceRead):
     pass
 
 
-class UrlUploadCreate(UploadParams):
+class UrlUploadCreate(UploadParams, RequestBody):
     url: str
     size: FileSize | None = None
 
 
-class BatchCreate(BaseModel):
+class BatchCreate(RequestBody):
     items: list[UrlUploadCreate] = Field(min_length=1, max_length=BATCH_MAX)
 
 
@@ -62,7 +63,7 @@ class TaskCountsResponse(TaskCountsServiceRead):
     pass
 
 
-class PriorityUpdate(BaseModel):
+class PriorityUpdate(RequestBody):
     priority: Priority
 
 

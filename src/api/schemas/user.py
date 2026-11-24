@@ -1,5 +1,6 @@
 from pydantic import BaseModel, Field
 
+from src.api.schemas.base import RequestBody
 from src.application.schemas import (
     ApiKeyServiceRead,
     GrantServiceRead,
@@ -17,29 +18,29 @@ from src.utilities.formatters import (
 )
 
 
-class SignIn(BaseModel):
+class SignIn(RequestBody):
     login: str = Field(min_length=1, max_length=64)
     password: Password
 
 
-class PasswordChange(BaseModel):
+class PasswordChange(RequestBody):
     current_password: Password
     new_password: UserPassword
 
 
-class UserCreate(BaseModel):
+class UserCreate(RequestBody):
     login: UserLogin
     password: UserPassword
     role: ManagedRole = "user"
 
 
-class UserUpdate(BaseModel):
+class UserUpdate(RequestBody):
     role: ManagedRole | None = None
     blocked: bool | None = None
     password: UserPassword | None = None
 
 
-class GrantCreate(BaseModel):
+class GrantCreate(RequestBody):
     path: TcloudPath
     recursive: bool = True
     can_read: bool = True
@@ -47,7 +48,7 @@ class GrantCreate(BaseModel):
     can_delete: bool = False
 
 
-class ApiKeyCreate(BaseModel):
+class ApiKeyCreate(RequestBody):
     name: ApiKeyName
 
 

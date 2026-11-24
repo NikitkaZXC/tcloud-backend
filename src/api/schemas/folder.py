@@ -3,6 +3,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
+from src.api.schemas.base import RequestBody
 from src.application.schemas import (
     FolderDeleteServiceRead,
     FolderListingServiceRead,
@@ -12,7 +13,7 @@ from src.infrastructure.enums import ArchiveFormat
 from src.utilities.formatters import ArchiveName, Priority, TcloudPath
 
 
-class FolderCreate(BaseModel):
+class FolderCreate(RequestBody):
     path: TcloudPath
 
 
@@ -41,7 +42,7 @@ class FolderDeleteResponse(FolderDeleteServiceRead):
     pass
 
 
-class SelectionArchiveCreate(BaseModel):
+class SelectionArchiveCreate(RequestBody):
     files: list[UUID] = Field(default_factory=list)
     folders: list[TcloudPath] = Field(default_factory=list)
     format: ArchiveFormat | None = None

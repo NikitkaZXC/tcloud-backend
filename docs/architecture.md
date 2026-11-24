@@ -108,6 +108,14 @@ src/
 - После ORM-`UPDATE` c `onupdate=func.now()` SQLAlchemy помечает `updated_at` устаревшим; `get_by_id` в репозиториях
   читают с `populate_existing=True`, иначе ленивая подгрузка в async-коде падает с `MissingGreenlet`.
 
+## Схемы запросов
+
+JSON-тела (`POST`/`PUT`/`PATCH`) наследуют `api/schemas/base.RequestBody` с `extra="forbid"`: незнакомое поле — `422
+validation_error` (`type: extra_forbidden`, `loc` — путь к полю), а не тихий пропуск опечатки (`{"blocked": true,
+"admn": true}` больше не «проходит»). Модели query-параметров (`UploadParams` у `POST /api/uploads`, поиск, листинг) так
+не делаются: лишний параметр строки запроса по-прежнему игнорируется. Настройки (`PATCH /api/account/settings`) были
+строгими и раньше.
+
 ## Ошибки
 
 Каждая ошибка — подкласс `TCloudError` со стабильным `code` (`storage_not_found`, `too_large`, `flood_wait`…).
