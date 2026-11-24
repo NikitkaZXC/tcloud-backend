@@ -57,6 +57,19 @@ async def test_wrong_password(anonymous, client):
     assert response.status_code == 401 and code(response) == "invalid_credentials"
 
 
+async def test_huge_login_is_rejected_before_the_limiter(anonymous, client, redis):
+    response = await anonymous.post(
+        "/auth/signin", json={"login": "a" * 100_000, "password": "x"}
+    )
+    assert response.status_code == 422
+    keys = [key async for key in redis.scan_iter(match="*signin_login*")]
+    assert all(len(key) < 1000 for key in keys)
+    response = await anonymous.post(
+        "/auth/signin", json={"login": "root", "password": "x" * 2000}
+    )
+    assert response.status_code == 422
+
+
 async def test_unknown_login_is_not_logged(anonymous):
     messages: list[str] = []
     sink = logger.add(lambda message: messages.append(message.record["message"]))

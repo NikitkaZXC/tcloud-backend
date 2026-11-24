@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from src.application.schemas import (
     ApiKeyServiceRead,
@@ -18,7 +18,7 @@ from src.utilities.formatters import (
 
 
 class SignIn(BaseModel):
-    login: str
+    login: str = Field(min_length=1, max_length=64)
     password: Password
 
 

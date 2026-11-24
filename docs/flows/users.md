@@ -24,6 +24,8 @@ Admin не может создать, изменить или удалить д�
 - `POST /api/auth/signin` `{"login", "password"}` → `204` и две куки: `access` (JWT RS256, 15 минут, `JWT_ACCESS_TOKEN_EXPIRATION_MINUTES`)
   и `refresh` (случайная строка, 30 дней, `JWT_REFRESH_TOKEN_EXPIRATION_DAYS`). Обе `HttpOnly`, `SameSite=lax`,
   `Secure` (по умолчанию включён: `JWT_SECURE=false` нужен для http без TLS, например в Safari или в скриптах).
+  `login` — 1–64 символа, `password` — 1–256, иначе `422` ещё до лимита по логину: огромный логин не становится
+  ключом Redis `rate_limit:signin_login:…`.
 - Заблокированный пользователь при входе получает тот же `401 invalid_credentials`, что и при неверном пароле
   (пароль всё равно проверяется argon2, время ответа одинаковое): по ответу нельзя узнать, что пароль верный, а
   аккаунт заблокирован. `403 user_blocked` остаётся у уже выданных кук, refresh и API-ключей.
