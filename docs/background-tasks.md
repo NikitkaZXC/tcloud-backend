@@ -90,7 +90,7 @@ sequenceDiagram
     participant TG as Telegram (сессия upload)
     participant DB as PostgreSQL
     C->>A: POST /api/uploads (тело) или /uploads/from-url
-    A->>A: with_defaults из настроек, права, check_name, сессия upload, лимит файла, диск, конфликт пути
+    A->>A: with_defaults из настроек, права, сессия upload, лимит файла, диск, конфликт пути
     A->>R: SET NX path:{path} (занят → 409 upload_in_progress)
     alt с устройства
         A->>R: take_disk_slot (нет слота → 429 too_many_tasks)

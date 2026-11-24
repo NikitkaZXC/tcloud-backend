@@ -19,8 +19,7 @@ background-tasks.md («Путь загрузки целиком», «Стату�
 ## По ссылке
 
 `POST /api/uploads/from-url {url, path, send_as, on_conflict, priority, allow_unscannable, encrypt, callback_url}`: имя файла берётся из `path`,
-а не из ссылки. Скачивает worker-download с теми же проверками и лимитами. Если первые байты — исполняемый файл, соединение
-обрывается.
+а не из ссылки. Скачивает worker-download с теми же проверками и лимитами.
 
 ## Пачкой
 
@@ -47,7 +46,7 @@ background-tasks.md («Путь загрузки целиком», «Стату�
 (`MimeTypes(filenames=())`, не зависит от `/etc/mime.types`): `.txt` → `text/plain`, `.md` → `text/markdown`, `.csv`,
 `.json` …; `image/*`, `audio/*`, `video/*` по имени не присваиваются; иначе `application/octet-stream`). MIME документа —
 только метаданные (поиск, фильтры): отдаются документы всегда как `application/octet-stream` + `attachment`. Миграция
-`0014` один раз проставила такие типы старым документам с `application/octet-stream` по расширению. Исполняемые файлы, скрипты и установщики — `415 blocked_file_type`, в том числе внутри zip.
+`0014` один раз проставила такие типы старым документам с `application/octet-stream` по расширению. Принимаются любые типы, в том числе исполняемые; не-медиа отдаётся только на скачивание (security.md «Скачивание»).
 Все проверки — в security.md.
 
 ## `allow_unscannable`

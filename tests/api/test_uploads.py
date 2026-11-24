@@ -158,21 +158,25 @@ async def post_file(client, target: str, data: bytes = b"x" * 10, **options):
     )
 
 
-@pytest.mark.parametrize("name", ["setup.exe", "photo.jpg.exe", "run.sh", "a.apk"])
-async def test_executable_name_rejected_before_upload(client, telegram, storage, name):
-    response = await post_file(client, path(storage, name))
-    assert (
-        response.status_code == 415
-        and response.json()["error"]["code"] == "blocked_file_type"
-    )
-    assert telegram.messages() == []
-
-
-@pytest.mark.parametrize("name", ["virus.jpg", "report.pdf", "noext"])
-async def test_executable_content_rejected(client, telegram, storage, name):
-    task = await upload(client, path(storage, name), EXE)
-    assert task["status"] == "failed" and task["error"]["code"] == "blocked_file_type"
-    assert telegram.messages() == []
+@pytest.mark.parametrize(
+    "name, data",
+    [
+        ("setup.exe", EXE),
+        ("app.dmg", b"koly" + b"\0" * 100),
+        ("run.sh", b"#!/bin/sh\necho hi\n"),
+        ("noext", EXE),
+    ],
+)
+async def test_any_file_type_accepted(client, telegram, storage, name, data):
+    task = await upload(client, path(storage, name), data, encrypt="false")
+    assert task["status"] == "done" and task["file"]["kind"] == "document", task
+    assert telegram.messages()[0]["data"] == data
+    response = await client.get(f"/files/{task['file']['uuid']}/download")
+    assert response.content == data
+    assert response.headers["content-type"] == "application/octet-stream"
+    assert response.headers["content-disposition"].startswith("attachment;")
+    assert response.headers["x-content-type-options"] == "nosniff"
+    assert response.headers["content-security-policy"] == "sandbox"
 
 
 async def test_upload_document(client, telegram, storage):
@@ -209,10 +213,11 @@ async def test_document_named_as_photo_mismatch(client, telegram, storage):
     assert task["error"]["code"] == "extension_mismatch" and telegram.messages() == []
 
 
-async def test_archive_with_executable_rejected(client, telegram, storage):
+async def test_archive_with_executable_accepted(client, telegram, storage):
     data = make_zip({"readme.txt": b"x", "bin/setup.exe": b"MZ"})
     task = await upload(client, path(storage, "a.zip"), data)
-    assert task["error"]["code"] == "blocked_file_type" and telegram.messages() == []
+    assert task["status"] == "done" and task["file"]["kind"] == "document", task
+    assert len(telegram.messages()) == 1
 
 
 async def test_infected_document_rejected(client, telegram, storage):
@@ -490,13 +495,14 @@ async def test_upload_from_url_with_own_name(client, telegram, storage, remote):
 
 
 async def test_upload_from_url_executable(client, telegram, storage, remote):
-    Remote.files["/x.jpg"] = EXE + b"\0" * 10000
+    Remote.files["/x.exe"] = EXE + b"\0" * 10000
     response = await client.post(
         "/uploads/from-url",
-        json={"url": f"{remote}/x.jpg", "path": path(storage, "x.jpg")},
+        json={"url": f"{remote}/x.exe", "path": path(storage, "x.exe")},
     )
     task = await wait_task(client, response.json()["id"])
-    assert task["error"]["code"] == "blocked_file_type" and telegram.messages() == []
+    assert task["status"] == "done" and task["file"]["kind"] == "document", task
+    assert len(telegram.messages()) == 1
 
 
 async def test_upload_document_from_url(client, telegram, storage, remote):
@@ -552,13 +558,13 @@ async def test_batch_from_urls(client, storage, remote):
             "path": path(storage, "b/2.jpg"),
             "priority": "high",
         },
-        {"url": f"{remote}/x.exe", "path": path(storage, "b/setup.exe")},
+        {"url": "ftp://example.com/x.exe", "path": path(storage, "b/setup.exe")},
     ]
     response = await client.post("/uploads/batch", json={"items": items})
     assert response.status_code == 202
     body = response.json()
     assert [item["error"] is None for item in body["items"]] == [True, True, False]
-    assert body["items"][2]["error"]["code"] == "blocked_file_type"
+    assert body["items"][2]["error"]["code"] == "unsafe_url"
     assert body["items"][1]["task"]["priority"] == "high"
     for item in body["items"][:2]:
         assert item["task"]["batch_id"] == body["batch_id"]

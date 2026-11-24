@@ -6,7 +6,6 @@ STATUS_BY_CODE = {
     "unsupported_media_type": status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
     "invalid_media": status.HTTP_422_UNPROCESSABLE_CONTENT,
     "extension_mismatch": status.HTTP_422_UNPROCESSABLE_CONTENT,
-    "blocked_file_type": status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
     "infected": status.HTTP_422_UNPROCESSABLE_CONTENT,
     "unscannable": status.HTTP_422_UNPROCESSABLE_CONTENT,
     "scanner_unavailable": status.HTTP_503_SERVICE_UNAVAILABLE,

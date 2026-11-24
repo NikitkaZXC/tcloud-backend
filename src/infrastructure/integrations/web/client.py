@@ -12,7 +12,6 @@ from src.infrastructure.integrations.web.exception import (
     DownloadTooLargeError,
     UnsafeUrlError,
 )
-from src.infrastructure.media import SNIFF_BYTES, sniff
 
 CHUNK = 1024 * 1024
 MAX_REDIRECTS = 5
@@ -112,13 +111,9 @@ async def download(
             raise DownloadTooLargeError(
                 f"file is {total} bytes, limit is {limit}", limit=limit
             )
-        done, head = 0, b""
+        done = 0
         with open(target, "wb") as file:
             async for chunk in response.aiter_bytes(CHUNK):
-                if len(head) < SNIFF_BYTES:
-                    head += chunk
-                    if len(head) >= SNIFF_BYTES:
-                        sniff(head)
                 done += len(chunk)
                 if done > limit:
                     raise DownloadTooLargeError(
@@ -126,5 +121,3 @@ async def download(
                     )
                 file.write(chunk)
                 progress(done, total)
-        if len(head) < SNIFF_BYTES:
-            sniff(head)

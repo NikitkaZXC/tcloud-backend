@@ -11,7 +11,6 @@ from src.infrastructure.integrations.web import (
     UnsafeUrlError,
 )
 from src.infrastructure.integrations.web import client as web
-from src.infrastructure.media import BlockedFileError
 from tests.factories import EXE, PDF, make_image
 
 
@@ -127,11 +126,12 @@ async def test_download_ok(server, allow_local, tmp_path):
     assert seen[-1] == (len(data), len(data))
 
 
-async def test_download_rejects_executable_early(server, allow_local, tmp_path):
+async def test_download_executable(server, allow_local, tmp_path):
     base, routes = server
-    routes["/a.pdf"] = (200, {}, EXE + b"\0" * 20000)
-    with pytest.raises(BlockedFileError):
-        await web.download(f"{base}/a.pdf", tmp_path / "x", 10**7, lambda *a: None)
+    data = EXE + b"\0" * 20000
+    routes["/a.exe"] = (200, {}, data)
+    await web.download(f"{base}/a.exe", tmp_path / "x", 10**7, lambda *a: None)
+    assert (tmp_path / "x").read_bytes() == data
 
 
 async def test_download_document(server, allow_local, tmp_path):

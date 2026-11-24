@@ -4,7 +4,7 @@ This file provides guidance to Claude Code when working with code in this reposi
 
 ## Project
 
-tcloud: a FastAPI service that stores media (photo, video, audio, GIF) and other files (documents; executables are blocked) in private Telegram channels ("storages") through a Telegram **user** account (Telethon). Every file has a UUID and a path `tcloud/{storage uuid}/{folders}/{name}`; PostgreSQL keeps the index. Python 3.14, managed with `uv`. Structure and rules mirror `~/Desktop/nextgate/nextgate-backend`. Detailed docs (Russian) are in `docs/` (index `docs/README.md`).
+tcloud: a FastAPI service that stores media (photo, video, audio, GIF) and other files of any type (non-media is served only as a sandboxed attachment: `attachment` + `nosniff` + CSP `sandbox`, docs/security.md) in private Telegram channels ("storages") through a Telegram **user** account (Telethon). Every file has a UUID and a path `tcloud/{storage uuid}/{folders}/{name}`; PostgreSQL keeps the index. Python 3.14, managed with `uv`. Structure and rules mirror `~/Desktop/nextgate/nextgate-backend`. Detailed docs (Russian) are in `docs/` (index `docs/README.md`).
 
 ## Commands
 

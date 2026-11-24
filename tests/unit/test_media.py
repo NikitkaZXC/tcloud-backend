@@ -8,11 +8,9 @@ from PIL import Image
 from src.infrastructure import limits
 from src.infrastructure.enums import MediaKind
 from src.infrastructure.media import (
-    BlockedFileError,
     ExtensionMismatchError,
     InvalidMediaError,
     Media,
-    check_name,
     photo_fits,
     preview,
     probe,
@@ -126,10 +124,9 @@ def test_audio(tmp_path, fmt, mime):
         b"dex\n035 android",
     ],
 )
-@pytest.mark.parametrize("name", ["a.jpg", "report.pdf", "noext"])
-def test_executable_content_blocked(tmp_path, data, name):
-    with pytest.raises(BlockedFileError):
-        probe(_file(tmp_path, data), name)
+@pytest.mark.parametrize("name", ["setup.exe", "report.pdf", "noext", "run.sh"])
+def test_executable_content_is_document(tmp_path, data, name):
+    assert probe(_file(tmp_path, data), name).kind == MediaKind.DOCUMENT
 
 
 @pytest.mark.parametrize(
@@ -166,10 +163,9 @@ def test_media_named_as_document_mismatch(tmp_path):
     "member",
     ["setup.exe", "dir/run.BAT", "Evil.app/Contents/MacOS/Evil", "lib\\x.dll"],
 )
-def test_archive_with_executable_blocked(tmp_path, member):
+def test_archive_with_executable_is_document(tmp_path, member):
     data = make_zip({"readme.txt": b"x", member: b"payload"})
-    with pytest.raises(BlockedFileError, match="archive contains"):
-        probe(_file(tmp_path, data), "a.zip")
+    assert probe(_file(tmp_path, data), "a.zip").mime == "application/zip"
 
 
 def test_office_document_is_checked_as_archive(tmp_path):
@@ -198,14 +194,6 @@ def test_decompression_bomb(tmp_path, monkeypatch):
     monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 1000)
     with pytest.raises(InvalidMediaError):
         probe(_file(tmp_path, make_image("PNG", (100, 100))), "a.png")
-
-
-def test_check_name():
-    for good in ("a.MP4", "a.pdf", "noext", "archive.tar.gz", "a.exe.txt"):
-        check_name(good)
-    for bad in ("a.exe", "a.jpg.exe", "a.EXE", "a.exe.", "a.exe ", "run.sh", "x.apk"):
-        with pytest.raises(BlockedFileError):
-            check_name(bad)
 
 
 @pytest.mark.parametrize(

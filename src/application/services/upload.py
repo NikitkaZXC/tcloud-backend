@@ -47,7 +47,6 @@ from src.infrastructure.enums import (
 )
 from src.infrastructure.integrations import session_exists
 from src.infrastructure.integrations.web import check_scheme, check_webhook
-from src.infrastructure.media import check_name
 from src.infrastructure.security import check_available, plain_limit
 from src.utilities.errors import TCloudError
 from src.utilities.parsers import check_segment, join_path, split_file
@@ -128,7 +127,6 @@ class UploadService:
         data = data.with_defaults(actor.settings.uploads)
         storage_id, folder, name = split_file(data.path)
         self._check_access(actor, data.path, data.on_conflict)
-        check_name(name)
         if data.callback_url:
             check_webhook(data.callback_url)
         if data.url:

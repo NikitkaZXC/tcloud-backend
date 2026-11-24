@@ -17,9 +17,3 @@ class ExtensionMismatchError(TCloudError):
     """Raised when the file name extension does not match its real content."""
 
     code = "extension_mismatch"
-
-
-class BlockedFileError(TCloudError):
-    """Raised when the file is an executable, a script or an installer."""
-
-    code = "blocked_file_type"

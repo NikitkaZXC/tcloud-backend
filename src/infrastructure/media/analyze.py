@@ -3,7 +3,6 @@ import json
 import mimetypes
 import subprocess
 import warnings
-import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -20,7 +19,6 @@ from src.infrastructure.limits import (
     THUMB_SIDE,
 )
 from src.infrastructure.media.exception import (
-    BlockedFileError,
     ExtensionMismatchError,
     InvalidMediaError,
     UnsupportedMediaError,
@@ -54,33 +52,6 @@ EXTENSIONS = {
     MediaKind.AUDIO: {"mp3", "m4a", "ogg", "oga", "opus", "flac", "wav"},
 }
 ALL_EXTENSIONS = set().union(*EXTENSIONS.values())
-BLOCKED_EXTENSIONS = set("""
-    exe dll sys drv ocx scr com pif cpl msc msi msp mst bat cmd vbs vbe js jse wsf
-    wsh wsc hta ps1 psm1 psd1 ps1xml reg inf lnk url scf appref-ms gadget
-    application appx msix appxbundle msixbundle jar class dex apk aab xapk ipa app
-    pkg mpkg dmg command tool workflow sh bash zsh csh ksh run deb rpm appimage
-    snap flatpak elf so dylib iso img vhd vhdx crx xpi swf wasm cab
-    """.split())
-EXECUTABLE_MIMES = {
-    "application/x-msdownload",
-    "application/x-executable",
-    "application/x-deb",
-    "application/x-rpm",
-    "application/x-google-chrome-extension",
-    "application/x-shockwave-flash",
-    "application/vnd.ms-cab-compressed",
-    "application/wasm",
-}
-EXECUTABLE_MAGIC = (
-    b"#!",
-    b"\x7fELF",
-    b"\xfe\xed\xfa\xce",
-    b"\xfe\xed\xfa\xcf",
-    b"\xce\xfa\xed\xfe",
-    b"\xcf\xfa\xed\xfe",
-    b"\xca\xfe\xba\xbe",
-    b"dex\n",
-)
 DOCUMENT_MIME = "application/octet-stream"
 NAME_TYPES = mimetypes.MimeTypes(filenames=())
 MEDIA_PREFIXES = ("image/", "audio/", "video/")
@@ -88,7 +59,6 @@ PREVIEW_MAX = 20 * 1024
 SNIFF_BYTES = 8192
 TIMEOUT = 120
 UNSUPPORTED = "only photo, video, audio and GIF files are accepted"
-BLOCKED = "executables, scripts and installers are not accepted"
 DAMAGED = "file is damaged or is not a real media file"
 
 
@@ -107,24 +77,9 @@ def extension(name: str) -> str:
     return name.rpartition(".")[2].lower() if "." in name else ""
 
 
-def blocked(name: str) -> bool:
-    return any(
-        extension(part.rstrip(" .")) in BLOCKED_EXTENSIONS
-        for part in name.replace("\\", "/").split("/")
-    )
-
-
-def check_name(name: str) -> None:
-    if blocked(name):
-        raise BlockedFileError(f"{BLOCKED}: {name}")
-
-
 def sniff(head: bytes) -> str | None:
     guess = filetype.guess(head)
-    mime = guess.mime if guess else None
-    if head.startswith(EXECUTABLE_MAGIC) or mime in EXECUTABLE_MIMES:
-        raise BlockedFileError(BLOCKED)
-    return mime
+    return guess.mime if guess else None
 
 
 def mime_by_name(name: str | None) -> str | None:
@@ -140,7 +95,6 @@ def probe(path: Path, name: str | None) -> Media:
     elif mime in AV_MIMES:
         media = _audio_video(path, mime)
     else:
-        _check_archive(path)
         media = Media(mime or mime_by_name(name) or DOCUMENT_MIME, MediaKind.DOCUMENT)
     if name is not None and not _name_fits(media.kind, extension(name)):
         raise ExtensionMismatchError(
@@ -153,19 +107,6 @@ def _name_fits(kind: MediaKind, ext: str) -> bool:
     if kind == MediaKind.DOCUMENT:
         return ext not in ALL_EXTENSIONS
     return ext in EXTENSIONS[kind]
-
-
-def _check_archive(path: Path) -> None:
-    if not zipfile.is_zipfile(path):
-        return
-    try:
-        with zipfile.ZipFile(path) as archive:
-            names = archive.namelist()
-    except zipfile.BadZipFile, OSError:
-        return
-    for member in names:
-        if blocked(member):
-            raise BlockedFileError(f"{BLOCKED}: archive contains {member}")
 
 
 def _image(path: Path, mime: str) -> Media:

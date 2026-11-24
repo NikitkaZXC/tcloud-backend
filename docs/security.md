@@ -56,29 +56,23 @@ IP клиента — `request.client.host`. uvicorn берёт его из `X-F
 Файлы никогда не исполняются и не открываются ничем, кроме декодеров-валидаторов и ClamAV.
 Честный предел: ClamAV ловит известное и типовое, не всё. Поэтому то, что проверить нельзя, по умолчанию отклоняется.
 
-Принимаются медиа и любые другие файлы, кроме исполняемых. Проверки по порядку:
+Принимаются медиа и любые другие файлы, в том числе исполняемые, скрипты и установщики (exe, dmg, sh, apk…):
+списка запрещённых типов нет. Защита от них — в том, что не-медиа никогда не открывается в браузере на нашем адресе
+(«Скачивание»), и в ClamAV. Проверки по порядку:
 
-1. Имя проверяется до чтения тела: исполняемые расширения (`BLOCKED_EXTENSIONS` в `media/analyze.py`: exe, dll, msi,
-   bat, cmd, ps1, vbs, js, hta, lnk, jar, apk, app, pkg, dmg, sh, deb, rpm, AppImage, iso, img, vhd и др.) →
-   `415 blocked_file_type`. Смотрится последнее расширение, без хвостовых точек и пробелов (`a.exe.` — тоже exe),
-   регистр не важен.
-2. Тип определяется по magic bytes (`filetype`), расширение и `Content-Type` не учитываются. Исполняемое содержимое
-   (PE/MZ, ELF, Mach-O, Java class, DEX, `#!`-скрипты, deb, rpm, cab, crx, swf, wasm) → `blocked_file_type` при любом имени.
-3. Медиа проверяет декодер: Pillow (`verify` + `load`, лимит пикселей против decompression bomb),
+1. Тип определяется по magic bytes (`filetype`), расширение и `Content-Type` не учитываются.
+2. Медиа проверяет декодер: Pillow (`verify` + `load`, лимит пикселей против decompression bomb),
    ffprobe в subprocess без shell, с таймаутом. Видео/аудио различаются по потокам, а не по контейнеру.
-4. Расширение должно соответствовать реальному типу (`extension_mismatch`): медиа — только с медиа-расширением,
+3. Расширение должно соответствовать реальному типу (`extension_mismatch`): медиа — только с медиа-расширением,
    не-медиа не может называться `.jpg`/`.mp4`/… (иначе Telegram показал бы его как фото или видео).
-5. Zip (и всё на нём: docx, xlsx, odt, epub, jar, apk) — читается список файлов, без распаковки. Исполняемое имя в
-   любом сегменте пути (`bin/setup.exe`, `Evil.app/Contents/…`) → `blocked_file_type`. Вложенные архивы, tar, 7z, rar
-   так не разбираются — их проверяет ClamAV.
-6. ClamAV (`clamd INSTREAM`) со строгим `docker/clamd.conf`: `AlertExceedsMax` (без неё файл, упёршийся в лимит,
+4. ClamAV (`clamd INSTREAM`) со строгим `docker/clamd.conf`: `AlertExceedsMax` (без неё файл, упёршийся в лимит,
    проходит непроверенным), `AlertEncrypted`, `AlertOLE2Macros`, `AlertBrokenExecutables`, `DetectPUA`, `HeuristicAlerts`,
    `MaxRecursion 16`, `MaxFiles 10000`, `MaxScanTime` 15 мин. Вирус, PUA, битый исполняемый → `infected`.
    Зашифрованное, Office с макросами, превышен лимит → `unscannable` (см. integrations.md). Недоступен → загрузка
    отклоняется (fail-closed), перед этим `UPLOAD_RETRIES` повторов — ClamAV может просто перезапускаться.
-7. `allow_unscannable=true` в загрузке принимает `unscannable` с предупреждением в задаче. Вирусы он не пропускает:
+5. `allow_unscannable=true` в загрузке принимает `unscannable` с предупреждением в задаче. Вирусы он не пропускает:
    найденная сигнатура важнее эвристики (`HeuristicScanPrecedence no`).
-8. Временные файлы: случайные имена, права `0600`, удаляются в любом исходе; имя пользователя в ФС не попадает,
+6. Временные файлы: случайные имена, права `0600`, удаляются в любом исходе; имя пользователя в ФС не попадает,
    только его расширение (по нему Telethon решает, фото это или документ).
 
 ## CSRF и заголовки
@@ -108,10 +102,17 @@ IP клиента — `request.client.host`. uvicorn берёт его из `X-F
 
 ## Скачивание
 
-`GET /api/files/{uuid}/download` всегда отдаёт `X-Content-Type-Options: nosniff` и `Content-Security-Policy: sandbox`
-(медиа показывается, скрипты не выполняются). Не-медиа (`kind = document`) —
-`application/octet-stream` и `Content-Disposition: attachment`: HTML, SVG или PDF не откроются в браузере
-на нашем адресе и не выполнят скрипт.
+Только скачивание: всё, что не фото, видео, аудио или GIF, браузер получает как файл и ничего не исполняет и не
+показывает на адресе tcloud.
+
+- `GET /api/files/{uuid}/download` (и `200`, и `206` по `Range`) всегда отдаёт `X-Content-Type-Options: nosniff` и
+  `Content-Security-Policy: sandbox`. Не-медиа (`kind = document`, любой сохранённый MIME, в т. ч. `text/html`,
+  `image/svg+xml`, `application/pdf`, `.exe`) — `Content-Type: application/octet-stream` и
+  `Content-Disposition: attachment; filename*=UTF-8''…` (RFC 5987). HTML, SVG, JS, XML или PDF не откроются inline и
+  не выполнят скрипт. Медиа — `inline` со своим MIME (он из декодера: только JPEG/PNG/WebP/HEIC/GIF и аудио/видео из
+  списка, SVG медиа не бывает), тоже с `nosniff` и `sandbox`.
+- `GET /api/tasks/{id}/archive` — `attachment`, MIME архива, `nosniff`, `Content-Security-Policy: sandbox`.
+- `/thumb` и `/storages/{id}/photo` отдают только JPEG, который мы сами получили от Telegram или сделали, с `nosniff`.
 
 ## Исходящие запросы (ссылки и вебхуки)
 
@@ -121,7 +122,7 @@ IP клиента — `request.client.host`. uvicorn берёт его из `X-F
   CGNAT, метаданных облака, IPv4-mapped IPv6. Соединение идёт на проверенный IP, Host и SNI — исходные:
   DNS rebinding между проверкой и запросом невозможен.
 - Не больше 5 редиректов, каждый проверяется заново. Прокси из окружения игнорируются.
-- Таймауты, жёсткий лимит размера при чтении; исполняемое содержимое обрывается на первых 8 КБ.
+- Таймауты, жёсткий лимит размера при чтении.
 - Вебхук подписан: `X-Tcloud-Signature: sha256=HMAC(APP_SECRET_KEY, body)`.
 
 ## Контейнер и секреты
