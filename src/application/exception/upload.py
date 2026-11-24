@@ -101,3 +101,9 @@ class ChunkTooLargeError(TCloudError):
     """Raised when a chunk is larger than the chunk size or the rest of the file."""
 
     code = "chunk_too_large"
+
+
+class SendQuotaExceededError(TCloudError):
+    """Raised when a user queued too many Telegram sends per minute or per day."""
+
+    code = "send_quota_exceeded"

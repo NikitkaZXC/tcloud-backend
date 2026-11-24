@@ -225,7 +225,8 @@ reverse=True)` — только сообщения, пришедшие посл�
 
 ## Приоритет
 
-`priority`: `low` (1), `normal` (5, по умолчанию), `high` (9). Все очереди объявлены с `x-max-priority=9`, приоритет
+`priority`: `low` (1), `normal` (5, по умолчанию), `high` (9; только admin и root, у `user` понижается до `normal`,
+flows/uploads.md). Все очереди объявлены с `x-max-priority=9`, приоритет
 передаётся от стадии к стадии. Задача `high` обгоняет уже стоящие в очереди `low`, но не прерывает те, что выполняются.
 Тест — `tests/integration/test_queue_priority.py` на настоящем RabbitMQ.
 

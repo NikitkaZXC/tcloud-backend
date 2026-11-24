@@ -38,7 +38,7 @@ from src.application.services.access import (
 from src.application.services.storage import StorageService
 from src.application.services.task import TaskService
 from src.application.services.temp import temp_path
-from src.application.services.upload import start_task
+from src.application.services.upload import start_task, task_priority
 from src.config import settings
 from src.infrastructure.background import AppRuntime
 from src.infrastructure.database.models import FileDB, FolderDB
@@ -46,7 +46,6 @@ from src.infrastructure.database.repositories import FileRepository, FolderRepos
 from src.infrastructure.enums import (
     ArchiveFormat,
     Permission,
-    TaskPriority,
     TaskSource,
     TaskStage,
     TaskStatus,
@@ -348,7 +347,7 @@ class FolderService:
         task_id = uuid7()
         async with self._runtime.store.disk_lock():
             await self._runtime.disk.hold(task_id, sum(sizes) + max(sizes, default=0))
-        level = TaskPriority(priority)
+        level = task_priority(actor, priority)
         task = {
             "id": task_id,
             "batch_id": None,

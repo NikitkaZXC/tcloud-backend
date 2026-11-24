@@ -50,6 +50,7 @@ STATUS_BY_CODE = {
     "archive_not_ready": status.HTTP_409_CONFLICT,
     "archive_expired": status.HTTP_410_GONE,
     "too_many_tasks": status.HTTP_429_TOO_MANY_REQUESTS,
+    "send_quota_exceeded": status.HTTP_429_TOO_MANY_REQUESTS,
     "size_mismatch": status.HTTP_400_BAD_REQUEST,
     "telegram_unauthorized": status.HTTP_503_SERVICE_UNAVAILABLE,
     "already_authorized": status.HTTP_409_CONFLICT,

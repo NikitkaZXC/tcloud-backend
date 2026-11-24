@@ -4,7 +4,7 @@
 
 | Действие | Ручка | Что происходит |
 |---|---|---|
-| Создать | `POST /api/storages` `{name, description?}` | `CreateChannelRequest`, запись в БД, ответ с UUID. Аккаунт уже в 500 (1000 с Premium) каналах и группах → `409 channels_limit` |
+| Создать | `POST /api/storages` `{name, description?}` | `CreateChannelRequest`, запись в БД, ответ с UUID. Аккаунт уже в 500 (1000 с Premium) каналах и группах → `409 channels_limit`; не больше `RATE_LIMIT_STORAGE_CREATE_USER` (5 в час) на пользователя → `429 rate_limited` |
 | Список | `GET /api/storages` | id из БД + название/описание/фото из Telegram (`GetFullChannel` на канал, кеш в Redis 10 мин, см. ниже); недоступный канал → `available: false`; `files` и `total_size` (открытый размер), `preview_count` и `preview_bytes` (файлы с нашим превью в `files.thumbnail` и сумма `octet_length(thumbnail)`) — одним запросом `GROUP BY storage_id` по всем хранилищам, только читаемые пользователем файлы (как у одного хранилища) |
 | Одно | `GET /api/storages/{id}` | то же для одного хранилища |
 | Изменить | `PATCH /api/storages/{id}` `{name?, description?}` | `EditTitle` / `EditChatAbout`; неизменённые значения Telegram не роняют |

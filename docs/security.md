@@ -46,6 +46,9 @@
 | `TELEGRAM_LOGIN_USER` | 10 / 600 с | пользователь | `POST /api/telegram/{session}/qr`, `/code`, `/sign-in`, `/password` |
 | `UPLOAD_USER` | 300 / 60 с | пользователь | `POST /api/uploads`, `/uploads/from-url`, `/uploads/sessions`, каждый `PUT /uploads/sessions/{id}` (общий счётчик; 429 до чтения тела) |
 | `UPLOAD_BATCH_USER` | 30 / 60 с | пользователь | `POST /api/uploads/batch` |
+| `TELEGRAM_SEND_MINUTE_USER` | 30 / 60 с | пользователь (кроме root) | задачи с отправкой в Telegram при создании, `429 send_quota_exceeded` (flows/uploads.md, «Квота отправок в Telegram») |
+| `TELEGRAM_SEND_DAY_USER` | 2000 / 86400 с | пользователь (кроме root) | то же, за сутки |
+| `STORAGE_CREATE_USER` | 5 / 3600 с | пользователь | `POST /api/storages` (каждый — новый канал Telegram, частое создание каналов Telegram банит) |
 | `ARCHIVE_USER` | 30 / 3600 с | пользователь | `POST /api/folders/archive`, `/folders/archive/selection` |
 | `PREVIEWS_BACKFILL_USER` | 3 / 3600 с | пользователь | `POST /api/files/previews/backfill` |
 | `PREVIEWS_CLEAR_USER` | 3 / 3600 с | пользователь | `DELETE /api/files/previews` |

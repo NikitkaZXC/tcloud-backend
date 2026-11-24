@@ -4,7 +4,7 @@ from httpx import ASGITransport, AsyncClient
 
 import main
 from src.config import settings
-from tests.api.conftest import path
+from tests.api.conftest import path, wait_task
 from tests.factories import make_image
 
 
@@ -83,3 +83,58 @@ async def test_disabled_flag_turns_every_rule_off(client, monkeypatch):
     monkeypatch.setattr(settings.rate_limit.API_USER, "limit", 1)
     for _ in range(3):
         assert (await client.get("/account/settings")).status_code == 200
+
+
+async def test_telegram_sends_are_limited_per_user_not_for_root(
+    client, storage, make_user, monkeypatch
+):
+    monkeypatch.setattr(settings.rate_limit.TELEGRAM_SEND_MINUTE_USER, "limit", 2)
+    user = await make_user(
+        "sender", "user", {"path": path(storage, "in"), "can_upload": True}
+    )
+    for index in range(2):
+        response = await user.post(
+            "/uploads",
+            params={"path": path(storage, f"in/{index}.jpg"), "encrypt": "false"},
+            content=make_image(),
+        )
+        assert response.status_code == 202, response.text
+        await wait_task(user, response.json()["id"])
+    response = await user.post(
+        "/uploads/sessions", params={"path": path(storage, "in/x.bin"), "size": 5}
+    )
+    error = response.json()["error"]
+    assert response.status_code == 429 and error["code"] == "send_quota_exceeded"
+    assert error["limit"] == 2 and error["window"] == 60
+    assert 0 < int(response.headers["retry-after"]) <= 60
+    skipped = await user.post(
+        "/uploads",
+        params={"path": path(storage, "in/0.jpg"), "on_conflict": "skip"},
+        content=b"x",
+    )
+    assert skipped.status_code == 202 and skipped.json()["status"] == "done"
+    for index in range(3):
+        response = await client.post(
+            "/uploads",
+            params={"path": path(storage, f"root/{index}.jpg"), "encrypt": "false"},
+            content=make_image(),
+        )
+        assert response.status_code == 202, response.text
+
+
+async def test_daily_send_quota(client, storage, make_user, monkeypatch):
+    monkeypatch.setattr(settings.rate_limit.TELEGRAM_SEND_DAY_USER, "limit", 1)
+    user = await make_user("daily", "admin")
+    body = {"url": "https://example.com/a.pdf", "path": path(storage, "a.pdf")}
+    assert (await user.post("/uploads/from-url", json=body)).status_code == 202
+    body["path"] = path(storage, "b.pdf")
+    response = await user.post("/uploads/from-url", json=body)
+    assert code(response) == "send_quota_exceeded"
+    assert response.json()["error"]["window"] == 86400
+
+
+async def test_storage_create_is_limited(client, monkeypatch):
+    monkeypatch.setattr(settings.rate_limit.STORAGE_CREATE_USER, "limit", 1)
+    first = await client.post("/storages", json={"name": "one"})
+    assert first.status_code == 201
+    assert limited(await client.post("/storages", json={"name": "two"}))

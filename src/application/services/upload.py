@@ -13,6 +13,7 @@ from src.application.exception import (
     LengthRequiredError,
     OffsetMismatchError,
     PathConflictError,
+    SendQuotaExceededError,
     SessionNotAuthorizedError,
     SizeMismatchError,
     TaskFinishedError,
@@ -55,6 +56,7 @@ from src.infrastructure.enums import (
     TaskStatus,
     TelegramSession,
     UploadQueue,
+    UserRole,
 )
 from src.infrastructure.integrations import session_exists
 from src.infrastructure.integrations.web import check_scheme, check_webhook
@@ -63,6 +65,13 @@ from src.utilities.errors import TCloudError
 from src.utilities.parsers import check_segment, join_path, split_file
 
 NO_LIMIT = 2**63 - 1
+
+
+def task_priority(actor: Actor, priority: str) -> TaskPriority:
+    level = TaskPriority(priority)
+    if level == TaskPriority.HIGH and not actor.is_admin:
+        return TaskPriority.NORMAL
+    return level
 
 
 async def start_task(
@@ -178,7 +187,7 @@ class UploadService:
         ):
             name, existing = await self._free_name(storage_id, folder, name), None
         path = join_path(storage_id, folder, name)
-        priority = TaskPriority(data.priority)
+        priority = task_priority(actor, data.priority)
         source = TaskSource.URL if data.url else TaskSource.DEVICE
         queue = UploadQueue.DOWNLOAD if data.url else UploadQueue.PREPARE
         task = {
@@ -223,9 +232,29 @@ class UploadService:
             )
             await self._store.create(task)
             return task, False
+        await self._count_send(actor)
         if not await self._store.lock_path(path, task["id"]):
             raise UploadInProgressError(f"{path} is already being uploaded")
         return task, True
+
+    async def _count_send(self, actor: Actor) -> None:
+        if actor.role == UserRole.ROOT or not settings.rate_limit.ENABLED:
+            return
+        rules = (
+            ("telegram_send_day", settings.rate_limit.TELEGRAM_SEND_DAY_USER),
+            ("telegram_send_minute", settings.rate_limit.TELEGRAM_SEND_MINUTE_USER),
+        )
+        for scope, rule in rules:
+            count, retry_after = await self._runtime.rate_limits.hit(
+                f"{scope}:user:{actor.user_id}", rule.limit, rule.window
+            )
+            if count > rule.limit:
+                raise SendQuotaExceededError(
+                    f"at most {rule.limit} uploads to Telegram per {rule.window} s",
+                    retry_after=max(retry_after, 1),
+                    limit=rule.limit,
+                    window=rule.window,
+                )
 
     async def _take_disk_slot(self, task: dict) -> None:
         if not await self._store.take_disk_slot(task["id"]):
@@ -433,7 +462,8 @@ class UploadService:
         self, actor: Actor, task_id: UUID, priority: str
     ) -> TaskServiceRead:
         await self._tasks.get_raw(task_id, actor)
-        level = TaskPriority(priority).level
+        priority = task_priority(actor, priority)
+        level = priority.level
         requeued = await self._store.requeue(task_id, priority, level)
         if not requeued:
             raise TaskNotQueuedError("task is not waiting in a queue")
@@ -456,6 +486,7 @@ class UploadService:
         if task["status"] not in (TaskStatus.FAILED, TaskStatus.CANCELLED):
             raise TaskNotRetryableError("only failed or cancelled tasks can be retried")
         await self._check_active()
+        await self._count_send(actor)
         if not await self._store.lock_path(task["path"], task_id):
             raise UploadInProgressError(f"{task['path']} is already being uploaded")
         await self._hold_url(task)

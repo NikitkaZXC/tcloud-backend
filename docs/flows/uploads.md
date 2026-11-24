@@ -118,6 +118,22 @@ sequenceDiagram
 
 `low`, `normal` (по умолчанию), `high`. Задачи `high` берутся из очереди раньше, см. background-tasks.md.
 
+`high` доступен только admin и root. У роли `user` он молча понижается до `normal` (`upload.task_priority`): в
+загрузке, сессии, по ссылке, в пачке, в архивах и в `POST /api/tasks/{id}/priority` — ошибки нет, в ответе задачи
+`priority: "normal"`. Настройка `uploads.priority`/`archives.priority` = `high` у пользователя сохраняется, но
+действует как `normal`.
+
+## Квота отправок в Telegram
+
+Все загрузки идут через один аккаунт Telegram, поэтому у каждого пользователя, кроме root, есть квота на задачи,
+которые отправят файл в Telegram: `RATE_LIMIT_TELEGRAM_SEND_MINUTE_USER` (30 / 60 с) и
+`RATE_LIMIT_TELEGRAM_SEND_DAY_USER` (2000 / 86400 с), скользящее окно как у остальных правил (security.md). Считается
+при создании задачи, до блокировки пути: `POST /api/uploads`, `POST /api/uploads/sessions`, `/uploads/from-url`,
+каждый пункт `/uploads/batch` и `POST /api/tasks/{id}/retry`. Пропуск `skip` существующего файла не считается, архивы —
+тоже (в Telegram они не пишут). Превышение — `429 send_quota_exceeded` с `retry_after`, `limit`, `window` и
+заголовком `Retry-After`; в пачке — в `error` своего пункта. Admin тоже считается, root — нет. Выключить вместе с
+остальными лимитами: `RATE_LIMIT_ENABLED=false`.
+
 ## Управление задачей
 
 | Запрос | Что |

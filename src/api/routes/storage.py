@@ -2,7 +2,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, Request, Response, status
 
-from src.api.dependencies import get_actor
+from src.api.dependencies import get_actor, rate_limit_by_user
 from src.api.schemas import (
     StorageActivityResponse,
     StorageCreate,
@@ -12,12 +12,20 @@ from src.api.schemas import (
 from src.application.factory import get_service_storage
 from src.application.schemas import Actor, StorageServiceCreate, StorageServiceUpdate
 from src.application.services import StorageService
+from src.config import settings
 
 router = APIRouter(prefix="/storages", tags=["Storages"])
 
 
 @router.post(
     path="",
+    dependencies=[
+        Depends(
+            rate_limit_by_user(
+                "storage_create", settings.rate_limit.STORAGE_CREATE_USER
+            )
+        )
+    ],
     name="storages:create",
     summary="Create a private Telegram channel as a storage",
     status_code=status.HTTP_201_CREATED,

@@ -480,3 +480,25 @@ async def test_skip_at_send_shows_existing_file_only_if_readable(
     assert done["status"] == "done" and done["warnings"]
     expected = existing["file"]["uuid"] if readable else None
     assert (done["file"] or {}).get("uuid") == expected
+
+
+async def test_high_priority_only_for_admins(client, storage, make_user):
+    await upload(client, path(storage, "p/seed.pdf"), PDF)
+    grant = {"path": path(storage, "p"), "can_upload": True}
+    user = await make_user("plain", "user", grant)
+    admin = await make_user("boss", "admin")
+    params = {"priority": "high", "encrypt": "false"}
+    mine = await user.post(
+        "/uploads", params={**params, "path": path(storage, "p/a.pdf")}, content=PDF
+    )
+    assert mine.json()["priority"] == "normal"
+    theirs = await admin.post(
+        "/uploads", params={**params, "path": path(storage, "p/b.pdf")}, content=PDF
+    )
+    assert theirs.json()["priority"] == "high"
+    archive = await user.post(
+        "/folders/archive", params={"path": path(storage, "p"), "priority": "high"}
+    )
+    assert archive.status_code == 202 and archive.json()["priority"] == "normal"
+    for task in (mine.json(), theirs.json(), archive.json()):
+        await wait_task(client, task["id"])
