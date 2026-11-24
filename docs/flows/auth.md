@@ -8,13 +8,13 @@ tcloud работает от пользовательского аккаунта
 | `upload` | `TELEGRAM_UPLOAD_SESSION` | `worker-telegram` (`WorkerRuntime.telegram`): отправка файлов и чтение файлов для архивов | `upload` |
 | `download` | `TELEGRAM_DOWNLOAD_SESSION` | API, отдельный клиент (`runtime.download`): скачивание файлов и превью (`/files/{id}/download`, `/thumb`) | `download` |
 
-В каждую сессию входят отдельно, через API (Swagger `/docs`, раздел **Telegram**). Все эндпоинты только для root (flows/users.md).
+В каждую сессию входят отдельно, через API: страница `/telegram` фронтенда или Swagger `/docs`, раздел **Telegram** (в prod Swagger выключен, deployment.md). Все эндпоинты только для root (flows/users.md).
 Сессия, которая подтверждала бы вход других устройств, не хранится: такая сессия могла бы подключить к аккаунту
 чужое устройство, поэтому её нет.
 
 ## Без сессий
 
-Приложение стартует и без входа: `/docs`, `/api/telegram`, `/api/health` и `/api/account` (`telegram_connected: false`) работают, `health.telegram` / `health.telegram_upload` /
+Приложение стартует и без входа: `/docs` (если включён), `/api/telegram`, `/api/health` и `/api/account` (`telegram_connected: false`) работают, `health.telegram` / `health.telegram_upload` /
 `health.telegram_download` равны `false`. Всё, что ходит в Telegram через API-сессию, отвечает `503 telegram_unauthorized`; загрузки без сессии
 воркера отклоняются сразу тем же кодом, скачивания без сессии `download` — тоже. Вход в `download` подменяет клиент
 скачиваний на лету. После входа в `api` каналы из `TELEGRAM_CHATS` подключаются и запускается

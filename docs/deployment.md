@@ -11,12 +11,17 @@ make up             # сборка и запуск
 make logs
 ```
 
-Затем вход как root (`ROOT_LOGIN`/`ROOT_PASSWORD`, `POST /api/auth/signin`) и вход в Telegram через Swagger `http://127.0.0.1:8000/docs`, раздел **Telegram** — отдельно для сессий `api`, `upload` и `download`
-(flows/auth.md). Файлы сессий лежат в volume `session` и переживают пересборку; входить заново нужно, только если
+Затем вход как root (`ROOT_LOGIN`/`ROOT_PASSWORD`) во фронтенд и вход в Telegram на его странице `/telegram` —
+отдельно для сессий `api`, `upload` и `download` (flows/auth.md). Файлы сессий лежат в volume `session` и переживают пересборку; входить заново нужно, только если
 volume удалён или сессию завершили в Telegram. Без входа приложение работает, но Telegram-запросы отвечают
 `503 telegram_unauthorized`.
 
-- Порт — `127.0.0.1:8000`. Для доступа снаружи — reverse proxy с TLS: фронтенд на `site.com`, на бэк — `/api/*`, `/docs`, `/redoc`, `/openapi.json`, с сохранением `Host` (иначе проверка `Origin` отклонит запросы, см. security.md).
+- Swagger, ReDoc и `/openapi.json` в prod выключены: compose передаёт `app` пустые `APP_DOCS_URL`, `APP_REDOC_URL`,
+  `APP_OPENAPI_URL` (пустое значение — маршрута нет, `404`). Чтобы временно войти в Telegram через Swagger без
+  фронтенда, задайте в `.env` `APP_DOCS_URL=/docs` и `APP_OPENAPI_URL=/openapi.json`, выполните
+  `docker compose -f docker-compose.prod.yml up -d app` и откройте `http://127.0.0.1:8000/docs` на сервере или через
+  `ssh -L 8000:127.0.0.1:8000`, не публикуя через прокси; потом уберите переменные и пересоздайте `app` так же.
+- Порт — `127.0.0.1:8000`. Для доступа снаружи — reverse proxy с TLS: фронтенд на `site.com`, на бэк — только `/api/*`, с сохранением `Host` (иначе проверка `Origin` отклонит запросы, см. security.md).
 - `make env` кладёт RS256-ключи JWT в `certs/` (в git и образ не попадают), compose монтирует их в `/certs` read-only.
   Куки `Secure` (`JWT_SECURE=true`): снаружи нужен TLS. Приложение в контейнере — uid 1000: на Linux, если вы не uid 1000,
   выполните `sudo chown 1000 certs/jwt-private.pem`, иначе API не стартует (`JWT key ... is not readable`).

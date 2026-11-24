@@ -92,8 +92,9 @@ IP клиента — `request.client.host`. uvicorn берёт его из `X-F
 ## CORS (фронтенд)
 
 - Схема деплоя: фронтенд на `site.com`, бэкенд на `site.com/api`. Это один origin, CORS браузеру не нужен,
-  `APP_ALLOWED_ORIGINS` пустой. Прокси отправляет на бэк `/api/*` и Swagger (`APP_DOCS_URL`, `APP_REDOC_URL`,
-  `APP_OPENAPI_URL`, по умолчанию `/docs`, `/redoc`, `/openapi.json`, как в nextgate) и сохраняет `Host`.
+  `APP_ALLOWED_ORIGINS` пустой. Прокси отправляет на бэк `/api/*` и сохраняет `Host`. Swagger (`APP_DOCS_URL`,
+  `APP_REDOC_URL`, `APP_OPENAPI_URL`, по умолчанию `/docs`, `/redoc`, `/openapi.json`) в prod-compose выключен пустыми
+  значениями (пусто — маршрута нет), наружу через прокси его не публикуют (deployment.md).
 - `CORSMiddleware` (в `main.py`, самый внешний, как в nextgate) настраивается `APP_ALLOWED_ORIGINS`,
   `APP_IS_ALLOWED_CREDENTIALS`, `APP_ALLOWED_METHODS`, `APP_ALLOWED_HEADERS`. Нужен для dev-сервера фронтенда на другом
   порту (`["http://localhost:3000"]`). Список пустой по умолчанию: чужой браузерный JS ответов не видит.

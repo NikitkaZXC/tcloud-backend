@@ -30,7 +30,7 @@ CI (`.github/workflows/ci.yml`, на push в `main` и на pull request; `concu
 | Править код с автоперезагрузкой | `make dev-up`, затем `make app` и воркеры `make worker-*` | локально, в Docker только Postgres, RabbitMQ, Redis |
 | Всё в Docker из исходников | `make dev-up-all` | `docker-compose.dev.yml`, профиль `app`: API, три воркера и Flower на `127.0.0.1:5555` (basic auth `FLOWER_USER` / `FLOWER_PASSWORD` из `.env`, без них `tcloud` / `tcloud`) |
 
-После любого варианта — вход как root (`POST /api/auth/signin`, flows/users.md) и вход в Telegram на `/docs`, раздел **Telegram** (flows/auth.md). Локально сессии и временные
+После любого варианта — вход как root (`POST /api/auth/signin`, flows/users.md) и вход в Telegram на `/docs`, раздел **Telegram** (flows/auth.md; в `make up` Swagger выключен — страница `/telegram` фронтенда, deployment.md). Локально сессии и временные
 файлы лежат в `./data/` (пути по умолчанию `data/session/...`, `data/tmp`; в Docker compose задаёт `/data/...`).
 Для `make app` хосты в `.env` должны быть `127.0.0.1` (`POSTGRES_HOST`, `CLAMAV_HOST`, `RABBITMQ_HOST`, `REDIS_HOST`),
 compose подставляет свои сам.

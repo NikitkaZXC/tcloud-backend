@@ -33,12 +33,10 @@ class AppSettings(BaseSettings):
 
     @property
     def docs_paths(self) -> tuple[str, ...]:
-        return (
-            self.DOCS_URL,
-            f"{self.DOCS_URL}/oauth2-redirect",
-            self.REDOC_URL,
-            self.OPENAPI_URL,
+        docs = (
+            (self.DOCS_URL, f"{self.DOCS_URL}/oauth2-redirect") if self.DOCS_URL else ()
         )
+        return tuple(path for path in (*docs, self.REDOC_URL, self.OPENAPI_URL) if path)
 
     @property
     def set_app_attributes(self) -> dict:

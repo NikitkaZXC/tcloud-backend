@@ -58,3 +58,28 @@ def test_short_root_password_rejected(password):
 
 def test_root_password_of_12_chars_accepted():
     assert RootSettings(LOGIN="admin", PASSWORD="x" * 12).PASSWORD
+
+
+async def test_empty_docs_urls_disable_swagger():
+    from fastapi import FastAPI
+    from httpx import ASGITransport, AsyncClient
+
+    app_settings = AppSettings(
+        SECRET_KEY="x" * 32, DOCS_URL="", REDOC_URL="", OPENAPI_URL=""
+    )
+    assert app_settings.docs_paths == ()
+    app = FastAPI(**app_settings.set_app_attributes)
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        for url in ("/docs", "/redoc", "/openapi.json", "/docs/oauth2-redirect"):
+            assert (await client.get(url)).status_code == 404
+
+
+def test_default_docs_paths():
+    assert AppSettings(SECRET_KEY="x" * 32).docs_paths == (
+        "/docs",
+        "/docs/oauth2-redirect",
+        "/redoc",
+        "/openapi.json",
+    )

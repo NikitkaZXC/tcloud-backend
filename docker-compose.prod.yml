@@ -31,6 +31,11 @@ x-worker-depends: &worker-depends
 services:
   app:
     <<: *app
+    environment:
+      <<: *app-env
+      APP_DOCS_URL: ${APP_DOCS_URL:-}
+      APP_REDOC_URL: ${APP_REDOC_URL:-}
+      APP_OPENAPI_URL: ${APP_OPENAPI_URL:-}
     ports:
       - "127.0.0.1:8000:8000"
     depends_on:

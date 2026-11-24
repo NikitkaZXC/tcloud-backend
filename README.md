@@ -69,11 +69,12 @@ sequenceDiagram
 
 ```bash
 make env              # создаёт .env и секреты; заполните TELEGRAM_API_ID / TELEGRAM_API_HASH
-make up && make logs  # прод-compose: API 127.0.0.1:8000 (/docs), Flower 127.0.0.1:5555
+make up && make logs  # прод-compose: API 127.0.0.1:8000 (Swagger выключен), Flower 127.0.0.1:5555
 ```
 
-Войдите как root через `POST /api/auth/signin` (`ROOT_LOGIN` / `ROOT_PASSWORD` из `.env`). Затем войдите в Telegram на `/docs`, раздел
-**Telegram**, для сессий `api`, `upload` и `download` ([docs/flows/auth.md](docs/flows/auth.md)).
+Войдите как root (`ROOT_LOGIN` / `ROOT_PASSWORD` из `.env`) и войдите в Telegram для сессий `api`, `upload` и
+`download`: в prod — на странице `/telegram` фронтенда (Swagger там выключен, [docs/deployment.md](docs/deployment.md)),
+в dev — на `/docs`, раздел **Telegram** ([docs/flows/auth.md](docs/flows/auth.md)).
 
 Для разработки запустите `make dev-up-all` (всё в Docker из исходников) или `make dev-up` + `make app` + `make worker-*`. Тесты запускаются через `make test-all`.
 
