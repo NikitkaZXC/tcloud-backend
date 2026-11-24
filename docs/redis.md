@@ -108,6 +108,7 @@ flowchart LR
 | `claimed` | очередь, в которой задачу захватил воркер (`CLAIM`) |
 | `cancel` | флаг отмены во время работы |
 | `prepared` | результат проверки: `send_path`, `thumb`, `media`, `sha256`, `as_file`, `warnings`, у шифрования `encryption_header`, `plain_size`, `thumbnail` (base64 превью до ~27 КБ; после записи в `files` вместе с `committed` заменяется на `null`) |
+| `sending` | отправка в Telegram началась: `{file_id, chat_id, after, spans}`; `after` — id последнего сообщения канала перед первой частью, по нему повтор находит отправленные, но не записанные в `sent` сообщения (background-tasks.md «Без дублей в Telegram»); сбрасывается при `fail` и `retry` |
 | `sent`, `committed` | отправлено в Telegram (`{file_id, chat_id, message}`, у файла из частей ещё `parts` и `spans`) / записано в `files` — защита от дублей при повторной доставке |
 | `beat_at` | heartbeat задачи для `TaskSweeper` и `CLAIM` (повторная доставка ждёт, пока он свежий) |
 

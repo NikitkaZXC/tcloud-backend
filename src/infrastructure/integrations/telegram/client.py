@@ -607,6 +607,36 @@ class TelegramClient:
             file.height,
         )
 
+    @translate_errors
+    async def last_message_id(self, chat_id: int) -> int:
+        messages = await self._client.get_messages(await self._peer(chat_id), limit=1)
+        return messages[0].id if messages else 0
+
+    @translate_errors
+    async def find_sent(
+        self, chat_id: int, after: int, caption: str
+    ) -> list[tuple[str | None, SentFile]]:
+        found = []
+        async for message in self._client.iter_messages(
+            await self._peer(chat_id), min_id=after, reverse=True
+        ):
+            if message.message != caption or not message.file:
+                continue
+            file = message.file
+            found.append(
+                (
+                    file.name,
+                    SentFile(
+                        message.id,
+                        media_size(message.media) or file.size,
+                        file.mime_type,
+                        file.width,
+                        file.height,
+                    ),
+                )
+            )
+        return found
+
     async def upload(
         self,
         path: Path,

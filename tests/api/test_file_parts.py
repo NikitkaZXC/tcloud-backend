@@ -10,6 +10,7 @@ import pytest
 from sqlalchemy import select
 
 import main
+from src.application.schemas import caption_token
 from src.application.services import pipeline
 from src.infrastructure.database.models import FileDB, FilePartDB
 from src.infrastructure.enums import MediaKind
@@ -290,3 +291,122 @@ async def test_redelivery_resumes_after_the_last_sent_part(
     assert row.tg_message_id == sent.message_id and row.size == len(data)
     response = await client.get(f"/files/{file_id}/download")
     assert response.content == data
+
+
+async def orphaned(telegram, store, task, small_parts, *, wrong_size=False):
+    data = task["file"].read_bytes()
+    small_parts(len(data) // 3 + 1)
+    spans = part_spans(len(data), len(data) // 3 + 1, False)
+    file_id = uuid7()
+    await store.update(
+        task["id"],
+        sending={
+            "file_id": file_id,
+            "chat_id": task["chat_id"],
+            "after": await telegram.last_message_id(task["chat_id"]),
+            "spans": spans,
+        },
+    )
+    orphan = await telegram.send(
+        task["chat_id"],
+        task["file"],
+        name="crash.jpg.part0",
+        caption=caption_token(file_id),
+        media=Media(mime="image/jpeg", kind=MediaKind.PHOTO),
+        as_file=True,
+        thumb=None,
+        progress=lambda done, total: None,
+        span=spans[2] if wrong_size else spans[0],
+    )
+    return data, file_id, orphan
+
+
+async def test_redelivery_adopts_part_sent_but_not_recorded(
+    client, telegram, storage, worker, sessions, small_parts
+):
+    task = await telegram_ready(client, storage, telegram, claimed=True)
+    store = main.app.state.runtime.store
+    data, file_id, orphan = await orphaned(telegram, store, task, small_parts)
+    await redeliver(worker, task["id"])
+    done = (await client.get(f"/tasks/{task['id']}")).json()
+    assert done["status"] == "done" and done["file"]["uuid"] == str(file_id)
+    assert [message["name"] for message in telegram.messages()] == [
+        f"crash.jpg.part{index}" for index in range(3)
+    ]
+    rows = await parts_of(sessions, str(file_id))
+    assert rows[0][1] == orphan.message_id and len(rows) == 3
+    assert (await client.get(f"/files/{file_id}/download")).content == data
+
+
+async def test_redelivery_deletes_orphan_of_wrong_size(
+    client, telegram, storage, worker, sessions, small_parts
+):
+    task = await telegram_ready(client, storage, telegram, claimed=True)
+    store = main.app.state.runtime.store
+    data, file_id, orphan = await orphaned(
+        telegram, store, task, small_parts, wrong_size=True
+    )
+    await redeliver(worker, task["id"])
+    assert (await client.get(f"/tasks/{task['id']}")).json()["status"] == "done"
+    messages = telegram.chats[task["chat_id"]]["messages"]
+    assert orphan.message_id not in messages and len(messages) == 3
+    rows = await parts_of(sessions, str(file_id))
+    assert orphan.message_id not in [row[1] for row in rows]
+    assert (await client.get(f"/files/{file_id}/download")).content == data
+
+
+async def test_cancel_deletes_unrecorded_orphan(
+    client, telegram, storage, worker, sessions, small_parts
+):
+    task = await telegram_ready(client, storage, telegram, claimed=True)
+    store = main.app.state.runtime.store
+    keep = await telegram.send(
+        task["chat_id"],
+        task["file"],
+        name="other.jpg",
+        caption="#tcother",
+        media=Media(mime="image/jpeg", kind=MediaKind.PHOTO),
+        as_file=True,
+        thumb=None,
+        progress=lambda done, total: None,
+    )
+    await orphaned(telegram, store, task, small_parts)
+    await store.update(task["id"], cancel=True)
+    await redeliver(worker, task["id"])
+    assert (await client.get(f"/tasks/{task['id']}")).json()["status"] == "cancelled"
+    assert list(telegram.chats[task["chat_id"]]["messages"]) == [keep.message_id]
+    assert (await store.get(task["id"]))["sending"] is None
+
+
+async def test_redelivery_adopts_single_message_sent_but_not_recorded(
+    client, telegram, storage, worker, sessions
+):
+    task = await telegram_ready(client, storage, telegram, claimed=True)
+    store = main.app.state.runtime.store
+    file_id = uuid7()
+    size = task["file"].stat().st_size
+    await store.update(
+        task["id"],
+        sending={
+            "file_id": file_id,
+            "chat_id": task["chat_id"],
+            "after": 0,
+            "spans": [(0, size)],
+        },
+    )
+    orphan = await telegram.send(
+        task["chat_id"],
+        task["file"],
+        name="crash.jpg",
+        caption=caption_token(file_id),
+        media=Media(mime="image/jpeg", kind=MediaKind.PHOTO),
+        as_file=True,
+        thumb=None,
+        progress=lambda done, total: None,
+    )
+    await redeliver(worker, task["id"])
+    done = (await client.get(f"/tasks/{task['id']}")).json()
+    assert done["status"] == "done" and done["file"]["uuid"] == str(file_id)
+    assert list(telegram.chats[task["chat_id"]]["messages"]) == [orphan.message_id]
+    async with sessions() as session:
+        assert (await session.get(FileDB, file_id)).tg_message_id == orphan.message_id

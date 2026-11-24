@@ -1,4 +1,5 @@
 import asyncio
+from types import SimpleNamespace
 
 import pytest
 from telethon import errors, functions, types
@@ -174,3 +175,53 @@ async def test_thumbnail_falls_back_to_smallest_and_skips_stripped():
     )
     assert await client.thumbnail(document) is None
     assert fake.thumbs == ["y"]
+
+
+class FakeHistory:
+    def __init__(self, messages) -> None:
+        self.messages, self.calls = messages, []
+
+    async def get_input_entity(self, chat_id):
+        return chat_id
+
+    async def get_messages(self, peer, limit):
+        return sorted(self.messages, key=lambda message: -message.id)[:limit]
+
+    async def iter_messages(self, peer, min_id, reverse):
+        self.calls.append((min_id, reverse))
+        for message in sorted(self.messages, key=lambda message: message.id):
+            if message.id > min_id:
+                yield message
+
+
+async def test_find_sent_returns_our_files_after_the_floor():
+    history = FakeHistory([])
+    client = telegram.TelegramClient.__new__(telegram.TelegramClient)
+    client._client, client._wanted = history, False
+    assert await client.last_message_id(1) == 0
+    history.messages = [
+        SimpleNamespace(
+            id=message_id,
+            message=caption,
+            media=None,
+            file=(
+                SimpleNamespace(
+                    name=name, size=10, mime_type=None, width=None, height=None
+                )
+                if name
+                else None
+            ),
+        )
+        for message_id, caption, name in [
+            (3, "#tcx", "a.part0"),
+            (5, "#tcx", "a.part1"),
+            (6, "#tcy", "b"),
+            (7, "#tcx", None),
+        ]
+    ]
+    assert await client.last_message_id(1) == 7
+    found = await client.find_sent(1, 3, "#tcx")
+    assert [(name, item.message_id, item.size) for name, item in found] == [
+        ("a.part1", 5, 10)
+    ]
+    assert history.calls == [(3, True)]

@@ -491,14 +491,18 @@ class UploadPipeline:
         existing, chat_id, old_messages = await self._location(storage_id, folder, name)
         telegram = await self._runtime.telegram()
         recorded = task.get("sent")
-        planned = UUID(recorded["file_id"]) if recorded else None
+        sending = task.get("sending")
+        planned = (
+            UUID((recorded or sending)["file_id"]) if recorded or sending else None
+        )
         header = prepared.get("encryption_header")
         path = Path(prepared["send_path"])
-        spans = (
-            recorded.get("spans") or [(0, recorded["message"]["size"])]
-            if recorded
-            else await self._spans(telegram, path, bool(header))
-        )
+        if recorded:
+            spans = recorded.get("spans") or [(0, recorded["message"]["size"])]
+        elif sending:
+            spans = sending["spans"]
+        else:
+            spans = await self._spans(telegram, path, bool(header))
         parted = len(spans) > 1
         as_file = prepared["as_file"] or parted
         warnings = prepared["warnings"]
@@ -519,8 +523,7 @@ class UploadPipeline:
             if on_conflict in ("error", "keep_both"):
                 raise PathConflictError(f"{name} already exists")
             if on_conflict == "skip":
-                if recorded:
-                    await telegram.delete(chat_id, sent_ids(recorded))
+                await self._discard(telegram, recorded, sending)
                 await self.finish(task, existing.id, [SKIPPED])
                 return
         file_id = planned or (existing.id if existing else uuid7())
@@ -533,16 +536,37 @@ class UploadPipeline:
             if recorded
             else []
         )
+        names = [
+            (
+                (f"{file_id}.part{index}.bin" if header else f"{name}.part{index}")
+                if parted
+                else (f"{file_id}.bin" if header else name)
+            )
+            for index in range(len(spans))
+        ]
+        resumed = bool(recorded or sending)
+        if not sending:
+            after = (
+                max(sent_ids(recorded))
+                if recorded
+                else await telegram.last_message_id(chat_id)
+            )
+            sending = {
+                "file_id": file_id,
+                "chat_id": chat_id,
+                "after": after,
+                "spans": spans,
+            }
+            await self._store.update(task["id"], sending=sending)
+        if resumed:
+            messages = await self._adopt(
+                task, telegram, sending, file_id, messages, spans, names
+            )
         total = sum(size for _, size in spans)
         while len(messages) < len(spans):
             index = len(messages)
             offset, size = spans[index]
-            if parted:
-                part_name = (
-                    f"{file_id}.part{index}.bin" if header else f"{name}.part{index}"
-                )
-            else:
-                part_name = f"{file_id}.bin" if header else name
+            part_name = names[index]
             await self._checkpoint(task)
             messages.append(
                 await self._send_to_telegram(
@@ -564,14 +588,7 @@ class UploadPipeline:
                     span=(offset, size) if parted else None,
                 )
             )
-            record = {
-                "file_id": file_id,
-                "chat_id": chat_id,
-                "message": asdict(messages[0]),
-            }
-            if parted:
-                record.update(parts=[asdict(item) for item in messages], spans=spans)
-            await self._store.update(task["id"], sent=record)
+            await self._record(task, file_id, chat_id, messages, spans)
             await self._checkpoint(task)
         sent = messages[0]
         await self.step(task, TaskStep.FINISHING)
@@ -630,6 +647,80 @@ class UploadPipeline:
             if stale:
                 await telegram.delete(chat_id, stale)
         await self.finish(task, file_id, warnings)
+
+    async def _record(
+        self,
+        task: dict,
+        file_id: UUID,
+        chat_id: int,
+        messages: list[SentFile],
+        spans: list,
+    ) -> None:
+        record = {
+            "file_id": file_id,
+            "chat_id": chat_id,
+            "message": asdict(messages[0]),
+        }
+        if len(spans) > 1:
+            record.update(parts=[asdict(item) for item in messages], spans=spans)
+        await self._store.update(task["id"], sent=record)
+
+    async def _unrecorded(
+        self, telegram, sending: dict | None, known: list[int]
+    ) -> list[tuple[str | None, SentFile]]:
+        if not sending:
+            return []
+        found = await telegram.find_sent(
+            sending["chat_id"],
+            sending["after"],
+            caption_token(UUID(str(sending["file_id"]))),
+        )
+        return [(name, item) for name, item in found if item.message_id not in known]
+
+    async def _adopt(
+        self,
+        task: dict,
+        telegram,
+        sending: dict,
+        file_id: UUID,
+        messages: list[SentFile],
+        spans: list,
+        names: list[str],
+    ) -> list[SentFile]:
+        known = [item.message_id for item in messages]
+        stray = []
+        adopted = 0
+        for name, item in await self._unrecorded(telegram, sending, known):
+            index = len(messages)
+            if (
+                index < len(spans)
+                and name == names[index]
+                and item.size == spans[index][1]
+            ):
+                messages.append(item)
+                adopted += 1
+            else:
+                stray.append(item.message_id)
+        if adopted:
+            logger.info("Task {}: {} sent part(s) adopted", task["id"], adopted)
+            await self._record(task, file_id, sending["chat_id"], messages, spans)
+        if stray:
+            logger.warning(
+                "Task {}: {} stray message(s) deleted", task["id"], len(stray)
+            )
+            await telegram.delete(sending["chat_id"], stray)
+        return messages
+
+    async def _discard(self, telegram, recorded: dict | None, sending: dict | None):
+        if not recorded and not sending:
+            return
+        ids = sent_ids(recorded) if recorded else []
+        ids += [
+            item.message_id
+            for _, item in await self._unrecorded(telegram, sending, ids)
+        ]
+        if ids:
+            await telegram.delete((recorded or sending)["chat_id"], ids)
 
     async def _archive(self, task: dict) -> None:
         params = task["params"]
@@ -791,11 +882,20 @@ class UploadPipeline:
     async def fail(self, task: dict, error: BaseException) -> None:
         current = await self._store.get(task["id"]) or task
         try:
-            recorded = current.get("sent")
-            if recorded and not current.get("committed"):
-                telegram = await self._runtime.telegram()
-                await telegram.delete(recorded["chat_id"], sent_ids(recorded))
-                await self._store.update(task["id"], sent=None)
+            recorded, sending = current.get("sent"), current.get("sending")
+            if (recorded or sending) and not current.get("committed"):
+                try:
+                    if isinstance(error, TelegramUnauthorizedError):
+                        raise error
+                    telegram = await self._runtime.telegram()
+                    await self._discard(telegram, recorded, sending)
+                    await self._store.update(task["id"], sent=None, sending=None)
+                except TCloudError as cleanup:
+                    logger.warning(
+                        "Task {}: sent messages not deleted: {}",
+                        task["id"],
+                        cleanup.message,
+                    )
             if current.get("cancel") or isinstance(error, TaskCancelledError):
                 logger.info("Task {} cancelled", task["id"])
                 await asyncio.shield(

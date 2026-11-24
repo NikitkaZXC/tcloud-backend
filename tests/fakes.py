@@ -279,6 +279,28 @@ class FakeTelegram:
             media.height,
         )
 
+    async def last_message_id(self, chat_id: int) -> int:
+        return max(self.chats.get(chat_id, {}).get("messages", {}), default=0)
+
+    async def find_sent(
+        self, chat_id: int, after: int, caption: str
+    ) -> list[tuple[str | None, SentFile]]:
+        messages = self.chats.get(chat_id, {}).get("messages", {})
+        return [
+            (
+                message["name"],
+                SentFile(
+                    message_id,
+                    len(body(message)),
+                    message["media"].mime,
+                    message["media"].width,
+                    message["media"].height,
+                ),
+            )
+            for message_id, message in sorted(messages.items())
+            if message_id > after and message["caption"] == caption
+        ]
+
     async def message_media(self, chat_id: int, message_id: int) -> tuple[dict, int]:
         await asyncio.sleep(self.delay)
         message = self.chats[chat_id]["messages"].get(message_id)
