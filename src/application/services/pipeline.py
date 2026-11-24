@@ -524,7 +524,8 @@ class UploadPipeline:
                 raise PathConflictError(f"{name} already exists")
             if on_conflict == "skip":
                 await self._discard(telegram, recorded, sending)
-                await self.finish(task, existing.id, [SKIPPED])
+                readable = task["params"].get("readable", True)
+                await self.finish(task, existing.id if readable else None, [SKIPPED])
                 return
         file_id = planned or (existing.id if existing else uuid7())
         media = Media(**prepared["media"])

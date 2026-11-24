@@ -519,3 +519,36 @@ async def test_password_or_role_change_revokes_api_keys(
     assert (me.status_code == 200) is keeps
     listed = (await client.get(f"/users/{user.user_id}/api-keys")).json()
     assert len(listed) == (1 if keeps else 0)
+
+
+async def test_upload_only_user_sees_no_metadata_of_existing_files(
+    client, storage, make_user
+):
+    await upload(client, path(storage, "drop/secret-salary.pdf"), PDF)
+    dropper = await make_user(
+        "dropper",
+        "user",
+        {"path": path(storage, "drop"), "can_read": False, "can_upload": True},
+    )
+    target = path(storage, "drop/secret-salary.pdf")
+    response = await dropper.post(
+        "/uploads", params={"path": target, "on_conflict": "skip"}, content=b"x"
+    )
+    assert response.status_code == 202, response.text
+    assert response.json()["status"] == "done" and response.json()["file"] is None
+    session = await dropper.post(
+        "/uploads/sessions", params={"path": target, "size": 1, "on_conflict": "skip"}
+    )
+    assert session.status_code == 200 and session.json()["file"] is None
+    response = await dropper.post("/uploads", params={"path": target}, content=b"x")
+    assert response.status_code == 409
+    assert "suggested_name" not in response.json()["error"]
+    reader = await make_user(
+        "reader", "user", {"path": path(storage, "drop"), "can_upload": True}
+    )
+    response = await reader.post("/uploads", params={"path": target}, content=b"x")
+    assert response.json()["error"]["suggested_name"] == "secret-salary-2.pdf"
+    response = await reader.post(
+        "/uploads", params={"path": target, "on_conflict": "skip"}, content=b"x"
+    )
+    assert response.json()["file"]["name"] == "secret-salary.pdf"

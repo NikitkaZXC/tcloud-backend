@@ -463,3 +463,20 @@ async def test_handoff_fails_when_the_broker_stays_down(
     task = await upload(client, path(storage, "b.jpg"), make_image())
     assert (task["status"], task["error"]["code"]) == ("failed", "queue_unavailable")
     assert telegram.messages() == []
+
+
+@pytest.mark.parametrize("readable", [True, False])
+async def test_skip_at_send_shows_existing_file_only_if_readable(
+    client, telegram, storage, worker, readable
+):
+    existing = await upload(client, path(storage, "crash.jpg"), make_image())
+    task = await telegram_ready(client, storage, telegram, claimed=True)
+    store = main.app.state.runtime.store
+    raw = await store.get(task["id"])
+    params = {**raw["params"], "on_conflict": "skip", "readable": readable}
+    await store.update(task["id"], params=params)
+    await redeliver(worker, task["id"])
+    done = (await client.get(f"/tasks/{task['id']}")).json()
+    assert done["status"] == "done" and done["warnings"]
+    expected = existing["file"]["uuid"] if readable else None
+    assert (done["file"] or {}).get("uuid") == expected

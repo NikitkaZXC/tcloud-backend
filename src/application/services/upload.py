@@ -33,7 +33,7 @@ from src.application.schemas import (
     UploadServiceCreate,
     UploadSessionServiceRead,
 )
-from src.application.services.access import require
+from src.application.services.access import allowed, require
 from src.application.services.storage import StorageService, root_settings
 from src.application.services.task import TaskService
 from src.application.services.temp import (
@@ -162,11 +162,16 @@ class UploadService:
             await self._runtime.disk.check(data.size * 2 if encrypt else data.size)
         await self._check_active()
         await self._storages.get_db(storage_id)
+        readable = allowed(actor, storage_id, folder, Permission.READ)
         existing = await self._files.get_by_path(storage_id, folder, name)
         if existing and data.on_conflict == "error":
+            suggestion = (
+                {"suggested_name": await self._free_name(storage_id, folder, name)}
+                if readable
+                else {}
+            )
             raise PathConflictError(
-                f"{join_path(storage_id, folder, name)} already exists",
-                suggested_name=await self._free_name(storage_id, folder, name),
+                f"{join_path(storage_id, folder, name)} already exists", **suggestion
             )
         if data.on_conflict == "keep_both" and await self._taken(
             storage_id, folder, name
@@ -203,6 +208,7 @@ class UploadService:
                 "url": data.url,
                 "size": data.size,
                 "limit": limit,
+                "readable": readable,
                 "file": str(temp_path(path)),
             },
         }
@@ -211,7 +217,7 @@ class UploadService:
                 status=TaskStatus.DONE,
                 stage=TaskStage.DONE,
                 step=None,
-                file_id=existing.id,
+                file_id=existing.id if readable else None,
                 waiting=None,
                 warnings=[SKIPPED],
             )
