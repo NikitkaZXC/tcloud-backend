@@ -20,6 +20,7 @@ app.conf.update(
     task_reject_on_worker_lost=True,
     worker_prefetch_multiplier=1,
     broker_connection_retry_on_startup=True,
+    broker_transport_options={"confirm_publish": True},
     control_queue_exclusive=False,
     control_queue_durable=True,
     worker_hijack_root_logger=False,

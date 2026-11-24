@@ -29,7 +29,10 @@ TELEGRAM_CONCURRENCY = 2
 @pytest.fixture(scope="session")
 def celery_workers(redis_server: None) -> Iterator[None]:
     app.conf.broker_url = "memory://"
-    app.conf.broker_transport_options = {"polling_interval": 0.01}
+    app.conf.broker_transport_options = {
+        **app.conf.broker_transport_options,
+        "polling_interval": 0.01,
+    }
     with ExitStack() as stack:
         for queues, concurrency in (
             ([UploadQueue.DOWNLOAD], 4),

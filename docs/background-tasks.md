@@ -378,10 +378,13 @@ RabbitMQ позицию не сообщает, поэтому её считае�
 
 ### Обрыв RabbitMQ
 
-Очереди durable, сообщения persistent, `task_acks_late` + `task_reject_on_worker_lost`, `prefetch_multiplier=1`:
-неподтверждённое сообщение после обрыва возвращается в очередь, сообщения, ждавшие в очереди, переживают и
-`docker stop`, и `docker kill -s KILL` брокера (в dev у контейнера анонимный том `/var/lib/rabbitmq`, `hostname`
-фиксирован, поэтому имя ноды и данные те же). Проверено вживую с выгрузками в полёте:
+Очереди durable, сообщения persistent, `task_acks_late` + `task_reject_on_worker_lost`, `prefetch_multiplier=1`,
+публикация с подтверждением брокера (`broker_transport_options = {"confirm_publish": True}`: `send_task` возвращается,
+только когда RabbitMQ записал сообщение на диск). Неподтверждённое воркером сообщение после обрыва возвращается в
+очередь, сообщения, ждавшие в очереди, переживают и `docker stop`, и `docker kill -s KILL` брокера (в dev у контейнера
+анонимный том `/var/lib/rabbitmq`, `hostname` фиксирован, поэтому имя ноды и данные те же). Без `confirm_publish`
+`kill -9` через ~3 с после публикации терял 2 из 5 ждавших сообщений: такие задачи `TaskSweeper` через ~4 мин помечал
+`failed: lost`. Проверено вживую с выгрузками в полёте:
 - API не падает, `/api/health` показывает `queue: false` всё время простоя и зелёный через ~5 с после старта брокера;
 - воркеры сами переподключаются (`Connection to broker lost` → `Cannot connect … ` с растущей паузой → `Connected`),
   рестарт не нужен, pidbox не мешает (см. «Воркер изнутри»);
