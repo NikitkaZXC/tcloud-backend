@@ -586,6 +586,7 @@ class UploadService:
             prepared=None,
             sent=None,
             sending=None,
+            stale=None,
             committed=False,
         )
         await start_task(self._runtime, task, UploadQueue.DOWNLOAD, generation)

@@ -517,6 +517,7 @@ class UploadPipeline:
             ]
         if recorded and existing and existing.id == planned:
             if existing.tg_message_id == recorded["message"]["message_id"]:
+                await self._drop_stale(task, telegram, chat_id, task.get("stale"))
                 await self.finish(task, planned, warnings)
                 return
         if existing and existing.id != planned:
@@ -629,6 +630,10 @@ class UploadPipeline:
             if parted
         ]
         replaced = existing and existing.id == file_id
+        sent_now = {item.message_id for item in messages}
+        stale = [item for item in old_messages if replaced and item not in sent_now]
+        if stale:
+            await self._store.update(task["id"], stale=stale)
         async with self._runtime.session_factory() as session:
             await FolderRepository(session).ensure(storage_id, folder)
             files = FileRepository(session)
@@ -640,12 +645,23 @@ class UploadPipeline:
         await self._store.update(
             task["id"], committed=True, prepared={**prepared, "thumbnail": None}
         )
-        if replaced:
-            sent_now = {item.message_id for item in messages}
-            stale = [message for message in old_messages if message not in sent_now]
-            if stale:
-                await telegram.delete(chat_id, stale)
+        await self._drop_stale(task, telegram, chat_id, stale)
         await self.finish(task, file_id, warnings)
+
+    async def _drop_stale(
+        self, task: dict, telegram, chat_id: int, stale: list[int] | None
+    ) -> None:
+        if not stale:
+            return
+        try:
+            await telegram.delete(chat_id, stale)
+        except TCloudError as error:
+            logger.warning(
+                "Task {}: replaced messages {} left in Telegram: {}",
+                task["id"],
+                stale,
+                error.message,
+            )
 
     async def _record(
         self,
