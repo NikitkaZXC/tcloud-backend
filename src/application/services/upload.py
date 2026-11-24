@@ -48,7 +48,7 @@ from src.application.services.temp import (
     temp_path,
     write_body,
 )
-from src.application.services.webhook import send_hook
+from src.application.services.webhook import notify
 from src.config import settings
 from src.infrastructure.background import AppRuntime, enqueue
 from src.infrastructure.database.repositories import FileRepository, UserRepository
@@ -545,13 +545,12 @@ class UploadService:
             await self._store.release(task_id, task["path"])
             remove_task_files(task)
             if task["params"].get("callback_url"):
-                self._runtime.spawn(
-                    send_hook(
-                        self._store,
-                        session_factory,
-                        task_id,
-                        task["params"]["callback_url"],
-                    )
+                notify(
+                    self._runtime.spawn,
+                    self._store,
+                    session_factory,
+                    task_id,
+                    task["params"]["callback_url"],
                 )
         return await self._tasks.get(task_id, actor)
 

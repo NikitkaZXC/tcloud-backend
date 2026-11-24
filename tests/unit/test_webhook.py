@@ -1,3 +1,5 @@
+import asyncio
+import json
 from contextlib import asynccontextmanager
 
 import httpx
@@ -14,12 +16,15 @@ class View(dict):
     user_id = "0190f3c2-0000-7000-8000-000000000001"
 
 
+STATE = {"status": "running"}
+
+
 class FakeTasks:
     def __init__(self, session, store):
         pass
 
     async def get(self, task_id, actor):
-        return View(id=str(task_id))
+        return View(id=str(task_id), status=STATE["status"])
 
 
 @asynccontextmanager
@@ -76,3 +81,84 @@ def test_webhook_key_is_hkdf_of_secret_per_user():
     expected = hmac.new(prk, info + b"\x01", hashlib.sha256).digest()
     assert webhook_key(View.user_id) == expected
     assert webhook_key("another") != expected
+
+
+class Response:
+    def __init__(self, status_code):
+        self.status_code = status_code
+
+
+def receiver(monkeypatch, on_send, codes=()):
+    sent: list[str] = []
+    flight = {"now": 0, "max": 0}
+    codes = list(codes)
+
+    @asynccontextmanager
+    async def fake_open(url, method, headers, content):
+        flight["now"] += 1
+        flight["max"] = max(flight["max"], flight["now"])
+        sent.append(json.loads(content)["status"])
+        await on_send(len(sent))
+        flight["now"] -= 1
+        yield Response(codes.pop(0) if codes else 204)
+
+    monkeypatch.setattr(webhook, "open_url", fake_open)
+    return sent, flight
+
+
+async def run_hooks(task_id, status):
+    spawned: list[asyncio.Task] = []
+    STATE["status"] = status
+    webhook.notify(
+        lambda c: spawned.append(asyncio.create_task(c)), None, sessions, task_id, URL
+    )
+    while not all(task.done() for task in spawned):
+        await asyncio.gather(*spawned)
+    return spawned
+
+
+async def test_one_webhook_in_flight_and_the_last_state_wins(monkeypatch, messages):
+    task_id = "0192d8a0-0000-7000-8000-000000000001"
+    spawned: list[asyncio.Task] = []
+
+    def spawn(coroutine):
+        spawned.append(asyncio.create_task(coroutine))
+
+    async def on_send(count):
+        if count == 1:
+            for status in ("running", "running", "done"):
+                STATE["status"] = status
+                webhook.notify(spawn, None, sessions, task_id, URL)
+        await asyncio.sleep(0)
+
+    sent, flight = receiver(monkeypatch, on_send)
+    STATE["status"] = "running"
+    webhook.notify(spawn, None, sessions, task_id, URL)
+    while not all(task.done() for task in spawned):
+        await asyncio.gather(*spawned)
+    assert sent == ["running", "done"]
+    assert len(spawned) == 1 and flight["max"] == 1
+    assert task_id not in webhook.sending and task_id not in webhook.pending
+
+
+async def test_retry_sends_the_fresh_state(monkeypatch, messages):
+    task_id = "0192d8a0-0000-7000-8000-000000000002"
+
+    async def on_send(count):
+        STATE["status"] = "done"
+
+    sent, _ = receiver(monkeypatch, on_send, codes=[503])
+    await run_hooks(task_id, "running")
+    assert sent == ["running", "done"]
+
+
+async def test_failed_delivery_frees_the_slot(monkeypatch, messages):
+    task_id = "0192d8a0-0000-7000-8000-000000000003"
+
+    async def on_send(count):
+        raise RuntimeError("boom")
+
+    receiver(monkeypatch, on_send)
+    await run_hooks(task_id, "running")
+    assert task_id not in webhook.sending
+    assert any(m.startswith("Webhook of task") for m in messages)

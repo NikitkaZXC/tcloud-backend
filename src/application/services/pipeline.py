@@ -18,7 +18,7 @@ from src.application.services.archive import build_archive
 from src.application.services.file import layout
 from src.application.services.storage import root_settings
 from src.application.services.temp import remove_task_files, temp_path
-from src.application.services.webhook import send_hook
+from src.application.services.webhook import notify
 from src.config import settings
 from src.infrastructure.background import QueueUnavailableError, WorkerRuntime, enqueue
 from src.infrastructure.cache import CLAIM_BUSY, TaskStore
@@ -943,6 +943,10 @@ class UploadPipeline:
     def hook(self, task: dict) -> None:
         url = task["params"].get("callback_url")
         if url:
-            self._runtime.spawn(
-                send_hook(self._store, self._runtime.session_factory, task["id"], url)
+            notify(
+                self._runtime.spawn,
+                self._store,
+                self._runtime.session_factory,
+                task["id"],
+                url,
             )

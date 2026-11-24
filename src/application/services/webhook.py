@@ -2,6 +2,7 @@ import asyncio
 import hashlib
 import hmac
 import json
+from collections.abc import Callable, Coroutine
 from urllib.parse import urlsplit
 from uuid import UUID
 
@@ -16,22 +17,57 @@ from src.infrastructure.integrations import UnsafeUrlError
 from src.infrastructure.integrations.web import open_url
 from src.infrastructure.security import webhook_key
 
+pending: dict[str, str] = {}
+sending: set[str] = set()
 
-async def send_hook(
-    store: TaskStore, sessions: async_sessionmaker, task_id: UUID | str, url: str
+
+def notify(
+    spawn: Callable[[Coroutine], object],
+    store: TaskStore,
+    sessions: async_sessionmaker,
+    task_id: UUID | str,
+    url: str,
 ) -> None:
+    key = str(task_id)
+    pending[key] = url
+    if key in sending:
+        return
+    sending.add(key)
+    spawn(_deliver(store, sessions, key))
+
+
+async def _deliver(store: TaskStore, sessions: async_sessionmaker, key: str) -> None:
+    try:
+        while (url := pending.pop(key, None)) is not None:
+            await send_hook(store, sessions, key, url)
+    except Exception as error:
+        logger.warning("Webhook of task {} not sent: {!r}", key, error)
+    finally:
+        sending.discard(key)
+
+
+async def _payload(
+    store: TaskStore, sessions: async_sessionmaker, task_id: UUID | str
+) -> tuple[bytes, dict]:
     async with sessions() as session:
         view = await TaskService(session, store).get(UUID(str(task_id)), None)
     body = json.dumps(jsonable_encoder(view)).encode()
     signature = hmac.new(webhook_key(view.user_id), body, hashlib.sha256).hexdigest()
-    headers = {
+    return body, {
         "Content-Type": "application/json",
         "X-Tcloud-Signature": f"sha256={signature}",
         "X-Tcloud-User": str(view.user_id),
     }
-    parts = urlsplit(url)
-    target = f"{parts.scheme}://{parts.hostname}"
+
+
+async def send_hook(
+    store: TaskStore, sessions: async_sessionmaker, task_id: UUID | str, url: str
+) -> None:
     for delay in (1, 2, 4, None):
+        url = pending.pop(str(task_id), url)
+        body, headers = await _payload(store, sessions, task_id)
+        parts = urlsplit(url)
+        target = f"{parts.scheme}://{parts.hostname}"
         try:
             async with open_url(url, "POST", headers=headers, content=body) as response:
                 if response.status_code < 500:
