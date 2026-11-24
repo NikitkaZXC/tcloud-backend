@@ -34,8 +34,8 @@ class FileSearchParams(BaseModel):
     path: TcloudPath | None = None
     kind: list[MediaKind] = Field([], max_length=len(MediaKind))
     mime: list[MimeType] = Field([], max_length=50)
-    size_min: int | None = Field(None, ge=0)
-    size_max: int | None = Field(None, ge=0)
+    size_min: int | None = Field(None, ge=0, le=2**63 - 1)
+    size_max: int | None = Field(None, ge=0, le=2**63 - 1)
     date_from: datetime | None = None
     date_to: datetime | None = None
     encrypted: bool | None = None

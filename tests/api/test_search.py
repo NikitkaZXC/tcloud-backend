@@ -63,6 +63,8 @@ async def test_empty_search_is_rejected(client, storage):
         {"q": "a", "offset": -1},
         {"q": "a", "size_min": -1},
         {"q": "a", "size_min": 10, "size_max": 5},
+        {"q": "a", "size_min": 10**30},
+        {"q": "a", "size_max": 2**63},
         {
             "q": "a",
             "date_from": "2026-02-01T00:00:00Z",

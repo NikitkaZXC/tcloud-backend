@@ -4,7 +4,7 @@ from src.utilities.parsers.exception import BadRangeError
 
 
 def parse_range(header: str, size: int) -> tuple[int, int]:
-    match = re.fullmatch(r"bytes=(\d*)-(\d*)", header.strip())
+    match = re.fullmatch(r"bytes=(\d{0,19})-(\d{0,19})", header.strip())
     if not match or match.groups() == ("", ""):
         raise BadRangeError("only a single bytes=start-end range is supported")
     first, last = match.groups()

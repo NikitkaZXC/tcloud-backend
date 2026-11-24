@@ -81,6 +81,12 @@ async def test_download_pdf_range(client, storage):
     assert response.headers["content-disposition"].startswith("attachment;")
     assert response.headers["x-content-type-options"] == "nosniff"
     assert response.headers["content-security-policy"] == "sandbox"
+    huge = await client.get(
+        f"/files/{file['uuid']}/download",
+        headers={"Range": "bytes=" + "9" * 5000 + "-"},
+    )
+    assert huge.status_code == 416
+    assert huge.json()["error"]["code"] == "bad_range"
 
 
 async def test_download_range(client, photo):

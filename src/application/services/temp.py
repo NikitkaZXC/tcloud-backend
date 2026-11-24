@@ -1,3 +1,4 @@
+import re
 from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 from uuid import uuid4
@@ -6,9 +7,11 @@ from src.application.exception import FileTooLargeError, SizeMismatchError
 from src.config import settings
 from src.infrastructure.media import extension
 
+SUFFIX = re.compile(r"[a-z0-9]{1,16}")
+
 
 def temp_path(name: str = "") -> Path:
-    suffix = f".{extension(name)}" if extension(name) else ""
+    suffix = f".{extension(name)}" if SUFFIX.fullmatch(extension(name)) else ""
     return settings.upload.TMP_DIR / f"{uuid4().hex}{suffix}"
 
 

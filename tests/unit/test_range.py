@@ -18,7 +18,16 @@ def test_parse_range(header, size, expected):
 
 
 @pytest.mark.parametrize(
-    "header", ["bytes=-", "bytes=5-1", "bytes=100-", "items=0-1", "bytes=0-1,5-6"]
+    "header",
+    [
+        "bytes=-",
+        "bytes=5-1",
+        "bytes=100-",
+        "items=0-1",
+        "bytes=0-1,5-6",
+        "bytes=" + "9" * 5000 + "-",
+        "bytes=0-" + "9" * 20,
+    ],
 )
 def test_parse_range_bad(header):
     with pytest.raises(BadRangeError):

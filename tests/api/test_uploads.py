@@ -644,3 +644,10 @@ async def test_unknown_batch_is_empty(client):
     batch = (await client.get("/tasks", params={"batch_id": str(uuid.uuid4())})).json()
     assert batch["items"] == [] and batch["summary"]["total"] == 0
     assert (await client.get("/tasks")).status_code == 422
+
+
+async def test_long_extension_gets_no_temp_suffix(client, storage):
+    target = path(storage, "a." + "x" * 250)
+    task = await upload(client, target, PDF, encrypt="false")
+    assert task["status"] == "done", task
+    assert task["file"]["name"] == "a." + "x" * 250
