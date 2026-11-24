@@ -290,7 +290,7 @@ Telegram — `TelegramClient.iter_media` клиентом `runtime.download`.
 удалением файла или папки через tcloud (до `telegram.delete`); `replace` даёт новое сообщение, поэтому старая запись
 не используется. Истёк `file_reference` (`FILE_REFERENCE_EXPIRED`/`INVALID` → `TelegramFileReferenceError`) до
 первого отданного байта (`FileService.body`) или при `/thumb` — запись удаляется, сообщение читается заново, попытка
-повторяется один раз.
+повторяется один раз; в лог пишется INFO `File {id} reference expired, re-reading` (для `/thumb` — `thumbnail reference expired`).
 
 ```mermaid
 sequenceDiagram

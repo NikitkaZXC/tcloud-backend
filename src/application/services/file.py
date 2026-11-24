@@ -316,6 +316,7 @@ class FileService:
             try:
                 data = await self._runtime.download.thumbnail(media)
             except TelegramFileReferenceError:
+                logger.info("File {} thumbnail reference expired, re-reading", file.id)
                 self._runtime.media.forget(chat_id, [file.tg_message_id])
                 data = await self._runtime.download.thumbnail(
                     await self._media(file, chat_id)
@@ -383,6 +384,7 @@ class FileService:
         except TelegramFileReferenceError:
             if sent:
                 raise
+        logger.info("File {} reference expired, re-reading", file.id)
         self._runtime.media.forget(chat_id, [file.tg_message_id])
         media, _ = await self._lookup(chat_id, file.tg_message_id)
         async for chunk in file_body(self._runtime.download, media, file, start, end):
