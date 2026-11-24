@@ -283,6 +283,9 @@ class TaskStore:
             await self._redis.zrem(key, *gone)
         return [json.loads(row) for row in rows if row is not None]
 
+    async def user_task_ids(self, user_id: UUID | str) -> list[str]:
+        return await self._redis.zrange(self._key("user_tasks", user_id), 0, -1)
+
     async def batch(self, batch_id: UUID) -> list[str]:
         return await self._redis.lrange(self._key("batch", batch_id), 0, -1)
 

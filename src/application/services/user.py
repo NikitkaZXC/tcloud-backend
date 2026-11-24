@@ -16,7 +16,7 @@ from src.application.schemas import (
     UserServiceUpdate,
 )
 from src.application.services.access import require_admin, require_root
-from src.application.services.temp import cancel_user_sessions
+from src.application.services.temp import cancel_user_sessions, cancel_user_tasks
 from src.application.services.user_auth import UserAuthService
 from src.config import settings
 from src.infrastructure.cache import TaskStore
@@ -133,6 +133,7 @@ class UserService:
         await self._session.commit()
         if data.blocked:
             await cancel_user_sessions(self._store, user.id)
+            await cancel_user_tasks(self._store, user.id)
         logger.info("User {} updated by {}", user.id, actor.user_id)
         return UserServiceRead.from_db(await self.get_db(user.id))
 
@@ -142,4 +143,5 @@ class UserService:
         await self._repo.delete(user)
         await self._session.commit()
         await cancel_user_sessions(self._store, user_id)
+        await cancel_user_tasks(self._store, user_id)
         logger.info("User {} deleted by {}", user_id, actor.user_id)

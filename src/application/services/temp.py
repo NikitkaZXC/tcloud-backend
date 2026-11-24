@@ -8,6 +8,7 @@ from loguru import logger
 from src.application.exception import FileTooLargeError, SizeMismatchError
 from src.config import settings
 from src.infrastructure.cache import TaskStore
+from src.infrastructure.enums import TaskStatus
 from src.infrastructure.media import extension
 
 SUFFIX = re.compile(r"[a-z0-9]{1,16}")
@@ -113,4 +114,25 @@ async def cancel_user_sessions(store: TaskStore, user_id: UUID) -> int:
                 cancelled += 1
     if cancelled:
         logger.info("{} upload sessions of user {} cancelled", cancelled, user_id)
+    return cancelled
+
+
+async def cancel_task(store: TaskStore, task_id: UUID | str) -> str:
+    result = await store.cancel(task_id)
+    if result == "cancelled":
+        task = await store.get(task_id)
+        await store.release(task_id, task["path"])
+        remove_task_files(task)
+    return result
+
+
+async def cancel_user_tasks(store: TaskStore, user_id: UUID) -> int:
+    tasks = await store.get_many(await store.user_task_ids(user_id), ("status",))
+    cancelled = 0
+    for task in tasks:
+        if task["status"] not in TaskStatus.finished():
+            await cancel_task(store, task["id"])
+            cancelled += 1
+    if cancelled:
+        logger.info("{} tasks of user {} cancelled", cancelled, user_id)
     return cancelled

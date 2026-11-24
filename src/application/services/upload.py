@@ -43,8 +43,8 @@ from src.application.services.storage import StorageService, root_settings
 from src.application.services.task import TaskService
 from src.application.services.temp import (
     append_body,
+    cancel_task,
     drop_session,
-    remove_task_files,
     temp_path,
     write_body,
 )
@@ -535,15 +535,13 @@ class UploadService:
 
     async def cancel(self, actor: Actor, task_id: UUID) -> TaskServiceRead:
         await self._tasks.get_raw(task_id, actor)
-        result = await self._store.cancel(task_id)
+        result = await cancel_task(self._store, task_id)
         if result == "missing":
             raise TaskNotFoundError("task not found")
         if result == "finished":
             raise TaskFinishedError("task is already finished")
         if result == "cancelled":
             task = await self._tasks.get_raw(task_id, actor)
-            await self._store.release(task_id, task["path"])
-            remove_task_files(task)
             if task["params"].get("callback_url"):
                 notify(
                     self._runtime.spawn,

@@ -732,6 +732,33 @@ async def test_block_or_delete_cancels_sessions(client, storage, make_user, acti
     assert (await store().user_disk(user.user_id)) == (0, 0)
 
 
+@pytest.mark.parametrize("action", ["block", "delete"])
+async def test_block_or_delete_cancels_tasks(
+    client, storage, make_user, telegram, action
+):
+    user = await granted(make_user, storage, "quitter")
+    telegram.delay = 1
+    ids = []
+    for name in ("a", "b", "c"):
+        response = await user.post(
+            "/uploads",
+            params={"path": path(storage, f"quitter/{name}.bin"), "encrypt": "false"},
+            content=b"x" * 1000,
+        )
+        ids.append(response.json()["id"])
+    if action == "block":
+        response = await client.patch(f"/users/{user.user_id}", json={"blocked": True})
+        assert response.status_code == 200
+    else:
+        assert (await client.delete(f"/users/{user.user_id}")).status_code == 204
+    telegram.delay = 0
+    for task_id in ids:
+        assert (await wait_task(client, task_id))["status"] == "cancelled"
+    assert (await store().user_disk(user.user_id)) == (0, 0)
+    for name in ("a", "b", "c"):
+        assert not await store().path_locked(path(storage, f"quitter/{name}.bin"))
+
+
 async def test_chunk_after_grant_revoked_drops_the_session(client, storage, make_user):
     user = await granted(make_user, storage, "revoked")
     target = path(storage, "revoked/a.bin")
