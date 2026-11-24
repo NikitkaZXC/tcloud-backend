@@ -2,6 +2,7 @@ import asyncio
 import hashlib
 import hmac
 import json
+from urllib.parse import urlsplit
 from uuid import UUID
 
 import httpx
@@ -29,15 +30,17 @@ async def send_hook(
         "Content-Type": "application/json",
         "X-Tcloud-Signature": f"sha256={signature}",
     }
+    parts = urlsplit(url)
+    target = f"{parts.scheme}://{parts.hostname}"
     for delay in (1, 2, 4, None):
         try:
             async with open_url(url, "POST", headers=headers, content=body) as response:
                 if response.status_code < 500:
                     return
         except UnsafeUrlError as error:
-            logger.warning("Webhook {} rejected: {}", url, error)
+            logger.warning("Webhook {} rejected: {}", target, error)
             return
         except httpx.HTTPError as error:
-            logger.warning("Webhook {} failed: {!r}", url, error)
+            logger.warning("Webhook {} failed: {!r}", target, error)
         if delay:
             await asyncio.sleep(delay)

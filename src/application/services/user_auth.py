@@ -1,3 +1,4 @@
+import hashlib
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
@@ -91,7 +92,10 @@ class UserAuthService:
         user = await self._users.get_by_login(login)
         if not user:
             await verify_password(password, DUMMY_HASH)
-            logger.warning("Sign in failed: unknown login {}", login)
+            logger.warning(
+                "Sign in failed: unknown login sha256:{}",
+                hashlib.sha256(login.encode()).hexdigest()[:12],
+            )
             raise InvalidCredentialsError("wrong login or password")
         now = datetime.now(UTC)
         if user.locked_until and user.locked_until > now:

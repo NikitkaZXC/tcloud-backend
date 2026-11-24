@@ -3,6 +3,7 @@ import zipfile
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+from loguru import logger
 from pydantic import SecretStr
 from sqlalchemy import text
 
@@ -54,6 +55,20 @@ async def test_wrong_password(anonymous, client):
         "/auth/signin", json={"login": "nobody", "password": "wrong-password"}
     )
     assert response.status_code == 401 and code(response) == "invalid_credentials"
+
+
+async def test_unknown_login_is_not_logged(anonymous):
+    messages: list[str] = []
+    sink = logger.add(lambda message: messages.append(message.record["message"]))
+    try:
+        await anonymous.post(
+            "/auth/signin",
+            json={"login": "secret-typo-login", "password": "wrong-password"},
+        )
+    finally:
+        logger.remove(sink)
+    failed = [m for m in messages if m.startswith("Sign in failed: unknown login")]
+    assert failed and not any("secret-typo-login" in m for m in messages)
 
 
 async def test_lock_after_failed_logins(anonymous, make_user):
