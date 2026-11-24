@@ -148,11 +148,19 @@ class UploadPipeline:
 
     async def _beat(self, task_id: UUID) -> None:
         while True:
-            await self._store.touch(task_id)
+            try:
+                await self._store.touch(task_id)
+            except Exception as error:
+                logger.warning("Task {}: heartbeat failed: {!r}", task_id, error)
             await asyncio.sleep(settings.upload.HEARTBEAT_INTERVAL)
 
     async def _watch(self, task_id: str) -> None:
-        while not await self._store.cancel_requested(task_id):
+        while True:
+            try:
+                if await self._store.cancel_requested(task_id):
+                    break
+            except Exception as error:
+                logger.warning("Task {}: cancel check failed: {!r}", task_id, error)
             await asyncio.sleep(CANCEL_POLL)
         self._cancelled.add(task_id)
 
