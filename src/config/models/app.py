@@ -16,6 +16,7 @@ class AppSettings(BaseSettings):
     ENCRYPTION_KEY: SecretStr | None = None
     HOST: str = "0.0.0.0"
     PORT: int = 8000
+    MAX_BODY_SIZE: int = 1024 * 1024
     DOCS_URL: str = "/docs"
     OPENAPI_URL: str = "/openapi.json"
     REDOC_URL: str = "/redoc"

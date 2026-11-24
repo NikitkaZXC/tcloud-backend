@@ -12,6 +12,7 @@ STATUS_BY_CODE = {
     "unsafe_url": status.HTTP_422_UNPROCESSABLE_CONTENT,
     "download_failed": status.HTTP_422_UNPROCESSABLE_CONTENT,
     "too_large": status.HTTP_413_CONTENT_TOO_LARGE,
+    "body_too_large": status.HTTP_413_CONTENT_TOO_LARGE,
     "insufficient_storage": status.HTTP_507_INSUFFICIENT_STORAGE,
     "telegram_error": status.HTTP_502_BAD_GATEWAY,
     "telegram_unavailable": status.HTTP_503_SERVICE_UNAVAILABLE,

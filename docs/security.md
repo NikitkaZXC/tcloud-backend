@@ -90,6 +90,23 @@ IP клиента — `request.client.host`. uvicorn берёт его из `X-F
 7. Числа из запроса ограничены, чтобы не было 500: в `Range` не больше 19 цифр в границе (иначе `416 bad_range`),
    `size_min`/`size_max` поиска ≤ 2⁶³−1 (иначе `422`).
 
+## Размер тела запроса
+
+FastAPI читает JSON-тело целиком ещё до зависимостей входа и rate limit, поэтому без потолка анонимный запрос на
+`/api/auth/signin` мог прислать гигабайты в память API. `BodyLimitMiddleware` (`src/api/middleware/body_limit.py`)
+отвечает `413 body_too_large` (`{"error": {"code": "body_too_large", "message", "limit"}}`) до роутинга и входа:
+
+- `Content-Length` больше `APP_MAX_BODY_SIZE` (1 МиБ) — сразу, тело не читается;
+- тело без `Content-Length` (chunked) — считаются байты при чтении, на превышении отправляется тот же `413`, а
+  приложение получает `http.disconnect` и дальше ничего не читает и не отвечает.
+
+Исключения — ручки, которые сами стримят тело на диск со своими лимитами (`STREAMING`): `POST /api/uploads`
+(`uploads.max_file_size`), `PUT /api/uploads/sessions/{id}` (`UPLOAD_CHUNK_SIZE`), `PUT /api/storages/{id}/photo`
+(лимит фото Telegram). Тест `test_only_body_streaming_routes_are_exempt` держит этот список равным потоковым ручкам.
+Самое большое JSON-тело — `POST /api/folders/archive/selection` с `UPLOAD_ARCHIVE_MAX_ITEMS` длинных путей; если
+выбирают тысячи папок с путями под 1024 символа, поднимите `APP_MAX_BODY_SIZE`. nginx фронтенда ставит для `/api/`
+`client_max_body_size 1m` отдельно, кроме тех же потоковых ручек.
+
 ## CSRF и заголовки
 
 - `OriginCheckMiddleware`: POST/PUT/PATCH/DELETE с заголовком `Origin`, хост которого не совпадает с `Host` запроса и

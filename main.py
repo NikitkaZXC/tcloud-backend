@@ -9,7 +9,11 @@ from loguru import logger
 
 from src.api.endpoints import routers
 from src.api.exception import register_exception_handlers
-from src.api.middleware import OriginCheckMiddleware, SecurityHeadersMiddleware
+from src.api.middleware import (
+    BodyLimitMiddleware,
+    OriginCheckMiddleware,
+    SecurityHeadersMiddleware,
+)
 from src.application.bootstrap.startup import prepare
 from src.application.services import AuthService, TaskSweeper
 from src.config import settings
@@ -76,6 +80,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
 
 
 app = FastAPI(**settings.app.set_app_attributes, lifespan=lifespan)
+app.add_middleware(BodyLimitMiddleware)
 app.add_middleware(OriginCheckMiddleware)
 app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(

@@ -63,6 +63,7 @@ curl -H "X-API-Key: $TCLOUD_KEY" --data-binary @photo.jpg \
 |---|---|---|
 | `APP_SECRET_KEY` | — (обязательно, ≥ 32 символов, `make env`) | HMAC refresh-токенов и API-ключей, из него HKDF выводит ключи подписи вебхуков пользователей; короче — настройки не загружаются |
 | `APP_ENCRYPTION_KEY` | пусто — шифрование выключено | 32 байта base64, ключ шифрования файлов; потеря = потеря зашифрованных файлов |
+| `APP_MAX_BODY_SIZE` | `1048576` (1 МиБ) | потолок тела запроса, кроме потоковых загрузок (`413 body_too_large`, security.md) |
 | `APP_ALLOWED_ORIGINS` | `[]` | CORS и проверка `Origin` для фронтенда на другом origin |
 | `ROOT_LOGIN`, `ROOT_PASSWORD` | — | root, синхронизируется при каждом старте API; `ROOT_PASSWORD` ≥ 12 символов, иначе настройки не загружаются |
 | `JWT_SECURE` | `true` | куки только по HTTPS; `false` для http без TLS |
