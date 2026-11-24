@@ -199,6 +199,7 @@ async def download_archive(
         headers={
             "Content-Disposition": f"attachment; filename*=UTF-8''{quote(archive['name'])}",
             "X-Content-Type-Options": "nosniff",
+            "Content-Security-Policy": "sandbox",
             "Cache-Control": "no-transform",
         },
     )

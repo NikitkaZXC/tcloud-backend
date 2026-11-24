@@ -114,7 +114,7 @@ flowchart TD
 2. `GET /api/tasks/{id}` — прогресс: стадия `archiving`, `bytes_done/bytes_total` по сумме размеров файлов, место в
    очереди, `archive = {name, format, files, size, expires_at}`. Отмена — `POST /api/tasks/{id}/cancel`, приоритет —
    `POST /api/tasks/{id}/priority`. Повтора (`retry`) нет: собрать архив заново.
-3. `GET /api/tasks/{id}/archive` — готовый архив (`Content-Disposition: attachment`, `nosniff`, `Range` для докачки).
+3. `GET /api/tasks/{id}/archive` — готовый архив (`Content-Disposition: attachment`, `nosniff`, CSP `sandbox`, `Range` для докачки).
    Скачать может только автор задачи (остальным `404`). До готовности — `409 archive_not_ready`, после удаления —
    `410 archive_expired`.
 

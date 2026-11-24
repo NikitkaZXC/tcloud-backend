@@ -50,7 +50,9 @@ async def test_download_full(client, photo):
         response.headers["content-type"] == "image/jpeg"
         and response.headers["accept-ranges"] == "bytes"
     )
+    assert response.headers["content-disposition"].startswith("inline;")
     assert "photo.jpg" in response.headers["content-disposition"]
+    assert response.headers["x-content-type-options"] == "nosniff"
     assert response.headers["cache-control"] == "private, no-cache, no-transform"
     assert response.headers["etag"] == f'"{photo["telegram"]["message_id"]}"'
     assert "content-encoding" not in response.headers
@@ -75,6 +77,10 @@ async def test_download_pdf_range(client, storage):
         f"/files/{file['uuid']}/download", headers={"Range": "bytes=0-7"}
     )
     assert response.status_code == 206 and response.content == PDF[:8]
+    assert response.headers["content-type"] == "application/octet-stream"
+    assert response.headers["content-disposition"].startswith("attachment;")
+    assert response.headers["x-content-type-options"] == "nosniff"
+    assert response.headers["content-security-policy"] == "sandbox"
 
 
 async def test_download_range(client, photo):
@@ -251,7 +257,9 @@ async def test_folder_archive_has_the_whole_tree(client, storage, redis):
     assert response.status_code == 200
     assert response.headers["content-type"] == "application/zip"
     assert response.headers["x-content-type-options"] == "nosniff"
+    assert response.headers["content-disposition"].startswith("attachment;")
     assert response.headers["content-disposition"].endswith("trip.zip")
+    assert response.headers["content-security-policy"] == "sandbox"
     assert response.headers["cache-control"] == "no-transform"
     with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
         assert sorted(archive.namelist()) == ["1.jpg", "day 2/2.pdf"]
