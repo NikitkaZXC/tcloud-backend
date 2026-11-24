@@ -62,7 +62,7 @@ curl -H "X-API-Key: $TCLOUD_KEY" --data-binary @photo.jpg \
 
 | Вариант | Команды | Что запущено |
 |---|---|---|
-| Всё в Docker из исходников | `make dev-up-all` (`make dev-down` — остановить) | `docker-compose.dev.yml`, профиль `app`: API, три воркера, Postgres, RabbitMQ (панель `:15672`), Redis, ClamAV. Исходники не монтируются: после правок `docker compose -f docker-compose.dev.yml --profile app up -d --build app worker-download worker-prepare worker-telegram` |
+| Всё в Docker из исходников | `make dev-up-all` (`make dev-down` — остановить) | `docker-compose.dev.yml`, профиль `app`: API, три воркера, Flower (`:5555`, `FLOWER_USER` / `FLOWER_PASSWORD`, по умолчанию `tcloud` / `tcloud`), Postgres, RabbitMQ (панель `:15672`), Redis, ClamAV. Исходники не монтируются: после правок `docker compose -f docker-compose.dev.yml --profile app up -d --build app worker-download worker-prepare worker-telegram flower` |
 | Код локально с перезагрузкой | `make dev-up`, ClamAV — `docker compose -f docker-compose.dev.yml up -d clamav`; затем `make app`, `make worker-download`, `make worker-prepare`, `make worker-telegram`, `make flower` | в Docker только инфраструктура; в `.env` хосты `127.0.0.1` (`POSTGRES_HOST`, `CLAMAV_HOST`, `RABBITMQ_HOST`, `REDIS_HOST`) |
 | Прод | `make up`, `make logs`, `make down` | `docker-compose.prod.yml` |
 

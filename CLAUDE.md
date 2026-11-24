@@ -11,6 +11,7 @@ tcloud: a FastAPI service that stores media (photo, video, audio, GIF) and other
 ```bash
 make install / make env / make up / make logs   # then sign in as root (/api/auth/signin) and log in to Telegram on /docs → Telegram (docs/flows/auth.md)
 make app                          # local uvicorn --reload (needs make dev-up: Postgres, RabbitMQ, Redis)
+make dev-up-all                   # everything in Docker (docker-compose.dev.yml, profile app; Flower on 127.0.0.1:5555, FLOWER_USER/FLOWER_PASSWORD, default tcloud/tcloud)
 make worker-download | worker-prepare | worker-telegram | flower   # local Celery workers and Flower
 make test | test-integration | test-api | test-all | test-cov
 make test-docker                  # whole suite in Docker with ffmpeg (tests needing ffmpeg are skipped locally without it)

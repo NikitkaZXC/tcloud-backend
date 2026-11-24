@@ -26,7 +26,7 @@ uv run alembic revision --autogenerate -m "msg"
 |---|---|---|
 | Пользоваться сервисом | `make up` (и `make logs`) | всё в Docker, `docker-compose.prod.yml` |
 | Править код с автоперезагрузкой | `make dev-up`, затем `make app` и воркеры `make worker-*` | локально, в Docker только Postgres, RabbitMQ, Redis |
-| Всё в Docker из исходников | `make dev-up-all` | `docker-compose.dev.yml`, профиль `app` |
+| Всё в Docker из исходников | `make dev-up-all` | `docker-compose.dev.yml`, профиль `app`: API, три воркера и Flower на `127.0.0.1:5555` (basic auth `FLOWER_USER` / `FLOWER_PASSWORD` из `.env`, без них `tcloud` / `tcloud`) |
 
 После любого варианта — вход как root (`POST /api/auth/signin`, flows/users.md) и вход в Telegram на `/docs`, раздел **Telegram** (flows/auth.md). Локально сессии и временные
 файлы лежат в `./data/` (пути по умолчанию `data/session/...`, `data/tmp`; в Docker compose задаёт `/data/...`).

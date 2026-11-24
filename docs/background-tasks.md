@@ -393,7 +393,8 @@ flowchart LR
     key -->|true / false| up["telegram_upload"]
     file --> up
 ```
-- Flower — `http://127.0.0.1:5555`, логин и пароль `FLOWER_USER` / `FLOWER_PASSWORD`: воркеры, задачи, очереди.
+- Flower — `http://127.0.0.1:5555`, логин и пароль `FLOWER_USER` / `FLOWER_PASSWORD`: воркеры, задачи, очереди. Есть в
+  `docker-compose.prod.yml` и в `docker-compose.dev.yml` (профиль `app`, в dev без переменных — `tcloud` / `tcloud`), локально — `make flower`.
 
 ## Вебхуки
 
