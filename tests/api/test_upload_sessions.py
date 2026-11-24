@@ -550,6 +550,7 @@ async def test_url_size_checked_at_create(client, storage, disk):
     )
     assert response.status_code == 202, response.text
     await client.post(f"/tasks/{response.json()['id']}/cancel")
+    await wait_task(client, response.json()["id"])
     assert await ledger() == 0
     await client.patch("/account/settings", json={"uploads": {"max_file_size": 1000}})
     response = await client.post("/uploads/from-url", json={**body, "size": 1001})
