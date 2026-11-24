@@ -36,6 +36,8 @@ background-tasks.md («Путь загрузки целиком», «Стату�
   таблицу), занятость пути (`409 upload_in_progress`). Затем путь блокируется (`path:{path}`, как у идущей загрузки),
   берётся слот `UPLOAD_MAX_FILES_ON_DISK` (`429 too_many_tasks`) и создаётся пустой временный файл. `session_id` — это
   будущий id задачи. `size` ≥ 1.
+- **Права на каждом куске**: каждый `PUT` заново проверяет право загрузки в папку (и удаления при `replace`) по
+  текущим грантам: грант отозвали — `403 forbidden`, сессия сразу удаляется (файл, путь, слот, квота освобождаются).
 - **Кусок**: `offset` должен равняться принятому, иначе `409 offset_mismatch` с `{offset}` — текущим смещением, с него и
   продолжать. Кусок не больше `chunk_size` (`UPLOAD_CHUNK_SIZE`, 64 МиБ) и не больше остатка файла, иначе
   `413 chunk_too_large` с `{limit}` — сколько можно прислать; размер куска внутри этого предела любой (рекомендуется
@@ -93,6 +95,7 @@ sequenceDiagram
     loop пока offset < size
         C->>A: PUT /uploads/sessions/{id}?offset=K (кусок)
         A->>R: job:upload:{id} NX
+        A->>A: права на папку (нет → удалить сессию, 403)
         A->>A: дописать tmp с K (ошибка/обрыв: обрезать до K)
         A->>R: offset += длина, срок = min(now + IDLE_TTL, started_at + SESSION_TTL)
         A-->>C: 200 {offset} / 409 offset_mismatch {offset}
@@ -109,7 +112,8 @@ sequenceDiagram
 - Объект сессии `UploadSession`: `{session_id: uuid, user_id: uuid, path: string, size: number, offset: number,
   chunk_size: number, expires_at: string (ISO)}`. `PUT` и `POST` могут вернуть вместо него `Task` (`202` / `200`): есть поле `id` и нет
   `session_id` — загрузка закончилась, дальше опрашивать `/api/tasks/{id}`.
-- Ошибки: `404 upload_session_not_found`, `409 offset_mismatch` (`offset`), `409 upload_session_busy` (`retry_after`),
+- Ошибки: `404 upload_session_not_found`, `403 forbidden` у `PUT` (права отозваны, сессия удалена — начинать заново не
+  имеет смысла без нового гранта), `409 offset_mismatch` (`offset`), `409 upload_session_busy` (`retry_after`),
   `413 chunk_too_large` (`limit`), `429 too_many_upload_sessions` (`limit`), `507 temp_quota_exceeded` (`limit`,
   `used`; также у `POST /api/uploads` и ссылок с `size`); плюс прежние `411 length_required`, `400 size_mismatch`, `413 too_large`,
   `409 conflict`, `409 upload_in_progress`, `429 too_many_tasks`, `507 insufficient_storage`.

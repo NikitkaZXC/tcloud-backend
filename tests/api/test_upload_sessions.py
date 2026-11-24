@@ -730,3 +730,17 @@ async def test_block_or_delete_cancels_sessions(client, storage, make_user, acti
     assert not file.exists()
     assert not await store().path_locked(path(storage, "leaver/a.bin"))
     assert (await store().user_disk(user.user_id)) == (0, 0)
+
+
+async def test_chunk_after_grant_revoked_drops_the_session(client, storage, make_user):
+    user = await granted(make_user, storage, "revoked")
+    target = path(storage, "revoked/a.bin")
+    session = await open_session(user, target, 100, encrypt="false")
+    for grant in (await client.get(f"/users/{user.user_id}/grants")).json():
+        await client.delete(f"/users/{user.user_id}/grants/{grant['id']}")
+    response = await put(user, session["session_id"], 0, b"z" * 100)
+    assert response.status_code == 403
+    assert not await store().path_locked(target)
+    assert await store().get_session(session["session_id"]) is None
+    assert await store().user_disk(user.user_id) == (0, 0)
+    assert not list(settings.upload.TMP_DIR.iterdir())

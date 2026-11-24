@@ -11,6 +11,7 @@ from src.application.exception import (
     ChunkTooLargeError,
     EncryptRequiresFileError,
     FileTooLargeError,
+    ForbiddenError,
     LengthRequiredError,
     OffsetMismatchError,
     PathConflictError,
@@ -421,6 +422,11 @@ class UploadService:
                 )
             session = await self._get_session(actor, session_id)
             task = session["task"]
+            try:
+                self._check_access(actor, task["path"], task["params"]["on_conflict"])
+            except ForbiddenError:
+                await drop_session(self._store, session)
+                raise
             if offset != session["offset"]:
                 raise OffsetMismatchError(
                     f"the next chunk starts at {session['offset']}",
