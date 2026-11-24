@@ -556,6 +556,21 @@ async def test_password_or_role_change_revokes_api_keys(
     assert len(listed) == (1 if keeps else 0)
 
 
+async def test_own_password_change_revokes_api_keys(client, make_user, anonymous):
+    user = await make_user("selfkeyed")
+    key = (
+        await client.post(f"/users/{user.user_id}/api-keys", json={"name": "x"})
+    ).json()["key"]
+    response = await user.post(
+        "/auth/password",
+        json={"current_password": "selfkeyed-password", "new_password": "new-password"},
+    )
+    assert response.status_code == 204
+    me = await anonymous.get("/users/me", headers={"X-API-Key": key})
+    assert me.status_code == 401
+    assert (await client.get(f"/users/{user.user_id}/api-keys")).json() == []
+
+
 async def test_upload_only_user_sees_no_metadata_of_existing_files(
     client, storage, make_user
 ):

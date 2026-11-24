@@ -195,6 +195,7 @@ class UserAuthService:
             raise InvalidCredentialsError("wrong current password")
         user.password_hash = await hash_password(new)
         await self.revoke_all(user.id)
+        await self.revoke_keys(user.id)
         pair = await self._issue(user, client)
         await self._session.commit()
         logger.info("User {} changed the password", user.id)
