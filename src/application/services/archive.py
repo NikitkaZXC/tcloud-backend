@@ -1,14 +1,16 @@
 import asyncio
 from collections.abc import Awaitable, Callable
 from pathlib import Path
+from uuid import UUID
 
 from loguru import logger
 
+from src.application.exception import FileChangedError
 from src.application.schemas import task_warning
-from src.application.services.file import file_body, stored_size
+from src.application.services.file import file_body, open_pieces, telegram_reader
 from src.application.services.temp import temp_path, write_body
 from src.infrastructure.archive import ArchiveWriter
-from src.infrastructure.database.models import FileDB
+from src.infrastructure.database.models import FileDB, FilePartDB
 from src.infrastructure.enums import ArchiveFormat
 from src.infrastructure.integrations import TelegramClient, TelegramMessageGoneError
 from src.infrastructure.security import DecryptionError
@@ -25,6 +27,7 @@ async def build_archive(
     telegram: TelegramClient,
     chat_id: int,
     files: list[FileDB],
+    parts: dict[UUID, list[FilePartDB]],
     base: str,
     archive_format: ArchiveFormat,
     target: Path,
@@ -43,8 +46,12 @@ async def build_archive(
                 part = temp_path(file.name)
                 try:
                     try:
-                        media, size = await telegram.message_media(
-                            chat_id, file.tg_message_id
+                        pieces = await open_pieces(
+                            lambda message_id: telegram.message_media(
+                                chat_id, message_id
+                            ),
+                            file,
+                            parts.get(file.id, []),
                         )
                     except TelegramMessageGoneError:
                         logger.warning(
@@ -58,7 +65,7 @@ async def build_archive(
                             )
                         )
                         continue
-                    if size != stored_size(file):
+                    except FileChangedError:
                         logger.warning(
                             "File {} changed in Telegram, not archived", file.id
                         )
@@ -73,7 +80,13 @@ async def build_archive(
                     offset = done
                     try:
                         await write_body(
-                            file_body(telegram, media, file, 0, file.size - 1),
+                            file_body(
+                                telegram_reader(telegram),
+                                pieces,
+                                file,
+                                0,
+                                file.size - 1,
+                            ),
                             part,
                             file.size,
                             lambda written: progress(offset + written),

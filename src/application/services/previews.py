@@ -4,8 +4,12 @@ from pathlib import Path
 
 from loguru import logger
 
-from src.application.exception import FileChangedError
-from src.application.services.file import file_body, stored_size, tracked
+from src.application.services.file import (
+    file_body,
+    open_pieces,
+    telegram_reader,
+    tracked,
+)
 from src.application.services.pipeline import PREVIEW_KINDS
 from src.application.services.storage import root_settings
 from src.application.services.temp import temp_path, write_body
@@ -94,16 +98,22 @@ class PreviewBackfill:
 
     async def _make(self, file: FileDB, chat_id: int) -> bytes:
         telegram = await self._runtime.telegram()
-        media, size = await telegram.message_media(chat_id, file.tg_message_id)
-        if size != stored_size(file):
-            raise FileChangedError("file changed in Telegram")
+        async with self._runtime.session_factory() as session:
+            parts = await FileRepository(session).get_parts([file.id])
+        pieces = await open_pieces(
+            lambda message_id: telegram.message_media(chat_id, message_id),
+            file,
+            parts.get(file.id, []),
+        )
         plain = temp_path(file.name)
         frame = temp_path("thumb.jpg")
         reservation = self._runtime.disk.reserve(file.size)
         try:
             await write_body(
                 tracked(
-                    file_body(telegram, media, file, 0, file.size - 1),
+                    file_body(
+                        telegram_reader(telegram), pieces, file, 0, file.size - 1
+                    ),
                     self._store,
                     file.storage_id,
                     "read",

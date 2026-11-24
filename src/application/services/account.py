@@ -20,9 +20,6 @@ class AccountService:
             await self._runtime.store.keep(premium, "account", "premium")
         return premium
 
-    async def file_limit(self) -> int:
-        return file_limit(await self.is_premium())
-
     async def channels_used(self) -> int | None:
         used = await self._runtime.store.cached("account", "channels")
         if used is not None:

@@ -22,7 +22,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.infrastructure.database.models import FileDB, StorageDB
+from src.infrastructure.database.models import FileDB, FilePartDB, StorageDB
 from src.infrastructure.database.repositories.like import (
     escape_like,
     folder_and_below,
@@ -45,6 +45,20 @@ def contains(column: ColumnElement[str], query: str) -> ColumnElement[bool]:
     return func.lower(column).like(
         func.lower("%" + escape_like(query) + "%"), escape="\\"
     )
+
+
+def by_messages(storage_id: UUID, message_ids: list[int]) -> list[ColumnElement[bool]]:
+    parted = (
+        select(FilePartDB.file_id)
+        .join(FileDB, FileDB.id == FilePartDB.file_id)
+        .where(
+            FileDB.storage_id == storage_id, FilePartDB.tg_message_id.in_(message_ids)
+        )
+    )
+    return [
+        FileDB.storage_id == storage_id,
+        or_(FileDB.tg_message_id.in_(message_ids), FileDB.id.in_(parted)),
+    ]
 
 
 FOLDER_TYPE = {"ru": "папка", "en": "folder"}
@@ -408,13 +422,39 @@ class FileRepository:
     async def get_messages_below(
         self, storage_id: UUID, folder: str
     ) -> list[tuple[UUID, int]]:
-        statement = select(FileDB.id, FileDB.tg_message_id).where(
+        below = (
             FileDB.storage_id == storage_id,
             folder_and_below(FileDB.folder_path, folder),
+        )
+        statement = union_all(
+            select(FileDB.id, FileDB.tg_message_id).where(*below),
+            select(FilePartDB.file_id, FilePartDB.tg_message_id)
+            .join(FileDB, FileDB.id == FilePartDB.file_id)
+            .where(*below, FilePartDB.index > 0),
         )
         return [
             (row[0], row[1]) for row in (await self._session.execute(statement)).all()
         ]
+
+    async def get_parts(self, file_ids: list[UUID]) -> dict[UUID, list[FilePartDB]]:
+        parts: dict[UUID, list[FilePartDB]] = {}
+        if not file_ids:
+            return parts
+        statement = (
+            select(FilePartDB)
+            .where(FilePartDB.file_id.in_(file_ids))
+            .order_by(FilePartDB.file_id, FilePartDB.index)
+        )
+        for part in (await self._session.execute(statement)).scalars():
+            parts.setdefault(part.file_id, []).append(part)
+        return parts
+
+    async def set_parts(self, file_id: UUID, parts: list[FilePartDB]) -> None:
+        await self._session.execute(
+            delete(FilePartDB).where(FilePartDB.file_id == file_id)
+        )
+        self._session.add_all(parts)
+        await self._session.flush()
 
     async def create(self, file: FileDB) -> FileDB:
         self._session.add(file)
@@ -433,13 +473,22 @@ class FileRepository:
             return []
         result = await self._session.execute(
             delete(FileDB)
-            .where(
-                FileDB.storage_id == storage_id,
-                FileDB.tg_message_id.in_(message_ids),
-            )
+            .where(*by_messages(storage_id, message_ids))
             .returning(FileDB.id)
         )
         return list(result.scalars().all())
+
+    async def part_messages(
+        self, storage_id: UUID, message_ids: list[int]
+    ) -> list[int]:
+        if not message_ids:
+            return []
+        statement = select(FilePartDB.tg_message_id).where(
+            FilePartDB.file_id.in_(
+                select(FileDB.id).where(*by_messages(storage_id, message_ids))
+            )
+        )
+        return list((await self._session.execute(statement)).scalars().all())
 
     async def delete_by_ids(self, file_ids: list[UUID]) -> None:
         if file_ids:

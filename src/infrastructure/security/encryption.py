@@ -43,8 +43,13 @@ def cipher_size(plain_size: int) -> int:
     return HEADER + plain_size + TAG * blocks(plain_size)
 
 
-def plain_limit(limit: int) -> int:
-    return limit - HEADER - TAG * blocks(limit)
+def part_spans(size: int, limit: int, encrypted: bool) -> list[tuple[int, int]]:
+    if size <= limit:
+        return [(0, size)]
+    head = HEADER if encrypted else 0
+    step = (limit - head) // (BLOCK + TAG) * (BLOCK + TAG) if encrypted else limit
+    cuts = [0, *range(head + step, size, step), size]
+    return [(start, stop - start) for start, stop in zip(cuts, cuts[1:])]
 
 
 def _nonce(prefix: bytes, index: int, last: bool) -> bytes:

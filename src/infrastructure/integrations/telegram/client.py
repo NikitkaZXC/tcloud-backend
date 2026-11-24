@@ -564,6 +564,7 @@ class TelegramClient:
         as_file: bool,
         thumb: Path | None,
         progress: Callable[[int, int], None],
+        span: tuple[int, int] | None = None,
     ) -> SentFile:
         attributes = [types.DocumentAttributeFilename(name)]
         if not as_file:
@@ -586,7 +587,7 @@ class TelegramClient:
                 )
             elif media.kind == MediaKind.ANIMATION:
                 attributes.append(types.DocumentAttributeAnimated())
-        handle = await self.upload(path, progress)
+        handle = await self.upload(path, progress, span)
         message = await self._client.send_file(
             await self._peer(chat_id),
             handle,
@@ -607,9 +608,12 @@ class TelegramClient:
         )
 
     async def upload(
-        self, path: Path, progress: Callable[[int, int], None]
+        self,
+        path: Path,
+        progress: Callable[[int, int], None],
+        span: tuple[int, int] | None = None,
     ) -> types.TypeInputFile:
-        size = path.stat().st_size
+        base, size = span or (0, path.stat().st_size)
         parts = max(1, -(-size // CHUNK))
         big = size > BIG_FILE
         file_id = helpers.generate_random_long()
@@ -620,7 +624,9 @@ class TelegramClient:
         async def worker() -> None:
             nonlocal done
             for part in queue:
-                data = os.pread(descriptor, CHUNK, part * CHUNK)
+                data = os.pread(
+                    descriptor, min(CHUNK, size - part * CHUNK), base + part * CHUNK
+                )
                 if big:
                     request = functions.upload.SaveBigFilePartRequest(
                         file_id, part, parts, data

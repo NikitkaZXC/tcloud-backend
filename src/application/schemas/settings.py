@@ -41,6 +41,7 @@ class UploadSettingsServiceRead(SettingsGroup):
     allow_unscannable: bool = False
     webhook_url: str | None = Field(default=None, max_length=2048)
     previews: bool = True
+    max_file_size: int = Field(default=0, ge=0)
 
 
 class ArchiveSettingsServiceRead(SettingsGroup):

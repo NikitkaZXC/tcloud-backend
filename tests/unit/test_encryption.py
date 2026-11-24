@@ -14,9 +14,9 @@ from src.infrastructure.security import (
     cipher_span,
     decrypt,
     encrypt_file,
-    plain_limit,
+    part_spans,
 )
-from src.infrastructure.security.encryption import BLOCK
+from src.infrastructure.security.encryption import BLOCK, TAG
 
 
 async def chunks(data: bytes, size: int = 10_000):
@@ -98,6 +98,36 @@ def test_bad_key_fails_at_start():
     assert AppSettings(SECRET_KEY="x", ENCRYPTION_KEY="").encryption_key is None
 
 
-def test_plain_limit_fits_the_telegram_limit():
-    for limit in (2000 * 1024**2, 4000 * 1024**2, BLOCK * 10):
-        assert cipher_size(plain_limit(limit)) <= limit
+def test_part_spans_cover_the_file_within_the_limit():
+    assert part_spans(100, 100, False) == [(0, 100)]
+    assert part_spans(250, 100, False) == [(0, 100), (100, 100), (200, 50)]
+    for limit in (2000 * 1024**2, BLOCK * 10):
+        size = cipher_size(limit * 3)
+        spans = part_spans(size, limit, True)
+        assert spans[0][0] == 0 and sum(length for _, length in spans) == size
+        assert all(length <= limit for _, length in spans)
+        assert all((offset - HEADER) % (BLOCK + TAG) == 0 for offset, _ in spans[1:])
+        assert all(a + b == c for (a, b), (c, _) in zip(spans, spans[1:]))
+
+
+async def test_parts_decrypt_alone(tmp_path):
+    source, target = tmp_path / "plain", tmp_path / "cipher"
+    plain = os.urandom(BLOCK * 5 + 123)
+    source.write_bytes(plain)
+    header = encrypt_file(source, target)
+    cipher = target.read_bytes()
+    spans = part_spans(len(cipher), HEADER + 2 * (BLOCK + TAG), True)
+    assert len(spans) == 3
+    offset, length = spans[1]
+    start = (offset - HEADER) // (BLOCK + TAG) * BLOCK
+    end = start + 2 * BLOCK - 1
+    assert (offset, length) == cipher_span(len(plain), start, end)
+    got = b"".join(
+        [
+            chunk
+            async for chunk in decrypt(
+                chunks(cipher[offset : offset + length]), header, len(plain), start, end
+            )
+        ]
+    )
+    assert got == plain[start : end + 1]

@@ -176,7 +176,7 @@ async def test_send_records_the_downloaded_photo_size(tmp_path, monkeypatch):
     async def send_file(*args, **kwargs):
         return sent
 
-    async def upload(path, progress):
+    async def upload(path, progress, span=None):
         return "handle"
 
     fake.send_file = send_file

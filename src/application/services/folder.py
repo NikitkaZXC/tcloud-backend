@@ -397,12 +397,15 @@ class FolderService:
             messages = [message_id for _, message_id in files]
             self._runtime.media.forget(storage.tg_chat_id, messages)
             await self._runtime.telegram.delete(storage.tg_chat_id, messages)
-        await self._files.delete_by_ids([file_id for file_id, _ in files])
+        file_ids = list({file_id for file_id, _ in files})
+        await self._files.delete_by_ids(file_ids)
         await self._repo.delete_with_children(storage_id, path)
         await self._session.commit()
         logger.info(
-            "Folder {} deleted with {} files", join_path(storage_id, path), len(files)
+            "Folder {} deleted with {} files",
+            join_path(storage_id, path),
+            len(file_ids),
         )
         return FolderDeleteServiceRead(
-            path=join_path(storage_id, path), deleted_files=len(files)
+            path=join_path(storage_id, path), deleted_files=len(file_ids)
         )

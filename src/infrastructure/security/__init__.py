@@ -5,7 +5,7 @@ from .encryption import (
     cipher_span,
     decrypt,
     encrypt_file,
-    plain_limit,
+    part_spans,
     seal,
     unseal,
 )
@@ -33,7 +33,7 @@ __all__ = [
     "cipher_span",
     "decrypt",
     "encrypt_file",
-    "plain_limit",
+    "part_spans",
     "seal",
     "unseal",
     "DUMMY_HASH",

@@ -15,13 +15,14 @@ from loguru import logger
 from src.application.exception import PathConflictError, TaskCancelledError
 from src.application.schemas import SKIPPED, caption_token, task_warning
 from src.application.services.archive import build_archive
+from src.application.services.file import layout
 from src.application.services.storage import root_settings
 from src.application.services.temp import remove_task_files, temp_path
 from src.application.services.webhook import send_hook
 from src.config import settings
 from src.infrastructure.background import QueueUnavailableError, WorkerRuntime, enqueue
 from src.infrastructure.cache import CLAIM_BUSY, TaskStore
-from src.infrastructure.database.models import FileDB
+from src.infrastructure.database.models import FileDB, FilePartDB
 from src.infrastructure.database.repositories import (
     FileRepository,
     FolderRepository,
@@ -43,6 +44,7 @@ from src.infrastructure.integrations import (
     UnscannableFileError,
 )
 from src.infrastructure.integrations.web import download
+from src.infrastructure.limits import file_limit
 from src.infrastructure.media import (
     Media,
     photo_fits,
@@ -51,7 +53,7 @@ from src.infrastructure.media import (
     thumbnail,
     to_jpeg,
 )
-from src.infrastructure.security import cipher_size, encrypt_file, seal
+from src.infrastructure.security import cipher_size, encrypt_file, part_spans, seal
 from src.utilities.errors import TCloudError
 from src.utilities.parsers import split_file
 
@@ -70,6 +72,12 @@ def describe(error: BaseException) -> dict:
     if isinstance(error, asyncio.CancelledError):
         return {"code": "interrupted", "message": "task was interrupted"}
     return {"code": "internal", "message": "internal error"}
+
+
+def sent_ids(recorded: dict) -> list[int]:
+    return [
+        item["message_id"] for item in recorded.get("parts") or [recorded["message"]]
+    ]
 
 
 def sha256_of(path: Path, progress: Callable[[int], None]) -> str:
@@ -403,13 +411,31 @@ class UploadPipeline:
 
     async def _location(
         self, storage_id: UUID, folder: str, name: str
-    ) -> tuple[FileDB | None, int]:
+    ) -> tuple[FileDB | None, int, list[int]]:
         async with self._runtime.session_factory() as session:
             storage = await StorageRepository(session).get_by_id(storage_id)
-            existing = await FileRepository(session).get_by_path(
-                storage_id, folder, name
-            )
-        return existing, storage.tg_chat_id
+            files = FileRepository(session)
+            existing = await files.get_by_path(storage_id, folder, name)
+            parts = await files.get_parts([existing.id]) if existing else {}
+        messages = (
+            [
+                message_id
+                for message_id, _, _ in layout(existing, parts.get(existing.id, []))
+            ]
+            if existing
+            else []
+        )
+        return existing, storage.tg_chat_id, messages
+
+    async def _spans(self, telegram, path: Path, encrypted: bool) -> list:
+        size = path.stat().st_size
+        if size <= file_limit(False):
+            return [(0, size)]
+        premium = await self._store.cached("account", "premium")
+        if premium is None:
+            premium = await telegram.is_premium()
+            await self._store.keep(premium, "account", "premium")
+        return part_spans(size, file_limit(premium), encrypted)
 
     async def _send_to_telegram(self, task: dict, **kwargs):
         telegram = await self._runtime.telegram()
@@ -437,56 +463,102 @@ class UploadPipeline:
         prepared = task["prepared"]
         on_conflict = task["params"]["on_conflict"]
         storage_id, folder, name = split_file(task["path"])
-        existing, chat_id = await self._location(storage_id, folder, name)
+        existing, chat_id, old_messages = await self._location(storage_id, folder, name)
         telegram = await self._runtime.telegram()
         recorded = task.get("sent")
         planned = UUID(recorded["file_id"]) if recorded else None
+        header = prepared.get("encryption_header")
+        path = Path(prepared["send_path"])
+        spans = (
+            recorded.get("spans") or [(0, recorded["message"]["size"])]
+            if recorded
+            else await self._spans(telegram, path, bool(header))
+        )
+        parted = len(spans) > 1
+        as_file = prepared["as_file"] or parted
+        warnings = prepared["warnings"]
+        if parted and not prepared["as_file"]:
+            warnings = [
+                *warnings,
+                task_warning(
+                    "too_big_sent_as_file",
+                    "file is bigger than one Telegram message, sent as a file in parts",
+                    parts=len(spans),
+                ),
+            ]
         if recorded and existing and existing.id == planned:
             if existing.tg_message_id == recorded["message"]["message_id"]:
-                await self.finish(task, planned, prepared["warnings"])
+                await self.finish(task, planned, warnings)
                 return
         if existing and existing.id != planned:
             if on_conflict in ("error", "keep_both"):
                 raise PathConflictError(f"{name} already exists")
             if on_conflict == "skip":
                 if recorded:
-                    await telegram.delete(chat_id, [recorded["message"]["message_id"]])
+                    await telegram.delete(chat_id, sent_ids(recorded))
                 await self.finish(task, existing.id, [SKIPPED])
                 return
         file_id = planned or (existing.id if existing else uuid7())
         media = Media(**prepared["media"])
-        as_file = prepared["as_file"]
-        header = prepared.get("encryption_header")
-        if recorded:
-            sent = SentFile(**recorded["message"])
-        else:
+        messages = (
+            [
+                SentFile(**item)
+                for item in recorded.get("parts") or [recorded["message"]]
+            ]
+            if recorded
+            else []
+        )
+        total = sum(size for _, size in spans)
+        while len(messages) < len(spans):
+            index = len(messages)
+            offset, size = spans[index]
+            if parted:
+                part_name = (
+                    f"{file_id}.part{index}.bin" if header else f"{name}.part{index}"
+                )
+            else:
+                part_name = f"{file_id}.bin" if header else name
             await self._checkpoint(task)
-            sent = await self._send_to_telegram(
-                task,
-                chat_id=chat_id,
-                path=Path(prepared["send_path"]),
-                name=f"{file_id}.bin" if header else name,
-                caption=caption_token(file_id),
-                media=media,
-                as_file=as_file,
-                thumb=(
-                    Path(prepared["thumb"])
-                    if prepared["thumb"] and not header
-                    else None
-                ),
-                progress=lambda done, total: self.progress(task["id"], done, total),
+            messages.append(
+                await self._send_to_telegram(
+                    task,
+                    chat_id=chat_id,
+                    path=path,
+                    name=part_name,
+                    caption=caption_token(file_id),
+                    media=media,
+                    as_file=as_file,
+                    thumb=(
+                        Path(prepared["thumb"])
+                        if prepared["thumb"] and not header and not index
+                        else None
+                    ),
+                    progress=lambda done, _, offset=offset: self.progress(
+                        task["id"], offset + done, total
+                    ),
+                    span=(offset, size) if parted else None,
+                )
             )
-            await self._store.update(
-                task["id"],
-                sent={"file_id": file_id, "chat_id": chat_id, "message": asdict(sent)},
-            )
+            record = {
+                "file_id": file_id,
+                "chat_id": chat_id,
+                "message": asdict(messages[0]),
+            }
+            if parted:
+                record.update(parts=[asdict(item) for item in messages], spans=spans)
+            await self._store.update(task["id"], sent=record)
             await self._checkpoint(task)
+        sent = messages[0]
         await self.step(task, TaskStep.FINISHING)
         compressed = media.kind == MediaKind.PHOTO and not as_file
         values = dict(
             folder_path=folder,
             name=name,
-            size=prepared["plain_size"] if header else sent.size,
+            size=(
+                prepared["plain_size"]
+                if header
+                else sum(item.size for item in messages)
+            ),
             mime=(sent.mime or "image/jpeg") if compressed else media.mime,
             kind=media.kind,
             sent_as="file" if as_file else "media",
@@ -502,25 +574,37 @@ class UploadPipeline:
                 else None
             ),
         )
+        parts = [
+            FilePartDB(
+                file_id=file_id,
+                index=index,
+                tg_message_id=item.message_id,
+                offset=offset,
+                size=size,
+            )
+            for index, (item, (offset, size)) in enumerate(zip(messages, spans))
+            if parted
+        ]
+        replaced = existing and existing.id == file_id
         async with self._runtime.session_factory() as session:
             await FolderRepository(session).ensure(storage_id, folder)
-            if existing and existing.id == file_id:
-                await FileRepository(session).update(file_id, values)
+            files = FileRepository(session)
+            if replaced:
+                await files.update(file_id, values)
             else:
-                await FileRepository(session).create(
-                    FileDB(id=file_id, storage_id=storage_id, **values)
-                )
+                await files.create(FileDB(id=file_id, storage_id=storage_id, **values))
+            if parts or replaced:
+                await files.set_parts(file_id, parts)
             await session.commit()
         await self._store.update(
             task["id"], committed=True, prepared={**prepared, "thumbnail": None}
         )
-        if (
-            existing
-            and existing.id == file_id
-            and existing.tg_message_id != sent.message_id
-        ):
-            await telegram.delete(chat_id, [existing.tg_message_id])
-        await self.finish(task, file_id, prepared["warnings"])
+        if replaced:
+            sent_now = {item.message_id for item in messages}
+            stale = [message for message in old_messages if message not in sent_now]
+            if stale:
+                await telegram.delete(chat_id, stale)
+        await self.finish(task, file_id, warnings)
 
     async def _archive(self, task: dict) -> None:
         params = task["params"]
@@ -534,6 +618,7 @@ class UploadPipeline:
             storage = await StorageRepository(session).get_by_id(
                 UUID(params["storage_id"])
             )
+            parts = await FileRepository(session).get_parts(list(found))
         files = sorted(
             (file for file, _ in found.values()),
             key=lambda file: (file.folder_path, file.name),
@@ -549,6 +634,7 @@ class UploadPipeline:
                 await self._runtime.telegram(),
                 storage.tg_chat_id,
                 files,
+                parts,
                 params["folder"],
                 params["format"],
                 Path(params["file"]),
@@ -676,9 +762,7 @@ class UploadPipeline:
             recorded = current.get("sent")
             if recorded and not current.get("committed"):
                 telegram = await self._runtime.telegram()
-                await telegram.delete(
-                    recorded["chat_id"], [recorded["message"]["message_id"]]
-                )
+                await telegram.delete(recorded["chat_id"], sent_ids(recorded))
                 await self._store.update(task["id"], sent=None)
             if current.get("cancel") or isinstance(error, TaskCancelledError):
                 logger.info("Task {} cancelled", task["id"])

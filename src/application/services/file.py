@@ -1,5 +1,7 @@
-from collections.abc import AsyncIterator
+import asyncio
+from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import UTC, datetime, time, timedelta
+from typing import NamedTuple
 from uuid import UUID
 
 from loguru import logger
@@ -37,7 +39,7 @@ from src.application.services.access import (
 from src.application.services.storage import StorageService
 from src.infrastructure.background import AppRuntime, enqueue
 from src.infrastructure.cache import TaskStore
-from src.infrastructure.database.models import FileDB
+from src.infrastructure.database.models import FileDB, FilePartDB
 from src.infrastructure.database.repositories import (
     FileRepository,
     FolderRepository,
@@ -50,6 +52,7 @@ from src.infrastructure.integrations import (
     TelegramMessageGoneError,
 )
 from src.infrastructure.security import cipher_size, cipher_span, decrypt, unseal
+from src.utilities.errors import TCloudError
 from src.utilities.parsers import join_path, split_file, split_folder
 
 BACKFILL_TASK = "previews.backfill"
@@ -66,14 +69,69 @@ def file_tag(file: FileDB) -> str:
     return f'"{file.tg_message_id}"'
 
 
+class Piece(NamedTuple):
+    message_id: int
+    offset: int
+    size: int
+    media: object
+
+
+Reader = Callable[[Piece, int, int], AsyncIterator[bytes]]
+
+
+def layout(file: FileDB, parts: list[FilePartDB]) -> list[tuple[int, int, int]]:
+    return [(part.tg_message_id, part.offset, part.size) for part in parts] or [
+        (file.tg_message_id, 0, stored_size(file))
+    ]
+
+
+async def open_pieces(
+    load: Callable[[int], Awaitable[tuple[object, int]]],
+    file: FileDB,
+    parts: list[FilePartDB],
+) -> list[Piece]:
+    spans = layout(file, parts)
+    found = await asyncio.gather(*(load(message_id) for message_id, _, _ in spans))
+    for (message_id, _, size), (_, actual) in zip(spans, found):
+        if actual != size:
+            logger.warning(
+                "File {} changed in Telegram: message {} has {} bytes, {} recorded",
+                file.id,
+                message_id,
+                actual,
+                size,
+            )
+            raise FileChangedError(
+                "the file in Telegram was replaced, its size no longer matches"
+            )
+    return [Piece(*span, media) for span, (media, _) in zip(spans, found)]
+
+
+def telegram_reader(telegram: TelegramClient) -> Reader:
+    return lambda piece, offset, length: telegram.iter_media(
+        piece.media, offset, length
+    )
+
+
+async def stored_body(
+    read: Reader, pieces: list[Piece], offset: int, length: int
+) -> AsyncIterator[bytes]:
+    for piece in pieces:
+        start = max(offset, piece.offset)
+        stop = min(offset + length, piece.offset + piece.size)
+        if start < stop:
+            async for chunk in read(piece, start - piece.offset, stop - start):
+                yield chunk
+
+
 def file_body(
-    telegram: TelegramClient, media: object, file: FileDB, start: int, end: int
+    read: Reader, pieces: list[Piece], file: FileDB, start: int, end: int
 ) -> AsyncIterator[bytes]:
     if not file.encryption_header:
-        return telegram.iter_media(media, start, end - start + 1)
+        return stored_body(read, pieces, start, end - start + 1)
     offset, length = cipher_span(file.size, start, end)
     return decrypt(
-        telegram.iter_media(media, offset, length),
+        stored_body(read, pieces, offset, length),
         file.encryption_header,
         file.size,
         start,
@@ -259,16 +317,18 @@ class FileService:
 
     async def delete(self, actor: Actor, file_id: UUID) -> None:
         file, chat_id = await self.get_db(actor, file_id, Permission.DELETE)
+        parts = (await self._repo.get_parts([file.id])).get(file.id, [])
+        messages = [message_id for message_id, _, _ in layout(file, parts)]
         async with self._runtime.store.active(file.storage_id, "write"):
-            self._runtime.media.forget(chat_id, [file.tg_message_id])
-            await self._runtime.telegram.delete(chat_id, [file.tg_message_id])
+            self._runtime.media.forget(chat_id, messages)
+            await self._runtime.telegram.delete(chat_id, messages)
         await self._repo.delete_by_ids([file_id])
         await self._session.commit()
         logger.info("File {} deleted", file_id)
 
     async def open_download(
         self, actor: Actor, file_id: UUID, if_none_match: str | None = None
-    ) -> tuple[FileDB, int, object | None]:
+    ) -> tuple[FileDB, int, list[Piece] | None]:
         file, chat_id = await self.get_db(actor, file_id, Permission.READ)
         if if_none_match == file_tag(file):
             return file, chat_id, None
@@ -312,14 +372,14 @@ class FileService:
             return tag, None
         data = await self._runtime.store.thumb(file.id, file.tg_message_id)
         if data is None:
-            media = await self._media(file, chat_id)
+            media = (await self._media(file, chat_id))[0].media
             try:
                 data = await self._runtime.download.thumbnail(media)
             except TelegramFileReferenceError:
                 logger.info("File {} thumbnail reference expired, re-reading", file.id)
                 self._runtime.media.forget(chat_id, [file.tg_message_id])
                 data = await self._runtime.download.thumbnail(
-                    await self._media(file, chat_id)
+                    (await self._media(file, chat_id))[0].media
                 )
             data = data or b""
             await self._runtime.store.keep_thumb(file.id, file.tg_message_id, data)
@@ -327,29 +387,22 @@ class FileService:
             raise ThumbnailNotFoundError("Telegram has no thumbnail for this file")
         return tag, data
 
-    async def _media(self, file: FileDB, chat_id: int) -> object:
+    async def _media(self, file: FileDB, chat_id: int) -> list[Piece]:
         if not self._runtime.download.authorized:
             raise SessionNotAuthorizedError(
                 "the download session is not logged in, log in with /api/telegram/download"
             )
+        parts = (await self._repo.get_parts([file.id])).get(file.id, [])
         try:
-            media, size = await self._lookup(chat_id, file.tg_message_id)
+            return await open_pieces(
+                lambda message_id: self._lookup(chat_id, message_id), file, parts
+            )
         except TelegramMessageGoneError:
             await self._repo.delete_by_ids([file.id])
             await self._session.commit()
             logger.info("File {} is gone from Telegram, record removed", file.id)
+            await self._drop_parts(chat_id, [part.tg_message_id for part in parts])
             raise
-        if size != stored_size(file):
-            logger.warning(
-                "File {} changed in Telegram: {} bytes recorded, {} now",
-                file.id,
-                stored_size(file),
-                size,
-            )
-            raise FileChangedError(
-                "the file in Telegram was replaced, its size no longer matches"
-            )
-        return media
 
     async def _lookup(self, chat_id: int, message_id: int) -> tuple[object, int]:
         return await self._runtime.media.load(
@@ -357,27 +410,26 @@ class FileService:
         )
 
     def body(
-        self, file: FileDB, chat_id: int, media: object, start: int, end: int
+        self, file: FileDB, chat_id: int, pieces: list[Piece], start: int, end: int
     ) -> AsyncIterator[bytes]:
-        return self._retried(
-            file_body(self._runtime.download, media, file, start, end),
+        return file_body(
+            lambda piece, offset, length: self._retried(
+                piece, file, chat_id, offset, length
+            ),
+            pieces,
             file,
-            chat_id,
             start,
             end,
         )
 
     async def _retried(
-        self,
-        body: AsyncIterator[bytes],
-        file: FileDB,
-        chat_id: int,
-        start: int,
-        end: int,
+        self, piece: Piece, file: FileDB, chat_id: int, offset: int, length: int
     ) -> AsyncIterator[bytes]:
         sent = False
         try:
-            async for chunk in body:
+            async for chunk in self._runtime.download.iter_media(
+                piece.media, offset, length
+            ):
                 sent = True
                 yield chunk
             return
@@ -385,17 +437,33 @@ class FileService:
             if sent:
                 raise
         logger.info("File {} reference expired, re-reading", file.id)
-        self._runtime.media.forget(chat_id, [file.tg_message_id])
-        media, _ = await self._lookup(chat_id, file.tg_message_id)
-        async for chunk in file_body(self._runtime.download, media, file, start, end):
+        self._runtime.media.forget(chat_id, [piece.message_id])
+        media, _ = await self._lookup(chat_id, piece.message_id)
+        async for chunk in self._runtime.download.iter_media(media, offset, length):
             yield chunk
+
+    async def _drop_parts(self, chat_id: int, message_ids: list[int]) -> None:
+        if not message_ids:
+            return
+        self._runtime.media.forget(chat_id, message_ids)
+        try:
+            await self._runtime.telegram.delete(chat_id, message_ids)
+        except TCloudError as error:
+            logger.warning(
+                "Parts {} left in Telegram chat {}: {}",
+                message_ids,
+                chat_id,
+                error.message,
+            )
 
     async def forget_messages(self, chat_id: int, message_ids: list[int]) -> None:
         storage = await self._storages.get_by_chat_id(chat_id)
         if not storage:
             return
+        parts = await self._repo.part_messages(storage.id, message_ids)
         removed = await self._repo.delete_by_messages(storage.id, message_ids)
         await self._session.commit()
+        await self._drop_parts(chat_id, sorted(set(parts) - set(message_ids)))
         if removed:
             logger.info(
                 "{} files deleted in Telegram, records removed from storage {}",

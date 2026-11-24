@@ -19,6 +19,7 @@ DEFAULTS = {
         "allow_unscannable": False,
         "webhook_url": None,
         "previews": True,
+        "max_file_size": 0,
     },
     "archives": {"format": "zip", "priority": "normal"},
     "interface": {
@@ -188,6 +189,7 @@ async def test_language_back_to_browser(client):
         {"interface": {"start_page": "files"}},
         {"interface": {"tasks_filter": "failed"}},
         {"uploads": {"webhook_url": "x" * 2049}},
+        {"uploads": {"max_file_size": -1}},
     ],
 )
 async def test_validation_errors(client, body):

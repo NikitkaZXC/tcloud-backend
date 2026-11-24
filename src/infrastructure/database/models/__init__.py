@@ -1,5 +1,6 @@
 from .api_key import ApiKeyDB
 from .file import FileDB
+from .file_part import FilePartDB
 from .folder import FolderDB
 from .grant import FolderGrantDB
 from .refresh_token import RefreshTokenDB
@@ -9,6 +10,7 @@ from .user import UserDB
 __all__ = [
     "ApiKeyDB",
     "FileDB",
+    "FilePartDB",
     "FolderDB",
     "FolderGrantDB",
     "RefreshTokenDB",

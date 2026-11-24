@@ -9,7 +9,6 @@ import pytest
 from src.config import settings
 from src.infrastructure import limits
 from src.infrastructure.media import analyze as probe_module
-from src.infrastructure.security import plain_limit
 from tests.api.conftest import Remote, listing, path, start_upload, upload, wait_task
 from tests.factories import (
     EXE,
@@ -278,23 +277,25 @@ def declared(size: int) -> dict:
     return {"headers": {"Content-Length": str(size)}}
 
 
-async def test_size_over_limit(client, telegram, storage, redis):
+async def test_size_over_limit(client, storage):
     target = path(storage, "a.mp4")
     plain = {"encrypt": "false"}
     response = await post_file(client, target, **plain, **declared(limits.FILE_MAX + 1))
-    assert (
-        response.status_code == 413
-        and response.json()["error"]["limit"] == limits.FILE_MAX
-    )
-    encrypted = await post_file(client, target, **declared(limits.FILE_MAX))
-    assert encrypted.status_code == 413
-    assert encrypted.json()["error"]["limit"] == plain_limit(limits.FILE_MAX)
-    telegram.premium = True
-    await redis.delete("tcloud:account:premium")
-    response = await post_file(client, target, **plain, **declared(limits.FILE_MAX + 1))
     assert response.json()["error"]["code"] == "size_mismatch"
-    big = declared(limits.FILE_MAX_PREMIUM + 1)
-    assert (await post_file(client, target, **plain, **big)).status_code == 413
+    saved = await client.patch(
+        "/account/settings", json={"uploads": {"max_file_size": 1000}}
+    )
+    assert saved.status_code == 200, saved.text
+    for options in (plain, {}):
+        response = await post_file(client, target, **options, **declared(1001))
+        assert response.status_code == 413
+        assert response.json()["error"] == {
+            "code": "too_large",
+            "message": "file is 1001 bytes, the server limit is 1000",
+            "limit": 1000,
+        }
+    response = await post_file(client, target, **plain, **declared(1000))
+    assert response.json()["error"]["code"] == "size_mismatch"
 
 
 async def test_body_bigger_than_declared(client, storage):

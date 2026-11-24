@@ -222,7 +222,17 @@ class FakeTelegram:
         return self.chats[chat_id]["photo"]
 
     async def send(
-        self, chat_id, path, *, name, caption, media, as_file, thumb, progress
+        self,
+        chat_id,
+        path,
+        *,
+        name,
+        caption,
+        media,
+        as_file,
+        thumb,
+        progress,
+        span=None,
     ) -> SentFile:
         if self.flood:
             raise TelegramFloodWaitError(self.flood)
@@ -239,6 +249,8 @@ class FakeTelegram:
         finally:
             self.sending -= 1
         data = Path(path).read_bytes()
+        if span:
+            data = data[span[0] : span[0] + span[1]]
         for part in range(self.parts + 1):
             progress(len(data) * part // self.parts, len(data))
             await asyncio.sleep(self.part_delay)

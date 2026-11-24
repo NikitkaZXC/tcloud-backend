@@ -27,8 +27,7 @@ from src.application.schemas import (
     UploadServiceCreate,
 )
 from src.application.services.access import require
-from src.application.services.account import AccountService
-from src.application.services.storage import StorageService
+from src.application.services.storage import StorageService, root_settings
 from src.application.services.task import TaskService
 from src.application.services.temp import remove_task_files, temp_path, write_body
 from src.application.services.webhook import send_hook
@@ -47,9 +46,11 @@ from src.infrastructure.enums import (
 )
 from src.infrastructure.integrations import session_exists
 from src.infrastructure.integrations.web import check_scheme, check_webhook
-from src.infrastructure.security import check_available, plain_limit
+from src.infrastructure.security import check_available
 from src.utilities.errors import TCloudError
 from src.utilities.parsers import check_segment, join_path, split_file
+
+NO_LIMIT = 2**63 - 1
 
 
 async def start_task(
@@ -78,14 +79,12 @@ class UploadService:
         self,
         session: AsyncSession,
         runtime: AppRuntime,
-        account_service: AccountService,
         storage_service: StorageService,
         task_service: TaskService,
     ) -> None:
         self._session = session
         self._runtime = runtime
         self._store = runtime.store
-        self._account = account_service
         self._storages = storage_service
         self._tasks = task_service
         self._files = FileRepository(session)
@@ -142,15 +141,13 @@ class UploadService:
                     "only files sent with send_as=file can be encrypted"
                 )
             check_available()
-        limit = await self._account.file_limit()
-        if encrypt:
-            limit = plain_limit(limit)
+        limit = (await root_settings(self._session)).uploads.max_file_size or NO_LIMIT
         if data.size is not None and data.size > limit:
             raise FileTooLargeError(
-                f"file is {data.size} bytes, account limit is {limit}", limit=limit
+                f"file is {data.size} bytes, the server limit is {limit}", limit=limit
             )
         if data.size is not None:
-            self._runtime.disk.check(data.size)
+            self._runtime.disk.check(data.size * 2 if encrypt else data.size)
         await self._check_active()
         await self._storages.get_db(storage_id)
         existing = await self._files.get_by_path(storage_id, folder, name)
