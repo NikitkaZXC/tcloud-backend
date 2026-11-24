@@ -40,7 +40,7 @@ from src.application.services.access import (
 from src.application.services.storage import StorageService
 from src.application.services.task import TaskService
 from src.application.services.temp import temp_path
-from src.application.services.upload import hold_quota, start_task, task_priority
+from src.application.services.upload import check_quota, start_task, task_priority
 from src.config import settings
 from src.infrastructure.background import AppRuntime
 from src.infrastructure.database.models import FileDB, FolderDB
@@ -412,10 +412,13 @@ class FolderService:
                     "your previous archive is still being built, wait or cancel it"
                 )
             needed = sum(sizes) + max(sizes, default=0)
-            await hold_quota(store, actor, task_id, needed)
+            await check_quota(store, actor, needed, False)
             await self._runtime.disk.hold(task_id, needed)
             await store.create(task)
             await store.activate(task_id)
+            await store.use_disk(
+                task_id, actor.user_id, needed, settings.upload.LOCK_TTL
+            )
         await start_task(self._runtime, task, UploadQueue.ARCHIVE, 0)
         logger.info(
             "Archive of {} files from {} as {} queued",
