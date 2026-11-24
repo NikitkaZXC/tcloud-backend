@@ -496,3 +496,26 @@ async def test_first_request_after_postgres_restart_succeeds(client, engine):
         )
     assert (await client.get("/account")).status_code == 200
     assert (await client.get("/storages")).status_code == 200
+
+
+@pytest.mark.parametrize(
+    "change,keeps",
+    [
+        ({"password": "new-password-1"}, False),
+        ({"role": "admin"}, False),
+        ({"blocked": False}, True),
+    ],
+)
+async def test_password_or_role_change_revokes_api_keys(
+    client, make_user, anonymous, change, keeps
+):
+    user = await make_user("keyed")
+    created = await client.post(f"/users/{user.user_id}/api-keys", json={"name": "x"})
+    key = created.json()["key"]
+    assert (
+        await client.patch(f"/users/{user.user_id}", json=change)
+    ).status_code == 200
+    me = await anonymous.get("/users/me", headers={"X-API-Key": key})
+    assert (me.status_code == 200) is keeps
+    listed = (await client.get(f"/users/{user.user_id}/api-keys")).json()
+    assert len(listed) == (1 if keeps else 0)

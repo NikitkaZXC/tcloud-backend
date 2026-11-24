@@ -111,17 +111,20 @@ class UserService:
             raise ForbiddenError("there is only one root, set by ROOT_LOGIN")
         if data.role == UserRole.ADMIN:
             require_root(actor)
-        revoke = False
+        revoke = keys = False
         if data.role is not None and data.role != user.role:
-            user.role, revoke = data.role, True
+            user.role, revoke, keys = data.role, True, True
         if data.blocked is not None:
             user.blocked = data.blocked
             revoke = revoke or data.blocked
         if data.password is not None:
             user.password_hash = await hash_password(data.password)
-            user.failed_logins, user.locked_until, revoke = 0, None, True
+            user.failed_logins, user.locked_until = 0, None
+            revoke = keys = True
         if revoke:
             await self._auth.revoke_all(user.id)
+        if keys:
+            await self._auth.revoke_keys(user.id)
         await self._session.commit()
         logger.info("User {} updated by {}", user.id, actor.user_id)
         return UserServiceRead.from_db(await self.get_db(user.id))

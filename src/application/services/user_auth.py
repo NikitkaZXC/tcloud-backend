@@ -88,6 +88,12 @@ class UserAuthService:
         await self._session.flush()
         return len(tokens)
 
+    async def revoke_keys(self, user_id: UUID) -> int:
+        keys = await self._keys.get_by_user(user_id)
+        for key in keys:
+            await self._keys.delete(key)
+        return len(keys)
+
     async def signin(self, login: str, password: str, client: ClientInfo) -> TokenPair:
         user = await self._users.get_by_login(login)
         if not user:
