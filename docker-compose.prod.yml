@@ -89,13 +89,18 @@ services:
 
   flower:
     <<: *app
+    env_file: []
+    volumes: []
     environment:
-      <<: *app-env
       RUN_MIGRATIONS: "0"
+      RABBITMQ_USER: ${RABBITMQ_USER:-tcloud}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?set RABBITMQ_PASSWORD in .env}
+      FLOWER_USER: ${FLOWER_USER:-tcloud}
+      FLOWER_PASSWORD: ${FLOWER_PASSWORD:?set FLOWER_PASSWORD in .env}
     command:
       - sh
       - -c
-      - exec celery --app=src.infrastructure.background.celery.app flower --port=5555 --basic-auth="$${FLOWER_USER:-tcloud}:$${FLOWER_PASSWORD:?set FLOWER_PASSWORD in .env}"
+      - exec celery --broker="amqp://$${RABBITMQ_USER}:$${RABBITMQ_PASSWORD}@rabbitmq:5672//" flower --port=5555 --basic-auth="$${FLOWER_USER}:$${FLOWER_PASSWORD}"
     ports:
       - "127.0.0.1:5555:5555"
     depends_on:

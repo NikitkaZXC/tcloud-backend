@@ -31,6 +31,11 @@ volume удалён или сессию завершили в Telegram. Без �
   репликами (`docker compose up --scale worker-prepare=2`), потоков на реплику — `UPLOAD_DOWNLOAD_CONCURRENCY` и
   `UPLOAD_PREPARE_CONCURRENCY`.
 - Flower — `127.0.0.1:5555` с basic auth (`FLOWER_USER` / `FLOWER_PASSWORD`); наружу — только через reverse proxy с TLS.
+  Flower не получает `.env` и volumes: в compose ему переданы только `RABBITMQ_USER`, `RABBITMQ_PASSWORD`,
+  `FLOWER_USER`, `FLOWER_PASSWORD`, и он запускается как `celery --broker=amqp://… flower` без `--app`: приложение
+  tcloud (и его настройки с `APP_*`, `POSTGRES_*`, `TELEGRAM_*`) не импортируется. Воркеры, задачи и `inspect` видны
+  по событиям и pidbox; имена задач приходят в событиях. Пароль RabbitMQ должен быть URL-безопасным (`make env` такой и
+  генерирует), vhost — `/`.
 - `GET /api/health` с входом (кука или `X-API-Key`) показывает полный отчёт: БД, брокер, живые воркеры по очередям, авторизацию сессий
   (`telegram`, `telegram_upload`, `telegram_download`), ClamAV, Redis, общий `ok` и `details` (время каждой проверки `latency_ms`, возраст heartbeat воркеров `last_seen_s`, background-tasks.md); ответ всегда `200`. Без входа — только
   `{"status": "ok"}` с `200` или `{"status": "degraded"}` с `503` (то же `ok`, без подробностей) — подходит для внешнего
