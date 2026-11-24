@@ -18,7 +18,7 @@ make check          # pip-audit + проверка миграций
 uv run alembic revision --autogenerate -m "msg"
 ```
 
-CI (`.github/workflows/ci.yml`, на push и pull request): `lint` (black/isort `--check`), `test` (весь `pytest` с Postgres, Redis, RabbitMQ и ffmpeg), `audit` (pip-audit). Dependabot (`.github/dependabot.yml`) раз в неделю обновляет uv, Docker, docker-compose и GitHub Actions; minor/patch сгруппированы.
+CI (`.github/workflows/ci.yml`, на push в `main` и на pull request; `concurrency` отменяет прошлый прогон той же ветки): `lint` (black/isort `--check`), `test` (весь `pytest` с Postgres, Redis, RabbitMQ и ffmpeg), `audit` (pip-audit). Dependabot (`.github/dependabot.yml`) раз в месяц обновляет uv, Docker, docker-compose и GitHub Actions: все обновления экосистемы (major, minor, patch) в одной группе, то есть один PR на экосистему, не больше 2 открытых.
 
 Локально без ffmpeg тесты, которым он нужен, пропускаются — полный прогон `make test-docker`.
 

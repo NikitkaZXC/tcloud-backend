@@ -3,28 +3,36 @@ updates:
   - package-ecosystem: uv
     directory: /
     schedule:
-      interval: weekly
+      interval: monthly
+    open-pull-requests-limit: 2
     groups:
-      uv-minor-patch:
-        update-types: [minor, patch]
+      uv:
+        patterns: ["*"]
+        update-types: [major, minor, patch]
   - package-ecosystem: docker
     directory: /
     schedule:
-      interval: weekly
+      interval: monthly
+    open-pull-requests-limit: 2
     groups:
-      docker-minor-patch:
-        update-types: [minor, patch]
+      docker:
+        patterns: ["*"]
+        update-types: [major, minor, patch]
   - package-ecosystem: docker-compose
     directory: /
     schedule:
-      interval: weekly
+      interval: monthly
+    open-pull-requests-limit: 2
     groups:
-      docker-compose-minor-patch:
-        update-types: [minor, patch]
+      docker-compose:
+        patterns: ["*"]
+        update-types: [major, minor, patch]
   - package-ecosystem: github-actions
     directory: /
     schedule:
-      interval: weekly
+      interval: monthly
+    open-pull-requests-limit: 2
     groups:
-      github-actions-minor-patch:
-        update-types: [minor, patch]
+      github-actions:
+        patterns: ["*"]
+        update-types: [major, minor, patch]
