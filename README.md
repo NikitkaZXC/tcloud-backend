@@ -125,7 +125,7 @@ make load           # locust headless, отчёт в logs/load/; make load-down 
 
 ## Миграции
 
-Alembic, `src/infrastructure/database/migrations/` (ревизии `0001`–`0010`, список — [docs/database.md](docs/database.md)).
+Alembic, `src/infrastructure/database/migrations/` (список ревизий — [docs/database.md](docs/database.md)).
 В Docker их применяет `scripts/docker-entrypoint.sh` при старте `app` (у воркеров `RUN_MIGRATIONS=0`), локально —
 `uv run alembic upgrade head`. Новая ревизия: `uv run alembic revision --autogenerate -m "msg"`; существующие не правим.
 
