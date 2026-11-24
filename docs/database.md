@@ -13,6 +13,7 @@ erDiagram
     storages ||--o{ folder_grants : "storage_id, CASCADE"
     storages ||--o{ folders : "storage_id, CASCADE"
     storages ||--o{ files : "storage_id, CASCADE"
+    files ||--o{ file_parts : "file_id, CASCADE"
     folders ||..o{ files : "логически folder_path = path, без FK"
 
     users {
@@ -92,6 +93,13 @@ erDiagram
         timestamptz created_at
         timestamptz updated_at
     }
+    file_parts {
+        uuid file_id PK,FK
+        int index PK
+        bigint tg_message_id
+        bigint offset "в байтах сообщения Telegram"
+        bigint size
+    }
 ```
 
 `folder_grants.path` и `files.folder_path` — текст, а не ссылки на `folders`: грант может указывать на ещё не
@@ -106,6 +114,7 @@ erDiagram
 | `api_keys` | `user_id`, `name`, HMAC `key_hash`, `last_used_at` | `UNIQUE(key_hash)` — проверка `X-API-Key`; `user_id` — список ключей |
 | `folder_grants` | `user_id`, `storage_id`, `path` (папка без корня, `''` — всё хранилище), `recursive`, `can_read`, `can_upload`, `can_delete` | `UNIQUE(user_id, storage_id, path)` — один грант на папку и гранты пользователя на каждый запрос; `storage_id` — каскадное удаление с хранилищем |
 | `files` | путь (`folder_path` + `name`), размер, MIME, тип (`photo/video/audio/animation/document`), `sent_as`, размеры, длительность, `sha256`, `tg_message_id`, `encryption_header` (заголовок шифрования, `NULL` — файл открыт; security.md), `thumbnail` (наше превью зашифрованного файла, зашифрованное его ключом; `NULL` у открытых файлов, у типов без превью, при ошибке генерации и у зашифрованных файлов, загруженных до `0009`, пока их не дозаполнит `POST /api/files/previews/backfill`; колонка `deferred`, листинги её не читают; статистика хранилищ берёт `octet_length(thumbnail)` — для TOAST-значения это размер из указателя, без чтения TOAST, поэтому отдельная колонка размера не нужна) | `UNIQUE(storage_id, folder_path, name)` — один файл на путь; `(storage_id, folder_path text_pattern_ops)` — листинг, размеры папок и удаление поддерева; `UNIQUE(storage_id, tg_message_id)`; `sha256`; поиск (flows/folders-and-files.md, «Поиск»): GIN `pg_trgm` на `lower(name)` — подстрока имени, `name` — сортировка по имени (листинги), `name COLLATE tcloud_ru` / `name COLLATE tcloud_en` — сортировка поиска по имени на языке интерфейса, `kind`, `mime` (и группировка форматов), `size`, `updated_at` — фильтры и сортировки, `created_at` — окно карты активности, частичный `storage_id WHERE encryption_header IS NOT NULL` — фильтр `encrypted`; частичный `(kind, id) WHERE encryption_header IS NOT NULL AND thumbnail IS NULL` — дозаполнение превью; частичный `id WHERE thumbnail IS NOT NULL` — очистка всех превью пачками (`DELETE /api/files/previews`); keyset-индексы листинга папки (`0013`): `(storage_id, folder_path, name COLLATE tcloud_ru|en, id)`, `(storage_id, folder_path, тип COLLATE …, name COLLATE …, id)` (тип — `coalesce(nullif(lower(substring(name, '\.([^.]*)$')), ''), kind)`), `(storage_id, folder_path, size|updated_at|created_at, id)` — `GET /api/folders` по каждой сортировке |
+| `file_parts` | части файла, который не влез в одно сообщение Telegram (flows/uploads.md, «Большие файлы частями»): `index` (0…), `tg_message_id`, `offset` и `size` — место части в хранимом потоке (шифротекст у зашифрованных, сам файл у открытых). Строки есть **только** у файлов из нескольких частей; часть 0 — тот же `files.tg_message_id`; `files.size`/`sha256` — всего открытого файла, статистика по-прежнему считает только `files` | `PRIMARY KEY(file_id, index)` — части файла по порядку (скачивание, архив, удаление); `ix_file_parts_message (tg_message_id)` — событие удаления сообщения в Telegram находит файл по любой части (с соединением по `files.storage_id`, id сообщений уникальны только внутри канала, поэтому уникального индекса по `tg_message_id` нет); `file_id` `ON DELETE CASCADE` |
 
 `_`, `%` и `\` экранируются перед `LIKE` (в путях `\` запрещён, им и экранируем; в строке поиска он может быть).
 Расширение `pg_trgm` создаёт миграция `0006` (`CREATE EXTENSION IF NOT EXISTS`; в `postgres:18` оно есть и доверенное,
@@ -138,6 +147,7 @@ erDiagram
 | `0012` | частичный индекс `ix_files_preview` для очистки превью |
 | `0013` | keyset-индексы `ix_files_list_*` для постраничного листинга папок |
 | `0014` | данные: MIME по расширению (`text/plain`, `text/markdown`, …) для документов, сохранённых как `application/octet-stream` |
+| `0015` | `file_parts` и `ix_file_parts_message` — файлы больше одного сообщения Telegram |
 
 Новая ревизия: `uv run alembic revision --autogenerate -m "..."`. Существующие файлы не правим.
 `tests/integration/test_migrations.py` проверяет, что модели совпадают с миграциями и что всё откатывается до `base` и обратно.

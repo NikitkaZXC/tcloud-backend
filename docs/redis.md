@@ -82,7 +82,7 @@ flowchart LR
 | `tcloud:channel_photo:{chat_id}` | string | JSON-строка base64 с байтами аватарки канала (`""` — фото нет) для `GET /api/storages/{id}/photo` | `TaskStore.cached`/`keep`; `StorageService.get_photo`; `forget_channel` удаляет вместе с `channel:{chat_id}` (наши изменения и события Telegram, flows/storages.md) | `REDIS_CACHE_TTL` (180 с) |
 | `tcloud:thumb:{file_id}:{message_id}` | string | base64 превью открытого файла из Telegram для `GET /api/files/{id}/thumb` (`""` — превью нет) | `TaskStore.thumb`, `keep_thumb` (Lua `KEEP_THUMB`); `FileService.get_thumbnail` | `REDIS_CACHE_TTL` (180 с) |
 | `tcloud:thumbs`, `tcloud:thumbs:size`, `tcloud:thumbs:bytes` | zset, hash, string | учёт потолка кеша превью: zset ключ `thumb:…` → время записи, hash ключ → длина base64, сумма длин. `KEEP_THUMB` атомарно выкидывает записи старше TTL (их ключи уже истекли), прежнюю копию того же ключа и самые старые, пока новая не влезет в `REDIS_THUMB_CACHE_MB` (64 МБ); запись больше потолка не кешируется, `0` выключает кеш | `TaskStore.keep_thumb` | — (чистятся при каждой записи) |
-| `tcloud:account:premium`, `tcloud:account:channels` | string | JSON: Premium API-аккаунта (`true`/`false`, от него лимит размера файла) и `channels_used` (flows/storages.md, «Сколько каналов ещё можно создать») | `TaskStore.cached`/`keep`; `AccountService.is_premium`, `channels_used`; `forget_account` — создание/удаление хранилища, `TELEGRAM_CHATS`, вход в API-сессию, события Telegram | `REDIS_CACHE_TTL` (180 с) |
+| `tcloud:account:premium`, `tcloud:account:channels` | string | JSON: Premium API-аккаунта (`true`/`false`, от него размер части большого файла) и `channels_used` (flows/storages.md, «Сколько каналов ещё можно создать») | `TaskStore.cached`/`keep`; `AccountService.is_premium`, `channels_used`, `UploadPipeline._spans` (worker-telegram, только для файлов > 2000 МиБ); `forget_account` — создание/удаление хранилища, `TELEGRAM_CHATS`, вход в API-сессию, события Telegram | `REDIS_CACHE_TTL` (180 с) |
 | `tcloud:job:{name}` | string | одна фоновая задача на имя (`job:previews` — дозаполнение превью), значение — id задачи Celery; `SET NX`, свой ключ продлевается (Lua `RENEW`), снимает только владелец (Lua `UNLOCK`) | `TaskStore.hold_job`, `release_job`; `PreviewBackfill` | 120 с (`JOB_TTL`), продлевается каждые 30 с |
 | `tcloud:revoked:{jti}` | string | отозванный access-токен (logout, refresh, смена пароля) | `TokenBlacklist.revoke/revoked` | `JWT_ACCESS_TOKEN_EXPIRATION_MINUTES` |
 | `tcloud:rate_limit:{scope}:ip:{ip}`, `tcloud:rate_limit:{scope}:user:{user_id}`, `tcloud:rate_limit:signin_login:{login}` | zset | скользящее окно: время Redis (мс) каждого принятого запроса, Lua `RATE_LIMIT_SCRIPT`; правила и scope — security.md, «Rate limiting»; Redis недоступен — запрос пропускается (fail open) | `RateLimitStore.hit` (из `api/dependencies/rate_limit.py`) | окно правила (`PEXPIRE` на каждом обращении) |
@@ -96,13 +96,13 @@ flowchart LR
 | `step` | шаг внутри стадии (`TaskStep`, flows/uploads.md «Шаги»); пишется при смене, `step_progress` считается при чтении |
 | `bytes_done`, `bytes_total`, `stage_started` | прогресс; `speed`/`eta` считаются при чтении (`TaskService.render`) |
 | `waiting` | `{"reason": "queue:{queue}" \| "disk_slots" \| "retry" \| "flood_wait", "until"?}`; код для API — часть `reason` до `:` |
-| `params` | параметры загрузки (`source`, `send_as`, `on_conflict`, `encrypt`, `callback_url`, `url`, `limit`, `file`) или архива (`storage_id`, `folder`, `format`, `file_ids`, `file`) |
+| `params` | параметры загрузки (`source`, `send_as`, `on_conflict`, `encrypt`, `callback_url`, `url`, `limit` — `uploads.max_file_size` или 2⁶³−1, `file`) или архива (`storage_id`, `folder`, `format`, `file_ids`, `file`) |
 | `archive` | `{name, format, files, path, size, expires_at}` у архивов |
 | `error`, `warnings`, `file_id` | итог |
 | `claimed` | очередь, в которой задачу захватил воркер (`CLAIM`) |
 | `cancel` | флаг отмены во время работы |
 | `prepared` | результат проверки: `send_path`, `thumb`, `media`, `sha256`, `as_file`, `warnings`, у шифрования `encryption_header`, `plain_size`, `thumbnail` (base64 превью до ~27 КБ; после записи в `files` вместе с `committed` заменяется на `null`) |
-| `sent`, `committed` | отправлено в Telegram / записано в `files` — защита от дублей при повторной доставке |
+| `sent`, `committed` | отправлено в Telegram (`{file_id, chat_id, message}`, у файла из частей ещё `parts` и `spans`) / записано в `files` — защита от дублей при повторной доставке |
 | `beat_at` | heartbeat задачи для `TaskSweeper` и `CLAIM` (повторная доставка ждёт, пока он свежий) |
 
 Чтение полей: `GET /api/tasks/{id}`, `GET /api/tasks?ids=`, пачки и вебхуки (`TaskService.get`/`get_many`) читают

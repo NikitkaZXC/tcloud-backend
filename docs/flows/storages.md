@@ -79,6 +79,8 @@ flowchart TD
 ## Сколько каналов ещё можно создать
 
 `GET /api/account` → `{telegram_connected, premium, file_limit, channels_used, channels_limit, previews_enabled}`.
+`file_limit` — размер одного сообщения Telegram (2000/4000 МиБ), то есть размер **части** большого файла; размер файла
+им больше не ограничен (flows/uploads.md, «Большие файлы частями»).
 `previews_enabled` — настройка root `uploads.previews` (flows/settings.md), всегда есть, не зависит от Telegram; фронтенд
 прячет по ней блок «Превью» дашборда. `channels_used` — сколько каналов и
 супергрупп, в которых состоит аккаунт API-сессии: все диалоги из всех папок, включая архив (`iter_dialogs` без `folder`),
@@ -88,8 +90,8 @@ flowchart TD
 `channels_limit_premium` и отвечает `CHANNELS_TOO_MUCH` при создании хранилища, поэтому число совпадает с тем, что
 видно в приложении Telegram (каналы + супергруппы во всех папках и архиве). `channels_limit` — 500 или 1000 с Premium.
 Подсчёт — один проход по диалогам, он медленный, поэтому `channels_used` и `premium` кешируются в Redis
-(`tcloud:account:channels`, `tcloud:account:premium`, TTL `REDIS_CACHE_TTL`, 180 с; тот же `premium` даёт лимит размера
-при загрузке). Создание и удаление хранилища (с каналом), подключение канала из `TELEGRAM_CHATS` и новый вход в
+(`tcloud:account:channels`, `tcloud:account:premium`, TTL `REDIS_CACHE_TTL`, 180 с; тот же `premium` даёт размер части
+большого файла в `worker-telegram`). Создание и удаление хранилища (с каналом), подключение канала из `TELEGRAM_CHATS` и новый вход в
 API-сессию удаляют оба ключа, так что изменения tcloud видны сразу; изменения в самом Telegram (вступление в каналы,
 выход, Premium) сбрасывают кеш через события Telegram (раздел «События Telegram»), а TTL — страховка, если событие
 потерялось. Telegram не ответил (флуд, сеть, сессия отозвана) → `channels_used: null`, остальные поля как обычно, ошибка
