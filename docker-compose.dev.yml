@@ -51,6 +51,7 @@ services:
   app: &app
     profiles: [app]
     build: .
+    restart: unless-stopped
     env_file: .env
     environment: &app-env
       POSTGRES_HOST: postgres
