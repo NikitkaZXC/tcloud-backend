@@ -30,7 +30,7 @@
 | Документ | О чём |
 |---|---|
 | [development.md](development.md) | установка, запуск локально, команды `make`, миграции, форматирование, зависимости |
-| [deployment.md](deployment.md) | Docker-образ, compose для прода (API, воркеры, RabbitMQ, Redis), первый вход |
+| [deployment.md](deployment.md) | Docker-образ, compose для прода (API, воркеры, RabbitMQ, Redis), первый вход, [бэкапы и восстановление](deployment.md#бэкапы-и-восстановление) |
 | [testing.md](testing.md) | unit, integration, API и нагрузочные тесты |
 
 ### Процессы
