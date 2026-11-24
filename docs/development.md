@@ -20,6 +20,17 @@ uv run alembic revision --autogenerate -m "msg"
 
 CI (`.github/workflows/ci.yml`, на push в `main` и на pull request; `concurrency` отменяет прошлый прогон той же ветки): `lint` (black/isort `--check`), `test` (весь `pytest` с Postgres, Redis, RabbitMQ и ffmpeg), `audit` (pip-audit). Dependabot (`.github/dependabot.yml`) раз в месяц обновляет uv, Docker, docker-compose и GitHub Actions: все обновления экосистемы (major, minor, patch) в одной группе, то есть один PR на экосистему, не больше 2 открытых.
 
+Токен CI только на чтение (`permissions: contents: read`). Actions закреплены по SHA коммита, а не по тегу (тег можно
+перевесить); комментариев в YAML нет, соответствие — здесь. Dependabot обновляет SHA сам; при ручной смене версии SHA
+берётся из `git ls-remote --tags https://github.com/{owner}/{repo} 'refs/tags/{tag}*'` (у аннотированного тега — строка
+`^{}`, это и есть коммит) или `gh api repos/{owner}/{repo}/git/ref/tags/{tag}` (для `object.type = tag` ещё
+`gh api repos/{owner}/{repo}/git/tags/{sha}`), и таблица ниже правится в том же коммите.
+
+| Action | Тег | SHA |
+|---|---|---|
+| `actions/checkout` | `v7` (= `v7.0.1`) | `3d3c42e5aac5ba805825da76410c181273ba90b1` |
+| `astral-sh/setup-uv` | `v10.4.0` | `1db35dd8eee11c5894872e0b383ae6c406cf738d` |
+
 Локально без ffmpeg тесты, которым он нужен, пропускаются — полный прогон `make test-docker`.
 
 ## Что запускать
