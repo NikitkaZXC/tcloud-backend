@@ -135,9 +135,9 @@ async def test_media_too_big_for_one_message_is_sent_as_file(
 async def test_single_part_file_has_no_part_rows(
     client, telegram, storage, small_parts, sessions
 ):
-    file = (
-        await stored(client, storage, "small.bin", PLAIN[:LIMIT], encrypt="false")
-    )["file"]
+    file = (await stored(client, storage, "small.bin", PLAIN[:LIMIT], encrypt="false"))[
+        "file"
+    ]
     assert len(telegram.messages()) == 1
     assert telegram.messages()[0]["name"] == "small.bin"
     assert await parts_of(sessions, file["uuid"]) == []
