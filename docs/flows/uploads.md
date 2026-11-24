@@ -27,7 +27,8 @@ background-tasks.md («Путь загрузки целиком», «Стату�
 | `PUT /api/uploads/sessions/{id}?offset=K`, тело — кусок, `Content-Length` обязателен | не последний кусок — `200` с тем же объектом сессии (новый `offset`); последний — `202` с задачей `queued` (та же форма, что у `POST /api/uploads`) |
 | `GET /api/uploads/sessions/{id}` | `200` объект сессии |
 | `HEAD /api/uploads/sessions/{id}` | `200`, заголовок `Upload-Offset` (открыт для CORS) |
-| `DELETE /api/uploads/sessions/{id}` | `204`: принятая часть удалена, путь и слот освобождены |
+| `DELETE /api/uploads/sessions/{id}` | `204`: принятая часть удалена, путь и слот освобождены (владелец или тот, кто им управляет) |
+| `GET /api/uploads/sessions?user_id=` | `200 [UploadSession]`: открытые сессии свои или (admin/root) пользователя, которым управляешь |
 
 - **Создание** делает все проверки `POST /api/uploads` сразу, по `size`: путь, права, вебхук, сессия Telegram,
   `uploads.max_file_size` (`413 too_large`), место на диске (×2 при шифровании), `UPLOAD_MAX_ACTIVE_TASKS`, конфликт
@@ -45,12 +46,26 @@ background-tasks.md («Путь загрузки целиком», «Стату�
 - **Параллельно** куски одной сессии не принимаются: на время приёма куска берётся Redis-блокировка
   `job:upload:{id}` (120 с, продлевается каждые 30 с, снимается в конце, в том числе при обрыве); второй `PUT` или
   `DELETE` в это время — `409 upload_session_busy` с `retry_after`. Смещение перечитывается уже под блокировкой.
-- **Срок**: сессия живёт `UPLOAD_SESSION_TTL` (24 ч) с последнего принятого куска (`expires_at`), каждый кусок
-  продлевает её, блокировку пути (`UPLOAD_LOCK_TTL`) и слот диска. Держите `UPLOAD_SESSION_TTL` ≤ `UPLOAD_LOCK_TTL`.
+- **Срок**: сессия без новых кусков живёт `UPLOAD_SESSION_IDLE_TTL` (1 ч) с последнего принятого куска (или с создания),
+  но не дольше `UPLOAD_SESSION_TTL` (24 ч) с создания (`started_at`): `expires_at = min(последний кусок + IDLE,
+  started_at + TTL)`. Каждый кусок продлевает её, блокировку пути (`UPLOAD_LOCK_TTL`) и слот диска. Брошенная сессия
+  так держит место и путь не больше часа. Держите `UPLOAD_SESSION_TTL` ≤ `UPLOAD_LOCK_TTL`.
   Просроченная сессия сразу отвечает `404`, а `TaskSweeper.clean_tmp` удаляет её файл, ключи и освобождает путь
   (background-tasks.md, «Сбои»).
-- **Доступ**: сессия видна только создателю; другим (и admin, и root) — `404 upload_session_not_found`, как и
-  несуществующей или истёкшей. Права на папку проверяются при создании.
+- **Доступ**: `GET`/`HEAD`/`PUT` сессии — только создателю; другим (и admin, и root) — `404 upload_session_not_found`,
+  как и несуществующей или истёкшей. `DELETE` и список `GET /api/uploads/sessions?user_id=` доступны ещё и тому, кто
+  управляет владельцем (как `UserService.get_manageable`): root — любым, admin — пользователями с ролью `user`; чужая
+  чужому — тоже `404`. Без `user_id` список — свои открытые сессии. Права на папку проверяются при создании.
+- **Блокировка и удаление пользователя** (`PATCH /api/users/{id}` с `blocked: true`, `DELETE /api/users/{id}`)
+  отменяют все его сессии: файл удаляется, путь, слот и резерв освобождаются (`temp.cancel_user_sessions`). Сессия,
+  кусок которой принимается в этот момент (`job:upload:{id}` занят), пропускается и истечёт через
+  `UPLOAD_SESSION_IDLE_TTL`.
+- **Квоты пользователя** (кроме root; `0` — без лимита): не больше `UPLOAD_USER_MAX_SESSIONS` (10) открытых сессий
+  (`429 too_many_upload_sessions` с `limit`) и не больше `UPLOAD_USER_DISK_QUOTA_MB` (51200 МиБ) временных файлов на
+  сервере (`507 temp_quota_exceeded` с `limit` и `used` в байтах). Занятое (`TaskStore.user_disk`) = полный размер
+  живых сессий (×2 при шифровании) + записи журнала `disk:reserved` задач пользователя (`user_tasks:{user}`).
+  Проверяется под `job:disk` вместе с местом на диске при создании сессии, при `POST /api/uploads` (размер тела) и
+  при загрузке по ссылке с `size` (и её повторе); ссылка без `size` при создании не считается.
 - **Лимиты**: `POST` и `PUT` считаются в `UPLOAD_USER` (300 / 60 с), остальные — общее `API_USER`. Пока сессия не
   завершена, задачи нет: она не входит в `UPLOAD_MAX_ACTIVE_TASKS` и не видна в `/api/tasks` — так же, как тело
   обычной загрузки во время приёма. Слот `UPLOAD_MAX_FILES_ON_DISK` сессия держит с создания до конца задачи или отмены.
@@ -65,13 +80,13 @@ sequenceDiagram
     participant A as API
     participant R as Redis
     C->>A: POST /uploads/sessions?size&path
-    A->>R: path NX, disk slot, upload_session:{id}
+    A->>R: path NX, disk slot, квоты user_disk (сессии, байты), upload_session:{id}
     A-->>C: 201 session_id, chunk_size, offset 0
     loop пока offset < size
         C->>A: PUT /uploads/sessions/{id}?offset=K (кусок)
         A->>R: job:upload:{id} NX
         A->>A: дописать tmp с K (ошибка/обрыв: обрезать до K)
-        A->>R: offset += длина, продлить срок
+        A->>R: offset += длина, срок = min(now + IDLE_TTL, started_at + SESSION_TTL)
         A-->>C: 200 {offset} / 409 offset_mismatch {offset}
     end
     A->>R: задача queued, очередь uploads.prepare
@@ -81,12 +96,14 @@ sequenceDiagram
 
 ### Для фронтенда
 
-- Новые ручки: `POST /api/uploads/sessions`, `PUT|GET|HEAD|DELETE /api/uploads/sessions/{session_id}`.
-- Объект сессии `UploadSession`: `{session_id: uuid, path: string, size: number, offset: number, chunk_size: number,
-  expires_at: string (ISO)}`. `PUT` и `POST` могут вернуть вместо него `Task` (`202` / `200`): есть поле `id` и нет
+- Новые ручки: `POST /api/uploads/sessions`, `GET /api/uploads/sessions?user_id=` (список, `UploadSession[]`),
+  `PUT|GET|HEAD|DELETE /api/uploads/sessions/{session_id}`.
+- Объект сессии `UploadSession`: `{session_id: uuid, user_id: uuid, path: string, size: number, offset: number,
+  chunk_size: number, expires_at: string (ISO)}`. `PUT` и `POST` могут вернуть вместо него `Task` (`202` / `200`): есть поле `id` и нет
   `session_id` — загрузка закончилась, дальше опрашивать `/api/tasks/{id}`.
 - Ошибки: `404 upload_session_not_found`, `409 offset_mismatch` (`offset`), `409 upload_session_busy` (`retry_after`),
-  `413 chunk_too_large` (`limit`); плюс прежние `411 length_required`, `400 size_mismatch`, `413 too_large`,
+  `413 chunk_too_large` (`limit`), `429 too_many_upload_sessions` (`limit`), `507 temp_quota_exceeded` (`limit`,
+  `used`; также у `POST /api/uploads` и ссылок с `size`); плюс прежние `411 length_required`, `400 size_mismatch`, `413 too_large`,
   `409 conflict`, `409 upload_in_progress`, `429 too_many_tasks`, `507 insufficient_storage`.
 - Заголовок `Upload-Offset` (ответ `HEAD`) открыт в `APP_EXPOSED_HEADERS`.
 - Отмена до конца — `DELETE`; после `202` — обычная отмена задачи.

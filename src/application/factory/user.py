@@ -23,9 +23,10 @@ def get_service_user_auth(
 
 def get_service_user(
     session: AsyncSession = Depends(get_session),
+    runtime: AppRuntime = Depends(get_runtime),
     auth_service: UserAuthService = Depends(get_service_user_auth),
 ) -> UserService:
-    return UserService(session=session, auth_service=auth_service)
+    return UserService(session=session, auth_service=auth_service, store=runtime.store)
 
 
 def get_service_grant(

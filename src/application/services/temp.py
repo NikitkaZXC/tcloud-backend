@@ -1,10 +1,13 @@
 import re
 from collections.abc import AsyncIterator, Callable
 from pathlib import Path
-from uuid import uuid4
+from uuid import UUID, uuid4
+
+from loguru import logger
 
 from src.application.exception import FileTooLargeError, SizeMismatchError
 from src.config import settings
+from src.infrastructure.cache import TaskStore
 from src.infrastructure.media import extension
 
 SUFFIX = re.compile(r"[a-z0-9]{1,16}")
@@ -77,3 +80,25 @@ def task_files(task: dict) -> list[Path]:
 def remove_task_files(task: dict) -> None:
     for item in task_files(task):
         item.unlink(missing_ok=True)
+
+
+async def drop_session(store: TaskStore, session: dict) -> None:
+    task = session["task"]
+    await store.drop_session(task["id"])
+    Path(task["params"]["file"]).unlink(missing_ok=True)
+    await store.release(task["id"], task["path"])
+
+
+async def cancel_user_sessions(store: TaskStore, user_id: UUID) -> int:
+    cancelled = 0
+    for session_id, _, session in await store.sessions():
+        if not session or session["task"]["user_id"] != str(user_id):
+            continue
+        async with store.holding(f"upload:{session_id}") as held:
+            session = await store.get_session(session_id)
+            if held and session:
+                await drop_session(store, session)
+                cancelled += 1
+    if cancelled:
+        logger.info("{} upload sessions of user {} cancelled", cancelled, user_id)
+    return cancelled

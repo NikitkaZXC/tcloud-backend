@@ -28,3 +28,6 @@ class UploadSettings(BaseSettings):
     ARCHIVE_MAX_SIZE_MB: int = 10240
     CHUNK_SIZE: int = 64 * 1024 * 1024
     SESSION_TTL: int = 24 * 3600
+    SESSION_IDLE_TTL: int = 3600
+    USER_MAX_SESSIONS: int = 10
+    USER_DISK_QUOTA_MB: int = 51200

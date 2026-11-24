@@ -91,7 +91,9 @@ curl -H "X-API-Key: $TCLOUD_KEY" --data-binary @photo.jpg \
 | `UPLOAD_TASK_TTL`, `UPLOAD_ARCHIVE_TTL` | 7 дней, 24 ч | жизнь задач и готовых архивов |
 | `UPLOAD_ARCHIVE_MAX_ITEMS` | `1000` | выбранных элементов в архиве |
 | `UPLOAD_ARCHIVE_MAX_FILES`, `UPLOAD_ARCHIVE_MAX_SIZE_MB` | `10000`, `10240` (0 — без лимита) | файлов и МиБ в одном архиве (`422 too_many_items`, `413 too_large`) |
-| `UPLOAD_CHUNK_SIZE`, `UPLOAD_SESSION_TTL` | 64 МиБ, 24 ч | кусок и срок сессии загрузки частями (≤ `client_max_body_size` прокси; TTL ≤ `UPLOAD_LOCK_TTL`) |
+| `UPLOAD_CHUNK_SIZE`, `UPLOAD_SESSION_TTL` | 64 МиБ, 24 ч | кусок и наибольший срок сессии загрузки частями (≤ `client_max_body_size` прокси; TTL ≤ `UPLOAD_LOCK_TTL`) |
+| `UPLOAD_SESSION_IDLE_TTL` | 1 ч | сессия без новых кусков истекает |
+| `UPLOAD_USER_MAX_SESSIONS`, `UPLOAD_USER_DISK_QUOTA_MB` | `10`, `51200` (0 — без лимита) | квоты пользователя (кроме root): открытые сессии и МиБ временных файлов (`429 too_many_upload_sessions`, `507 temp_quota_exceeded`) |
 | `LOG_LEVEL` | `INFO` | loguru |
 
 Полный список с остальными интервалами (`UPLOAD_HEARTBEAT_INTERVAL`, `UPLOAD_SWEEP_INTERVAL`, `UPLOAD_RETRIES`, …) —

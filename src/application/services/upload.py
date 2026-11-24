@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from uuid import UUID, uuid7
 
+from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.application.exception import (
@@ -20,7 +21,9 @@ from src.application.exception import (
     TaskNotFoundError,
     TaskNotQueuedError,
     TaskNotRetryableError,
+    TempQuotaExceededError,
     TooManyTasksError,
+    TooManyUploadSessionsError,
     UploadInProgressError,
     UploadSessionBusyError,
     UploadSessionNotFoundError,
@@ -39,6 +42,7 @@ from src.application.services.storage import StorageService, root_settings
 from src.application.services.task import TaskService
 from src.application.services.temp import (
     append_body,
+    drop_session,
     remove_task_files,
     temp_path,
     write_body,
@@ -46,7 +50,7 @@ from src.application.services.temp import (
 from src.application.services.webhook import send_hook
 from src.config import settings
 from src.infrastructure.background import AppRuntime, enqueue
-from src.infrastructure.database.repositories import FileRepository
+from src.infrastructure.database.repositories import FileRepository, UserRepository
 from src.infrastructure.database.session import session_factory
 from src.infrastructure.enums import (
     Permission,
@@ -109,6 +113,7 @@ class UploadService:
         self._storages = storage_service
         self._tasks = task_service
         self._files = FileRepository(session)
+        self._users = UserRepository(session)
 
     async def _taken(self, storage_id: UUID, folder: str, name: str) -> bool:
         if await self._files.get_by_path(storage_id, folder, name):
@@ -256,6 +261,25 @@ class UploadService:
                     window=rule.window,
                 )
 
+    async def _check_quota(self, actor: Actor, size: int, session: bool) -> None:
+        if actor.role == UserRole.ROOT:
+            return
+        sessions, held = await self._store.user_disk(actor.user_id)
+        limit = settings.upload.USER_MAX_SESSIONS
+        if session and limit and sessions >= limit:
+            raise TooManyUploadSessionsError(
+                f"you already have {sessions} open upload sessions, finish or abort one",
+                limit=limit,
+            )
+        quota = settings.upload.USER_DISK_QUOTA_MB * 1024 * 1024
+        if quota and held + size > quota:
+            raise TempQuotaExceededError(
+                f"your uploads in progress already take {held} bytes on the server, "
+                f"the limit is {quota}",
+                limit=quota,
+                used=held,
+            )
+
     async def _take_disk_slot(self, task: dict) -> None:
         if not await self._store.take_disk_slot(task["id"]):
             raise TooManyTasksError(
@@ -290,9 +314,9 @@ class UploadService:
         reservation = None
         try:
             async with self._store.disk_lock():
-                reservation = await self._runtime.disk.reserve(
-                    task["id"], data.size * 2 if encrypt else data.size
-                )
+                needed = data.size * 2 if encrypt else data.size
+                await self._check_quota(actor, needed, False)
+                reservation = await self._runtime.disk.reserve(task["id"], needed)
             await self._take_disk_slot(task)
             limit = min(data.size, task["params"]["limit"])
             received = await write_body(body, path, limit, reservation.update)
@@ -313,6 +337,7 @@ class UploadService:
         task = session["task"]
         return UploadSessionServiceRead(
             session_id=task["id"],
+            user_id=task["user_id"],
             path=task["path"],
             size=task["bytes_total"],
             offset=session["offset"],
@@ -320,11 +345,19 @@ class UploadService:
             expires_at=datetime.fromtimestamp(session["expires_at"], UTC),
         )
 
-    async def _save_session(self, task: dict, offset: int) -> dict:
+    async def _save_session(
+        self, task: dict, offset: int, started_at: float | None = None
+    ) -> dict:
+        now = time.time()
+        started_at = started_at or now
         session = {
             "task": task,
             "offset": offset,
-            "expires_at": time.time() + settings.upload.SESSION_TTL,
+            "started_at": started_at,
+            "expires_at": min(
+                now + settings.upload.SESSION_IDLE_TTL,
+                started_at + settings.upload.SESSION_TTL,
+            ),
         }
         await self._store.save_session(session)
         return session
@@ -339,9 +372,9 @@ class UploadService:
             await self._take_disk_slot(task)
             Path(task["params"]["file"]).touch(mode=0o600)
             async with self._store.disk_lock():
-                await self._runtime.disk.check(
-                    task["bytes_total"] * (2 if task["params"]["encrypt"] else 1)
-                )
+                needed = task["bytes_total"] * (2 if task["params"]["encrypt"] else 1)
+                await self._check_quota(actor, needed, True)
+                await self._runtime.disk.check(needed)
                 session = await self._save_session(task, 0)
         except BaseException:
             await self._drop_upload(task)
@@ -396,32 +429,77 @@ class UploadService:
             await self._runtime.disk.check(size, exclude=session_id)
             await append_body(body, Path(task["params"]["file"]), offset, size)
             if offset + size < task["bytes_total"]:
-                return self._session_read(await self._save_session(task, offset + size))
+                return self._session_read(
+                    await self._save_session(
+                        task, offset + size, session.get("started_at")
+                    )
+                )
             if task["params"]["encrypt"]:
                 await self._runtime.disk.park(session_id, task["bytes_total"])
             await self._store.drop_session(session_id)
         return await self._queue_device(actor, task)
 
+    async def _manages(self, actor: Actor, owner: UUID | str) -> bool:
+        if str(owner) == str(actor.user_id):
+            return True
+        if not actor.is_admin:
+            return False
+        user = await self._users.get_by_id(UUID(str(owner)))
+        return (
+            user is None
+            or user.role == UserRole.USER
+            or (user.role == UserRole.ADMIN and actor.role == UserRole.ROOT)
+        )
+
+    async def _managed_session(self, actor: Actor, session_id: UUID) -> dict:
+        session = await self._store.get_session(session_id)
+        if (
+            not session
+            or session["expires_at"] < time.time()
+            or not await self._manages(actor, session["task"]["user_id"])
+        ):
+            raise UploadSessionNotFoundError("upload session not found")
+        return session
+
+    async def list_sessions(
+        self, actor: Actor, user_id: UUID | None
+    ) -> list[UploadSessionServiceRead]:
+        owner = user_id or actor.user_id
+        if not await self._manages(actor, owner):
+            raise UploadSessionNotFoundError("upload sessions of this user not found")
+        now = time.time()
+        return [
+            self._session_read(session)
+            for _, until, session in await self._store.sessions()
+            if session and until > now and session["task"]["user_id"] == str(owner)
+        ]
+
     async def abort_session(self, actor: Actor, session_id: UUID) -> None:
-        await self._get_session(actor, session_id)
+        await self._managed_session(actor, session_id)
         async with self._store.holding(f"upload:{session_id}") as held:
             if not held:
                 raise UploadSessionBusyError(
                     "a chunk of this upload is still being received", retry_after=5
                 )
-            session = await self._get_session(actor, session_id)
-            await self._store.drop_session(session_id)
-            await self._drop_upload(session["task"])
+            session = await self._managed_session(actor, session_id)
+            await drop_session(self._store, session)
+        if session["task"]["user_id"] != str(actor.user_id):
+            logger.info(
+                "Upload session {} of user {} cancelled by {}",
+                session_id,
+                session["task"]["user_id"],
+                actor.user_id,
+            )
 
-    async def _hold_url(self, task: dict) -> None:
+    async def _hold_url(self, actor: Actor, task: dict) -> None:
         size = task["params"].get("size")
         if size is None:
             return
         try:
             async with self._store.disk_lock():
-                await self._runtime.disk.hold(
-                    task["id"], size * 2 if task["params"]["encrypt"] else size
-                )
+                needed = size * 2 if task["params"]["encrypt"] else size
+                await self._check_quota(actor, needed, False)
+                await self._runtime.disk.hold(task["id"], needed)
         except BaseException:
             await self._store.release(task["id"], task["path"])
             raise
@@ -431,7 +509,7 @@ class UploadService:
     ) -> TaskServiceRead:
         task, queued = await self._new_task(actor, data, batch_id)
         if queued:
-            await self._hold_url(task)
+            await self._hold_url(actor, task)
             await self._store.create(task)
             await start_task(self._runtime, task, UploadQueue.DOWNLOAD, 0)
         return await self._tasks.get(task["id"], actor)
@@ -489,7 +567,7 @@ class UploadService:
         await self._count_send(actor)
         if not await self._store.lock_path(task["path"], task_id):
             raise UploadInProgressError(f"{task['path']} is already being uploaded")
-        await self._hold_url(task)
+        await self._hold_url(actor, task)
         generation = (task.get("generation") or 0) + 1
         await self._store.update(
             task_id,

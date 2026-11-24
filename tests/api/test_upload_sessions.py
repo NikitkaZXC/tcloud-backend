@@ -2,8 +2,10 @@ import asyncio
 import hashlib
 import os
 import shutil
+import time
 import uuid
 from collections import namedtuple
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -601,3 +603,130 @@ async def test_url_size_caps_body_without_length(remote, tmp_path):
         await web.download(url, tmp_path / "b", 10**9, lambda *_: None, 101)
     await web.download(url, tmp_path / "c", 10**9, lambda *_: None, 100)
     assert (tmp_path / "c").read_bytes() == b"x" * 100
+
+
+async def granted(make_user, storage, login: str, role: str = "user"):
+    return await make_user(
+        login, role, {"path": path(storage, login), "can_upload": True}
+    )
+
+
+async def test_user_temp_quota(client, storage, make_user, monkeypatch):
+    monkeypatch.setattr(settings.upload, "USER_DISK_QUOTA_MB", 1)
+    user = await granted(make_user, storage, "quota")
+    half = 600 * 1024
+    plain = {"encrypt": "false"}
+    await open_session(user, path(storage, "quota/a.bin"), half, **plain)
+    response = await user.post(
+        "/uploads/sessions",
+        params={"path": path(storage, "quota/b.bin"), "size": half, **plain},
+    )
+    error = response.json()["error"]
+    assert response.status_code == 507 and error["code"] == "temp_quota_exceeded"
+    assert error["limit"] == 1024 * 1024 and error["used"] == half
+    response = await user.post(
+        "/uploads/sessions",
+        params={"path": path(storage, "quota/c.bin"), "size": 300 * 1024},
+    )
+    assert response.json()["error"]["code"] == "temp_quota_exceeded"
+    response = await user.post(
+        "/uploads",
+        params={"path": path(storage, "quota/d.bin"), **plain},
+        content=b"x" * half,
+    )
+    assert response.json()["error"]["code"] == "temp_quota_exceeded"
+    assert not await store().path_locked(path(storage, "quota/d.bin"))
+    response = await user.post(
+        "/uploads/from-url",
+        json={
+            "url": "https://example.com/a.bin",
+            "path": path(storage, "quota/e.bin"),
+            "size": half,
+        },
+    )
+    assert response.json()["error"]["code"] == "temp_quota_exceeded"
+    await open_session(client, path(storage, "root/a.bin"), 2 * 1024 * 1024)
+
+
+async def test_user_session_count(client, storage, make_user, monkeypatch):
+    monkeypatch.setattr(settings.upload, "USER_MAX_SESSIONS", 1)
+    user = await granted(make_user, storage, "counted")
+    first = await open_session(user, path(storage, "counted/a.bin"), 5)
+    response = await user.post(
+        "/uploads/sessions", params={"path": path(storage, "counted/b.bin"), "size": 5}
+    )
+    assert response.status_code == 429
+    assert response.json()["error"]["code"] == "too_many_upload_sessions"
+    assert response.json()["error"]["limit"] == 1
+    assert (
+        await user.delete(f"/uploads/sessions/{first['session_id']}")
+    ).status_code == 204
+    await open_session(user, path(storage, "counted/b.bin"), 5)
+    await open_session(client, path(storage, "r1.bin"), 5)
+    await open_session(client, path(storage, "r2.bin"), 5)
+
+
+async def test_session_expires_after_idle_timeout(client, storage, monkeypatch):
+    monkeypatch.setattr(settings.upload, "SESSION_IDLE_TTL", 60)
+    session = await open_session(client, path(storage, "a.bin"), CHUNK * 3)
+    left = datetime.fromisoformat(session["expires_at"]).timestamp() - time.time()
+    assert 50 < left <= 60
+    saved = await store().get_session(session["session_id"])
+    monkeypatch.setattr(settings.upload, "SESSION_TTL", 100)
+    await store().save_session({**saved, "started_at": time.time() - 90})
+    response = await put(client, session["session_id"], 0, b"x" * CHUNK)
+    left = (
+        datetime.fromisoformat(response.json()["expires_at"]).timestamp() - time.time()
+    )
+    assert 0 < left <= 10
+
+
+async def test_admin_lists_and_cancels_sessions_of_managed_users(
+    client, storage, make_user
+):
+    user = await granted(make_user, storage, "worker")
+    admin = await make_user("manager", "admin")
+    other_admin = await make_user("peer", "admin")
+    mine = await open_session(user, path(storage, "worker/a.bin"), CHUNK)
+    theirs = await open_session(admin, path(storage, "b.bin"), CHUNK)
+    listed = (await user.get("/uploads/sessions")).json()
+    assert [item["session_id"] for item in listed] == [mine["session_id"]]
+    assert listed[0]["user_id"] == user.user_id
+    assert (
+        await user.get("/uploads/sessions", params={"user_id": admin.user_id})
+    ).status_code == 404
+    seen = await admin.get("/uploads/sessions", params={"user_id": user.user_id})
+    assert [item["session_id"] for item in seen.json()] == [mine["session_id"]]
+    assert (
+        await user.delete(f"/uploads/sessions/{theirs['session_id']}")
+    ).status_code == 404
+    url = f"/uploads/sessions/{theirs['session_id']}"
+    assert (await other_admin.delete(url)).status_code == 404
+    assert (await other_admin.get(url)).status_code == 404
+    file = Path(
+        (await store().get_session(mine["session_id"]))["task"]["params"]["file"]
+    )
+    assert (
+        await admin.delete(f"/uploads/sessions/{mine['session_id']}")
+    ).status_code == 204
+    assert not file.exists()
+    assert not await store().path_locked(path(storage, "worker/a.bin"))
+    assert (await client.delete(url)).status_code == 204
+
+
+@pytest.mark.parametrize("action", ["block", "delete"])
+async def test_block_or_delete_cancels_sessions(client, storage, make_user, action):
+    user = await granted(make_user, storage, "leaver")
+    session = await open_session(user, path(storage, "leaver/a.bin"), CHUNK * 2)
+    await put(user, session["session_id"], 0, b"x" * CHUNK)
+    saved = await store().get_session(session["session_id"])
+    file = Path(saved["task"]["params"]["file"])
+    if action == "block":
+        response = await client.patch(f"/users/{user.user_id}", json={"blocked": True})
+        assert response.status_code == 200
+    else:
+        assert (await client.delete(f"/users/{user.user_id}")).status_code == 204
+    assert await store().get_session(session["session_id"]) is None
+    assert not file.exists()
+    assert not await store().path_locked(path(storage, "leaver/a.bin"))
+    assert (await store().user_disk(user.user_id)) == (0, 0)

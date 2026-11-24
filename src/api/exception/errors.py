@@ -14,6 +14,8 @@ STATUS_BY_CODE = {
     "too_large": status.HTTP_413_CONTENT_TOO_LARGE,
     "body_too_large": status.HTTP_413_CONTENT_TOO_LARGE,
     "insufficient_storage": status.HTTP_507_INSUFFICIENT_STORAGE,
+    "temp_quota_exceeded": status.HTTP_507_INSUFFICIENT_STORAGE,
+    "too_many_upload_sessions": status.HTTP_429_TOO_MANY_REQUESTS,
     "telegram_error": status.HTTP_502_BAD_GATEWAY,
     "telegram_unavailable": status.HTTP_503_SERVICE_UNAVAILABLE,
     "flood_wait": status.HTTP_429_TOO_MANY_REQUESTS,

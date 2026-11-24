@@ -404,6 +404,30 @@ class TaskStore:
             for session in map(json.loads, filter(None, values))
         )
 
+    async def user_disk(self, user_id: UUID | str) -> tuple[int, int]:
+        now, owner = time.time(), str(user_id)
+        sessions = [
+            session
+            for _, until, session in await self.sessions()
+            if session and until > now and session["task"]["user_id"] == owner
+        ]
+        held = sum(
+            session["task"]["bytes_total"]
+            * (2 if session["task"]["params"]["encrypt"] else 1)
+            for session in sessions
+        )
+        tasks = set(await self._redis.zrange(self._key("user_tasks", owner), 0, -1))
+        live = set(
+            await self._redis.zrangebyscore(
+                self._key("disk", "reserved", "exp"), now, "+inf"
+            )
+        )
+        mine = sorted(tasks & live)
+        if mine:
+            values = await self._redis.hmget(self._key("disk", "reserved"), mine)
+            held += sum(int(value) for value in values if value)
+        return len(sessions), held
+
     async def reserve_disk(self, owner: str, size: int, ttl: float) -> None:
         async with self._redis.pipeline(transaction=True) as pipe:
             pipe.hset(self._key("disk", "reserved"), owner, size)

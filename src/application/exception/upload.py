@@ -107,3 +107,15 @@ class SendQuotaExceededError(TCloudError):
     """Raised when a user queued too many Telegram sends per minute or per day."""
 
     code = "send_quota_exceeded"
+
+
+class TempQuotaExceededError(TCloudError):
+    """Raised when a user's temporary files would take more than the per-user quota."""
+
+    code = "temp_quota_exceeded"
+
+
+class TooManyUploadSessionsError(TCloudError):
+    """Raised when a user already has the maximum number of open upload sessions."""
+
+    code = "too_many_upload_sessions"

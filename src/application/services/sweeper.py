@@ -5,7 +5,7 @@ from pathlib import Path
 
 from loguru import logger
 
-from src.application.services.temp import remove_task_files, task_files
+from src.application.services.temp import drop_session, remove_task_files, task_files
 from src.config import settings
 from src.infrastructure.background import queue_sizes
 from src.infrastructure.cache import TaskStore
@@ -86,15 +86,14 @@ class TaskSweeper:
                 if not held or (session and session["expires_at"] > now):
                     used.update(task_files(session["task"]) if session else ())
                     continue
-                await self._store.drop_session(session_id)
-                if session:
-                    task = session["task"]
-                    Path(task["params"]["file"]).unlink(missing_ok=True)
-                    await self._store.release(task["id"], task["path"])
-                    logger.info(
-                        "Upload session {} expired: {}", session_id, task["path"]
-                    )
-                    removed += 1
+                if not session:
+                    await self._store.drop_session(session_id)
+                    continue
+                await drop_session(self._store, session)
+                logger.info(
+                    "Upload session {} expired: {}", session_id, session["task"]["path"]
+                )
+                removed += 1
         for item in settings.upload.TMP_DIR.iterdir():
             try:
                 if item not in used and item.stat().st_mtime < old:

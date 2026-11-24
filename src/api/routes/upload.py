@@ -77,6 +77,20 @@ async def create_upload_session(
     return result
 
 
+@router.get(
+    path="/uploads/sessions",
+    name="uploads:sessions:list",
+    summary="Open resumable uploads: yours, or of a user you manage (admin)",
+    status_code=status.HTTP_200_OK,
+)
+async def list_upload_sessions(
+    user_id: UUID | None = None,
+    actor: Actor = Depends(get_actor),
+    upload_service: UploadService = Depends(get_service_upload),
+) -> list[UploadSessionResponse]:
+    return await upload_service.list_sessions(actor, user_id)
+
+
 @router.put(
     path="/uploads/sessions/{session_id}",
     dependencies=[
@@ -135,7 +149,7 @@ async def head_upload_session(
 @router.delete(
     path="/uploads/sessions/{session_id}",
     name="uploads:sessions:delete",
-    summary="Abort a resumable upload: the received part is deleted and the path freed",
+    summary="Abort a resumable upload (yours or, for admins, of a user you manage)",
     status_code=status.HTTP_204_NO_CONTENT,
 )
 async def delete_upload_session(

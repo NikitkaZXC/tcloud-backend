@@ -83,6 +83,7 @@ class TaskListServiceRead(BaseModel):
 
 class UploadSessionServiceRead(BaseModel):
     session_id: UUID
+    user_id: UUID
     path: str
     size: int
     offset: int
