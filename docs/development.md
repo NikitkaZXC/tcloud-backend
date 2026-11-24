@@ -56,14 +56,15 @@ curl -H "X-API-Key: $TCLOUD_KEY" --data-binary @photo.jpg \
 
 `src/config/models/*`, по классу на префикс: `APP_`, `POSTGRES_`, `JWT_`, `ROOT_`, `RATE_LIMIT_`, `TELEGRAM_`, `CLAMAV_`, `UPLOAD_`, `RABBITMQ_`, `REDIS_`, `LOG_`.
 Читаются из `.env` (путь меняется переменной `ENV_FILE`, пусто — не читать, как в тестах), переменные окружения важнее.
-Шаблон — `.env.exemple`, `make env` заполняет секреты. Главное:
+Шаблон — `.env.exemple`, `make env` заполняет секреты. Ошибки валидации не печатают введённые значения
+(`hide_input_in_errors`), чтобы секреты не попадали в лог старта. Главное:
 
 | Переменная | По умолчанию | Что |
 |---|---|---|
-| `APP_SECRET_KEY` | — (обязательно, `make env`) | HMAC refresh-токенов, API-ключей и подписи вебхуков |
+| `APP_SECRET_KEY` | — (обязательно, ≥ 32 символов, `make env`) | HMAC refresh-токенов, API-ключей и подписи вебхуков; короче — настройки не загружаются |
 | `APP_ENCRYPTION_KEY` | пусто — шифрование выключено | 32 байта base64, ключ шифрования файлов; потеря = потеря зашифрованных файлов |
 | `APP_ALLOWED_ORIGINS` | `[]` | CORS и проверка `Origin` для фронтенда на другом origin |
-| `ROOT_LOGIN`, `ROOT_PASSWORD` | — | root, синхронизируется при каждом старте API |
+| `ROOT_LOGIN`, `ROOT_PASSWORD` | — | root, синхронизируется при каждом старте API; `ROOT_PASSWORD` ≥ 12 символов, иначе настройки не загружаются |
 | `JWT_SECURE` | `true` | куки только по HTTPS; `false` для http без TLS |
 | `JWT_PRIVATE_KEY_PATH`, `JWT_PUBLIC_KEY_PATH` | `certs/jwt-*.pem` | ключи RS256 |
 | `JWT_ACCESS_TOKEN_EXPIRATION_MINUTES` / `JWT_REFRESH_TOKEN_EXPIRATION_DAYS` | `15` / `30` | сроки токенов |

@@ -1,7 +1,7 @@
 import base64
 import binascii
 
-from pydantic import SecretStr, field_validator
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import SettingsConfigDict
 
 from src.config.base import BaseSettings
@@ -12,7 +12,7 @@ class AppSettings(BaseSettings):
 
     TITLE: str = "tcloud"
     VERSION: str = "0.3.0"
-    SECRET_KEY: SecretStr
+    SECRET_KEY: SecretStr = Field(min_length=32)
     ENCRYPTION_KEY: SecretStr | None = None
     HOST: str = "0.0.0.0"
     PORT: int = 8000

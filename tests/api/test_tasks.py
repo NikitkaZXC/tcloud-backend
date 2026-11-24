@@ -317,7 +317,12 @@ async def test_cancel_in_queue_sends_webhook(client, telegram, storage, remote):
         await asyncio.sleep(0.02)
     assert "cancelled" in statuses
     headers, body = Remote.hooks[-1]
-    expected = "sha256=" + hmac.new(b"test", body, hashlib.sha256).hexdigest()
+    expected = (
+        "sha256="
+        + hmac.new(
+            settings.app.SECRET_KEY.get_secret_value().encode(), body, hashlib.sha256
+        ).hexdigest()
+    )
     assert headers["X-Tcloud-Signature"] == expected
     for task_id in ids:
         await wait_task(client, task_id)

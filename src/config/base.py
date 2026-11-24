@@ -9,4 +9,6 @@ def env_file() -> str | None:
 
 
 class BaseSettings(PydanticBaseSettings):
-    model_config = SettingsConfigDict(env_file=env_file(), extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=env_file(), extra="ignore", hide_input_in_errors=True
+    )

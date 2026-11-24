@@ -573,7 +573,14 @@ async def test_webhook_signed(client, storage, remote):
     stages = [json.loads(body)["stage"] for _, body in Remote.hooks]
     assert "done" in stages and "uploading_tg" in stages
     for headers, body in Remote.hooks:
-        expected = "sha256=" + hmac.new(b"test", body, hashlib.sha256).hexdigest()
+        expected = (
+            "sha256="
+            + hmac.new(
+                settings.app.SECRET_KEY.get_secret_value().encode(),
+                body,
+                hashlib.sha256,
+            ).hexdigest()
+        )
         assert headers["X-Tcloud-Signature"] == expected
 
 

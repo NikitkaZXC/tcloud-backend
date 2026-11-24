@@ -94,8 +94,8 @@ def test_no_key_means_no_encryption(tmp_path, monkeypatch):
 
 def test_bad_key_fails_at_start():
     with pytest.raises(ValidationError):
-        AppSettings(SECRET_KEY="x", ENCRYPTION_KEY="short")
-    assert AppSettings(SECRET_KEY="x", ENCRYPTION_KEY="").encryption_key is None
+        AppSettings(SECRET_KEY="x" * 32, ENCRYPTION_KEY="short")
+    assert AppSettings(SECRET_KEY="x" * 32, ENCRYPTION_KEY="").encryption_key is None
 
 
 def test_part_spans_cover_the_file_within_the_limit():

@@ -23,7 +23,7 @@ with open(os.path.join(SESSIONS, "jwt-public.pem"), "wb") as pem:
     )
 TEST_ENV = {
     "ENV_FILE": "",
-    "APP_SECRET_KEY": "test",
+    "APP_SECRET_KEY": "test-secret-key-0123456789abcdefghij",
     "APP_ENCRYPTION_KEY": "dGNsb3VkLXRlc3QtZW5jcnlwdGlvbi1rZXktMzJieXQ=",
     "APP_ALLOWED_ORIGINS": '["http://front.test"]',
     "ROOT_LOGIN": "root",
