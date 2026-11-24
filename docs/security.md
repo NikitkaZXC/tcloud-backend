@@ -68,7 +68,8 @@ IP клиента — `request.client.host`. uvicorn берёт его из `X-F
 
 1. Тип определяется по magic bytes (`filetype`), расширение и `Content-Type` не учитываются.
 2. Медиа проверяет декодер: Pillow (`verify` + `load`, лимит пикселей против decompression bomb),
-   ffprobe в subprocess без shell, с таймаутом. Видео/аудио различаются по потокам, а не по контейнеру.
+   ffprobe в subprocess без shell, с таймаутом и `-protocol_whitelist file` (у ffmpeg превью — тоже, перед `-i`):
+   плейлист HLS или concat внутри файла не заставит декодер ходить по сети. Видео/аудио различаются по потокам, а не по контейнеру.
 3. Расширение должно соответствовать реальному типу (`extension_mismatch`): медиа — только с медиа-расширением,
    не-медиа не может называться `.jpg`/`.mp4`/… (иначе Telegram показал бы его как фото или видео).
 4. ClamAV (`clamd INSTREAM`) со строгим `docker/clamd.conf`: `AlertExceedsMax` (без неё файл, упёршийся в лимит,
