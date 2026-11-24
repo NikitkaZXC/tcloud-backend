@@ -201,6 +201,7 @@ class UploadService:
                 "encrypt": encrypt,
                 "callback_url": data.callback_url,
                 "url": data.url,
+                "size": data.size,
                 "limit": limit,
                 "file": str(temp_path(path)),
             },
@@ -377,21 +378,25 @@ class UploadService:
             await self._store.drop_session(session_id)
             await self._drop_upload(session["task"])
 
+    async def _hold_url(self, task: dict) -> None:
+        size = task["params"].get("size")
+        if size is None:
+            return
+        try:
+            async with self._store.disk_lock():
+                await self._runtime.disk.hold(
+                    task["id"], size * 2 if task["params"]["encrypt"] else size
+                )
+        except BaseException:
+            await self._store.release(task["id"], task["path"])
+            raise
+
     async def upload_url(
         self, actor: Actor, data: UploadServiceCreate, batch_id: UUID | None = None
     ) -> TaskServiceRead:
         task, queued = await self._new_task(actor, data, batch_id)
         if queued:
-            if data.size is not None:
-                try:
-                    async with self._store.disk_lock():
-                        await self._runtime.disk.hold(
-                            task["id"],
-                            data.size * 2 if task["params"]["encrypt"] else data.size,
-                        )
-                except BaseException:
-                    await self._store.release(task["id"], task["path"])
-                    raise
+            await self._hold_url(task)
             await self._store.create(task)
             await start_task(self._runtime, task, UploadQueue.DOWNLOAD, 0)
         return await self._tasks.get(task["id"], actor)
@@ -447,6 +452,7 @@ class UploadService:
         await self._check_active()
         if not await self._store.lock_path(task["path"], task_id):
             raise UploadInProgressError(f"{task['path']} is already being uploaded")
+        await self._hold_url(task)
         generation = (task.get("generation") or 0) + 1
         await self._store.update(
             task_id,
@@ -456,7 +462,7 @@ class UploadService:
             waiting={"reason": f"queue:{UploadQueue.DOWNLOAD}"},
             generation=generation,
             bytes_done=0,
-            bytes_total=None,
+            bytes_total=task["params"].get("size"),
             error=None,
             warnings=[],
             file_id=None,

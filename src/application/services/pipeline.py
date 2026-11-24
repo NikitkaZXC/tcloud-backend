@@ -200,11 +200,13 @@ class UploadPipeline:
 
     async def _download(self, task: dict) -> None:
         params = task["params"]
-        await self.stage(task, TaskStage.DOWNLOADING, None, step=TaskStep.DOWNLOADING)
+        await self.stage(
+            task, TaskStage.DOWNLOADING, params.get("size"), step=TaskStep.DOWNLOADING
+        )
         await self._disk_slot(task)
         factor = 2 if params.get("encrypt") else 1
         reservation = await self._runtime.disk.reserve(
-            task["id"], (task.get("bytes_total") or 0) * factor
+            task["id"], (params.get("size") or 0) * factor
         )
 
         def progress(done: int, total: int | None) -> None:
@@ -213,7 +215,11 @@ class UploadPipeline:
 
         try:
             await download(
-                params["url"], Path(params["file"]), params["limit"], progress
+                params["url"],
+                Path(params["file"]),
+                params["limit"],
+                progress,
+                params.get("size"),
             )
         except BaseException:
             await reservation.release()

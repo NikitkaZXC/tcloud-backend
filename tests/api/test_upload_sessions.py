@@ -14,6 +14,7 @@ from src.application.services import TaskSweeper
 from src.application.services.temp import append_body
 from src.config import settings
 from src.infrastructure.cache import TaskStore
+from src.infrastructure.integrations import web
 from tests.api.conftest import Remote, path, upload, wait_task
 from tests.factories import make_image
 
@@ -514,3 +515,88 @@ async def test_queued_archive_reserves_until_cancelled(
     assert response.json()["status"] == "cancelled", response.text
     assert await ledger() == 0
     assert (await create(client, target, 10_000, encrypt="false")).status_code == 201
+
+
+async def test_url_size_reserves_at_queue_until_cancelled(
+    client, storage, disk, monkeypatch
+):
+    started = []
+
+    async def queued(runtime, task, queue, generation):
+        await runtime.store.activate(task["id"])
+        started.append(task["id"])
+
+    monkeypatch.setattr("src.application.services.upload.start_task", queued)
+    body = {"url": "https://example.com/a.bin", "path": path(storage, "a.bin")}
+    response = await client.post("/uploads/from-url", json={**body, "size": 20_000})
+    assert response.status_code == 202, response.text
+    assert response.json()["bytes_total"] == 20_000
+    assert await store().reserved_bytes() == 40_000
+    assert insufficient(
+        await create(client, path(storage, "b.bin"), 20_000, encrypt="false")
+    )
+    response = await client.post(f"/tasks/{started[0]}/cancel")
+    assert response.json()["status"] == "cancelled", response.text
+    assert await ledger() == 0
+
+
+async def test_url_size_checked_at_create(client, storage, disk):
+    target = path(storage, "a.bin")
+    body = {"url": "https://example.com/a.bin", "path": target}
+    response = await client.post("/uploads/from-url", json={**body, "size": 30_000})
+    assert insufficient(response)
+    response = await client.post(
+        "/uploads/from-url", json={**body, "size": 30_000, "encrypt": False}
+    )
+    assert response.status_code == 202, response.text
+    await client.post(f"/tasks/{response.json()['id']}/cancel")
+    assert await ledger() == 0
+    await client.patch("/account/settings", json={"uploads": {"max_file_size": 1000}})
+    response = await client.post("/uploads/from-url", json={**body, "size": 1001})
+    assert response.status_code == 413
+    assert response.json()["error"]["code"] == "too_large"
+    batch = await client.post(
+        "/uploads/batch", json={"items": [{**body, "size": 1001}, {**body, "size": 0}]}
+    )
+    assert batch.status_code == 422
+    batch = await client.post(
+        "/uploads/batch", json={"items": [{**body, "size": 1001}]}
+    )
+    assert batch.json()["items"][0]["error"]["code"] == "too_large"
+
+
+async def test_url_size_mismatch_fails_and_retry_keeps_size(
+    client, storage, remote, monkeypatch
+):
+    data = os.urandom(30_000)
+    Remote.files["/a.bin"] = data
+    body = {"url": f"{remote}/a.bin", "path": path(storage, "a.bin")}
+    for size in (len(data) - 1, len(data) + 1):
+        response = await client.post("/uploads/from-url", json={**body, "size": size})
+        task = await wait_task(client, response.json()["id"])
+        assert task["status"] == "failed"
+        assert task["error"]["code"] == "size_mismatch", task
+        assert await ledger() == 0
+    retried = await client.post(f"/tasks/{task['id']}/retry")
+    assert retried.json()["bytes_total"] == len(data) + 1
+    task = await wait_task(client, task["id"])
+    assert task["error"]["code"] == "size_mismatch"
+    batch = await client.post(
+        "/uploads/batch", json={"items": [{**body, "size": len(data)}]}
+    )
+    task = await wait_task(client, batch.json()["items"][0]["task"]["id"])
+    assert task["status"] == "done" and task["file"]["size"] == len(data)
+    assert await ledger() == 0
+    content = await client.get(f"/files/{task['file']['uuid']}/download")
+    assert content.content == data
+
+
+async def test_url_size_caps_body_without_length(remote, tmp_path):
+    Remote.files["/a.bin"] = b"x" * 100
+    url = f"{remote}/chunked/a.bin"
+    with pytest.raises(web.DownloadTooLargeError):
+        await web.download(url, tmp_path / "a", 10**9, lambda *_: None, 99)
+    with pytest.raises(web.DownloadSizeMismatchError):
+        await web.download(url, tmp_path / "b", 10**9, lambda *_: None, 101)
+    await web.download(url, tmp_path / "c", 10**9, lambda *_: None, 100)
+    assert (tmp_path / "c").read_bytes() == b"x" * 100

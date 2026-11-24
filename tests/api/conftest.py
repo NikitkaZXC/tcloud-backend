@@ -279,9 +279,11 @@ class Remote(BaseHTTPRequestHandler):
     hooks: list = []
 
     def do_GET(self):
-        body = self.files.get(self.path)
+        chunked = self.path.startswith("/chunked/")
+        body = self.files.get(self.path.removeprefix("/chunked"))
         self.send_response(200 if body is not None else 404)
-        self.send_header("Content-Length", str(len(body or b"")))
+        if not chunked:
+            self.send_header("Content-Length", str(len(body or b"")))
         self.end_headers()
         self.wfile.write(body or b"")
 

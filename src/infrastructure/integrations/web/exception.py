@@ -17,3 +17,9 @@ class DownloadTooLargeError(TCloudError):
     """Raised when the remote file is larger than the account limit."""
 
     code = "too_large"
+
+
+class DownloadSizeMismatchError(TCloudError):
+    """Raised when the remote file size differs from the declared size."""
+
+    code = "size_mismatch"

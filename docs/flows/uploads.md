@@ -90,15 +90,27 @@ sequenceDiagram
   `409 conflict`, `409 upload_in_progress`, `429 too_many_tasks`, `507 insufficient_storage`.
 - Заголовок `Upload-Offset` (ответ `HEAD`) открыт в `APP_EXPOSED_HEADERS`.
 - Отмена до конца — `DELETE`; после `202` — обычная отмена задачи.
+- `POST /api/uploads/from-url` и пункты `POST /api/uploads/batch` принимают необязательный `size: number` (байты,
+  ≥ 1, раздел «По ссылке»): ранние `413 too_large` / `507 insufficient_storage`, `bytes_total` сразу известен;
+  несовпадение с реальным размером — задача `failed` с `size_mismatch` (или `too_large`, если тело длиннее).
 
 ## По ссылке
 
-`POST /api/uploads/from-url {url, path, send_as, on_conflict, priority, allow_unscannable, encrypt, callback_url}`: имя файла берётся из `path`,
+`POST /api/uploads/from-url {url, path, size?, send_as, on_conflict, priority, allow_unscannable, encrypt, callback_url}`: имя файла берётся из `path`,
 а не из ссылки. Скачивает worker-download с теми же проверками и лимитами.
+
+Необязательный `size` (байты, ≥ 1) — заявленный размер файла. С ним при создании идут те же проверки, что у загрузки
+с устройства: больше `uploads.max_file_size` → `413 too_large`, не хватает диска (`2 × size` при шифровании) →
+`507 insufficient_storage`; резерв `size` (`2 × size`) кладётся в журнал диска сразу при постановке под `job:disk`,
+а `bytes_total` задачи равен `size` с самого начала. В воркере `size` — потолок: `Content-Length`, не равный `size`,
+или тело короче `size` → задача `failed` с `size_mismatch`; тело длиннее `size` (сервер не прислал длину) →
+`too_large` (`limit` = `size`), как у `POST /api/uploads`. Повтор (`POST /api/tasks/{id}/retry`) сохраняет `size`
+и снова кладёт резерв. Без `size` поведение прежнее: размер узнаётся из `Content-Length` при скачивании.
 
 ## Пачкой
 
-`POST /api/uploads/batch {items: [...]}`: до 100 загрузок по ссылкам (поля как у `from-url`). В ответе `batch_id`
+`POST /api/uploads/batch {items: [...]}`: до 100 загрузок по ссылкам (поля как у `from-url`, включая `size`;
+`413`/`507` по `size` приходят в `error` своего пункта, неверный `size` < 1 — `422` на весь запрос). В ответе `batch_id`
 и по каждому пункту `task` или `error`. Общий прогресс: `GET /api/tasks?batch_id=`. Файлы с устройства загружаются
 параллельными `POST /api/uploads` (или сессиями частями, выше), очередь и лимиты одни и те же.
 
@@ -182,8 +194,8 @@ DEK файла и ложится в `files.thumbnail`; `/thumb` его расш�
   |---|---|
   | `POST /api/uploads` (под `job:disk`) | `size` (шифрование: `2 × size`) − принятое; после тела — `size` под будущий шифротекст или удаление |
   | сессия частями | записи нет (считается сессия); перед каждым куском — `check(длина, exclude=сессия)`; после последнего куска шифруемой — `size` |
-  | ссылка с известным размером (`upload_url` с `size`, под `job:disk`) | `size` (шифрование: `2 × size`) сразу при постановке; HTTP API размер не передаёт, поэтому обычно резерв появляется, когда воркер узнаёт `Content-Length` |
-  | скачивание в `worker-download` | `total` (шифрование: `2 × total`) − скачанное, растёт по мере того, как узнаётся размер; после — размер файла под шифротекст или удаление |
+  | ссылка с известным размером (`upload_url` с `size`, под `job:disk`) | `size` (шифрование: `2 × size`) сразу при постановке и при повторе; без `size` резерв появляется, когда воркер узнаёт `Content-Length` |
+  | скачивание в `worker-download` | заявленный `size`, иначе `total` (шифрование: `× 2`) − скачанное, растёт по мере того, как узнаётся размер; после — размер файла под шифротекст или удаление |
   | шифрование в `worker-prepare` | `cipher_size(plain)` − зашифрованное; после — удаление (шифротекст уже на диске, открытый удаляется после передачи в `uploads.telegram`) |
   | архив (постановка под `job:disk`, затем `worker-telegram`) | `sum + max` размеров сразу при постановке; воркер переводит в живой резерв и уменьшает по прогрессу; после сборки — удаление |
   | превью (`PreviewBackfill`) | `file.size` − скачанное, владелец — id файла |

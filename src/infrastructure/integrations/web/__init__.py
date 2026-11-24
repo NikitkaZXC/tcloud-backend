@@ -6,10 +6,16 @@ from .client import (
     open_url,
     resolve,
 )
-from .exception import DownloadFailedError, DownloadTooLargeError, UnsafeUrlError
+from .exception import (
+    DownloadFailedError,
+    DownloadSizeMismatchError,
+    DownloadTooLargeError,
+    UnsafeUrlError,
+)
 
 __all__ = [
     "DownloadFailedError",
+    "DownloadSizeMismatchError",
     "DownloadTooLargeError",
     "UnsafeUrlError",
     "check_scheme",

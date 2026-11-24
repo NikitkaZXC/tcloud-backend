@@ -40,6 +40,7 @@ class UploadSessionResponse(UploadSessionServiceRead):
 
 class UrlUploadCreate(UploadParams):
     url: str
+    size: FileSize | None = None
 
 
 class BatchCreate(BaseModel):

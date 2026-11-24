@@ -9,6 +9,7 @@ import httpx
 
 from src.infrastructure.integrations.web.exception import (
     DownloadFailedError,
+    DownloadSizeMismatchError,
     DownloadTooLargeError,
     UnsafeUrlError,
 )
@@ -98,7 +99,11 @@ async def open_url(
 
 
 async def download(
-    url: str, target: Path, limit: int, progress: Callable[[int, int | None], None]
+    url: str,
+    target: Path,
+    limit: int,
+    progress: Callable[[int, int | None], None],
+    expected: int | None = None,
 ) -> None:
     async with open_url(url) as response:
         if response.status_code != 200:
@@ -107,6 +112,12 @@ async def download(
             total = int(response.headers.get("content-length", "")) or None
         except ValueError:
             total = None
+        if expected and total and total != expected:
+            raise DownloadSizeMismatchError(
+                f"declared {expected} bytes, remote file is {total}"
+            )
+        if expected:
+            limit = min(limit, expected)
         if total and total > limit:
             raise DownloadTooLargeError(
                 f"file is {total} bytes, limit is {limit}", limit=limit
@@ -121,3 +132,7 @@ async def download(
                     )
                 file.write(chunk)
                 progress(done, total)
+        if expected and done != expected:
+            raise DownloadSizeMismatchError(
+                f"declared {expected} bytes, received {done}"
+            )

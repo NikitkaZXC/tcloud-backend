@@ -128,7 +128,7 @@ async def test_sending_reports_step_progress(client, telegram, storage):
 
 
 async def test_cancel_while_downloading(client, storage, remote, monkeypatch):
-    async def slow(url, target: Path, limit, progress):
+    async def slow(url, target: Path, limit, progress, size=None):
         target.write_bytes(b"x")
         for done in range(1000):
             progress(done, 1000)
