@@ -32,6 +32,13 @@ from tests.factories import EXE, PDF, make_image
         ("fc00::1", False),
         ("::ffff:127.0.0.1", False),
         ("::ffff:10.0.0.1", False),
+        ("::7f00:1", False),
+        ("::808:808", False),
+        ("64:ff9b::7f00:1", False),
+        ("64:ff9b::808:808", False),
+        ("64:ff9b:1::a00:1", False),
+        ("2002:7f00:1::", False),
+        ("2001:0:4136:e378:8000:63bf:3fff:fdd2", False),
         ("not-an-ip", False),
     ],
 )
@@ -48,11 +55,22 @@ def test_ip_allowed(ip, ok):
         "javascript:alert(1)",
         "http://",
         "not a url",
+        "http://x.com:22/a",
+        "https://x.com:25/a",
+        "http://x.com:1023/a",
     ],
 )
 def test_bad_schemes(url):
     with pytest.raises(UnsafeUrlError):
         web.check_scheme(url)
+
+
+@pytest.mark.parametrize(
+    "url",
+    ["http://x.com/a", "https://x.com:443/a", "http://x.com:80/", "http://x:8080/"],
+)
+def test_allowed_ports(url):
+    web.check_scheme(url)
 
 
 def _patch_dns(monkeypatch, ips):
@@ -82,8 +100,10 @@ async def test_localhost_blocked(tmp_path):
 
 class Handler(BaseHTTPRequestHandler):
     routes: dict = {}
+    seen: dict = {}
 
     def do_GET(self):
+        Handler.seen = dict(self.headers)
         status, headers, body = self.routes.get(self.path, (404, {}, b""))
         self.send_response(status)
         for key, value in headers.items():
@@ -124,6 +144,13 @@ async def test_download_ok(server, allow_local, tmp_path):
     )
     assert (tmp_path / "x").read_bytes() == data
     assert seen[-1] == (len(data), len(data))
+
+
+async def test_download_asks_for_identity_encoding(server, allow_local, tmp_path):
+    base, routes = server
+    routes["/a.pdf"] = (200, {}, PDF)
+    await web.download(f"{base}/a.pdf", tmp_path / "x", 10**7, lambda *a: None)
+    assert Handler.seen["Accept-Encoding"] == "identity"
 
 
 async def test_download_executable(server, allow_local, tmp_path):

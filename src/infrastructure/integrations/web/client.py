@@ -17,12 +17,17 @@ from src.infrastructure.integrations.web.exception import (
 CHUNK = 1024 * 1024
 MAX_REDIRECTS = 5
 HTTP_TIMEOUT = httpx.Timeout(30.0, read=60.0)
+EMBEDDED_V4 = tuple(
+    ipaddress.ip_network(net) for net in ("::/96", "64:ff9b::/96", "64:ff9b:1::/48")
+)
 
 
 def ip_allowed(ip: str) -> bool:
     try:
         address = ipaddress.ip_address(ip)
     except ValueError:
+        return False
+    if address.version == 6 and any(address in net for net in EMBEDDED_V4):
         return False
     if address.version == 6 and address.ipv4_mapped:
         address = address.ipv4_mapped
@@ -36,6 +41,8 @@ def check_scheme(url: str) -> httpx.URL:
         raise UnsafeUrlError("invalid url") from None
     if parsed.scheme not in ("http", "https") or not parsed.host:
         raise UnsafeUrlError("only http(s) urls are allowed")
+    if parsed.port is not None and parsed.port not in (80, 443) and parsed.port < 1024:
+        raise UnsafeUrlError("only ports 80, 443 and 1024 and above are allowed")
     return parsed
 
 
@@ -105,7 +112,7 @@ async def download(
     progress: Callable[[int, int | None], None],
     expected: int | None = None,
 ) -> None:
-    async with open_url(url) as response:
+    async with open_url(url, headers={"Accept-Encoding": "identity"}) as response:
         if response.status_code != 200:
             raise DownloadFailedError(f"remote server answered {response.status_code}")
         try:
