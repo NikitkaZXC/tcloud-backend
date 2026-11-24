@@ -398,10 +398,11 @@ class FileService:
                 lambda message_id: self._lookup(chat_id, message_id), file, parts
             )
         except TelegramMessageGoneError:
-            await self._repo.delete_by_ids([file.id])
+            removed = await self._repo.delete_if_message(file.id, file.tg_message_id)
             await self._session.commit()
-            logger.info("File {} is gone from Telegram, record removed", file.id)
-            await self._drop_parts(chat_id, [part.tg_message_id for part in parts])
+            if removed:
+                logger.info("File {} is gone from Telegram, record removed", file.id)
+                await self._drop_parts(chat_id, [part.tg_message_id for part in parts])
             raise
 
     async def _lookup(self, chat_id: int, message_id: int) -> tuple[object, int]:

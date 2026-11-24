@@ -632,9 +632,7 @@ class UploadPipeline:
         async with self._runtime.session_factory() as session:
             await FolderRepository(session).ensure(storage_id, folder)
             files = FileRepository(session)
-            if replaced:
-                await files.update(file_id, values)
-            else:
+            if not replaced or not await files.update(file_id, values):
                 await files.create(FileDB(id=file_id, storage_id=storage_id, **values))
             if parts or replaced:
                 await files.set_parts(file_id, parts)

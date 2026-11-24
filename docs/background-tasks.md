@@ -132,7 +132,7 @@ sequenceDiagram
         T->>TG: send (куски параллельно, FloodWait — общая пауза)
         T->>R: sent {file_id, chat_id, message, parts?, spans?}
     end
-    T->>DB: folders.ensure, INSERT или UPDATE files, file_parts, commit
+    T->>DB: folders.ensure, UPDATE files (0 строк → INSERT) или INSERT, file_parts, commit
     T->>R: committed
     opt replace
         T->>TG: удалить старые сообщения (все части)

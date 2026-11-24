@@ -461,10 +461,11 @@ class FileRepository:
         await self._session.flush()
         return file
 
-    async def update(self, file_id: UUID, values: dict) -> None:
-        await self._session.execute(
+    async def update(self, file_id: UUID, values: dict) -> bool:
+        result = await self._session.execute(
             update(FileDB).where(FileDB.id == file_id).values(**values)
         )
+        return bool(result.rowcount)
 
     async def delete_by_messages(
         self, storage_id: UUID, message_ids: list[int]
@@ -489,6 +490,14 @@ class FileRepository:
             )
         )
         return list((await self._session.execute(statement)).scalars().all())
+
+    async def delete_if_message(self, file_id: UUID, message_id: int) -> bool:
+        result = await self._session.execute(
+            delete(FileDB).where(
+                FileDB.id == file_id, FileDB.tg_message_id == message_id
+            )
+        )
+        return bool(result.rowcount)
 
     async def delete_by_ids(self, file_ids: list[UUID]) -> None:
         if file_ids:
