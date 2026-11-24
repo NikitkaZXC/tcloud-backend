@@ -10,6 +10,7 @@ from pydantic import SecretStr
 import main
 from src.application.services import pipeline
 from src.config import settings
+from src.infrastructure.integrations import TelegramFileReferenceError
 from tests.api.conftest import path, upload
 from tests.factories import PDF, make_image, make_video
 
@@ -83,6 +84,24 @@ async def test_open_thumbnail_cached_in_redis(
     key = f"tcloud:thumb:{photo['uuid']}:{photo['telegram']['message_id']}"
     assert 0 < await redis.ttl(key) <= 180
     assert int(await redis.get("tcloud:thumbs:bytes")) == len(await redis.get(key))
+
+
+async def test_expired_thumbnail_reference_rereads_the_message_once(
+    client, telegram, download_telegram, photo, monkeypatch
+):
+    original = download_telegram.thumbnail
+    calls = []
+
+    async def thumbnail(media):
+        calls.append(media)
+        if len(calls) == 1:
+            raise TelegramFileReferenceError("FILE_REFERENCE_EXPIRED")
+        return await original(media)
+
+    monkeypatch.setattr(download_telegram, "thumbnail", thumbnail)
+    response = await client.get(f"/files/{photo['uuid']}/thumb")
+    assert response.status_code == 200
+    assert response.content == message(telegram, photo)["data"] and len(calls) == 2
 
 
 async def test_photo_sent_as_file_has_thumbnail(client, storage):

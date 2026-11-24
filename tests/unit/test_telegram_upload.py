@@ -5,6 +5,7 @@ from telethon import errors, functions, types
 
 from src.infrastructure.integrations.telegram import (
     TelegramError,
+    TelegramFileReferenceError,
     TelegramFloodWaitError,
     TelegramUnavailableError,
 )
@@ -93,6 +94,8 @@ async def test_failed_part_stops_upload(tmp_path, monkeypatch):
         (ConnectionError("down"), TelegramUnavailableError),
         (errors.ServerError(request=None, message="500"), TelegramUnavailableError),
         (errors.ChatAdminRequiredError(request=None), TelegramError),
+        (errors.FileReferenceExpiredError(request=None), TelegramFileReferenceError),
+        (errors.FileReferenceInvalidError(request=None), TelegramFileReferenceError),
     ],
 )
 async def test_errors_translated(raised, expected):
