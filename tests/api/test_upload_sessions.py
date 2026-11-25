@@ -1,5 +1,6 @@
 import asyncio
 import hashlib
+import json
 import os
 import shutil
 import time
@@ -757,6 +758,34 @@ async def test_block_or_delete_cancels_tasks(
     assert (await store().user_disk(user.user_id)) == (0, 0)
     for name in ("a", "b", "c"):
         assert not await store().path_locked(path(storage, f"quitter/{name}.bin"))
+
+
+async def test_block_sends_cancelled_webhook(
+    client, storage, make_user, telegram, remote
+):
+    user = await granted(make_user, storage, "hooked")
+    telegram.delay = 1
+    response = await user.post(
+        "/uploads",
+        params={
+            "path": path(storage, "hooked/a.bin"),
+            "encrypt": "false",
+            "callback_url": f"{remote}/hook",
+        },
+        content=b"x" * 1000,
+    )
+    task_id = response.json()["id"]
+    response = await client.patch(f"/users/{user.user_id}", json={"blocked": True})
+    assert response.status_code == 200
+    telegram.delay = 0
+    assert (await wait_task(client, task_id))["status"] == "cancelled"
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        statuses = [json.loads(body)["status"] for _, body in Remote.hooks]
+        if "cancelled" in statuses:
+            break
+        await asyncio.sleep(0.02)
+    assert "cancelled" in statuses
 
 
 async def test_chunk_after_grant_revoked_drops_the_session(client, storage, make_user):

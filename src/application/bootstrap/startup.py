@@ -20,7 +20,7 @@ async def prepare(runtime: AppRuntime) -> None:
     check_keys()
     async with session_factory() as session:
         await UserService(
-            session, UserAuthService(session, runtime), runtime.store
+            session, UserAuthService(session, runtime), runtime
         ).ensure_root()
     if runtime.telegram.authorized:
         await AuthService(runtime).connect()

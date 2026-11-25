@@ -1,13 +1,15 @@
 import re
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Coroutine
 from pathlib import Path
 from uuid import UUID, uuid4
 
 from loguru import logger
 
 from src.application.exception import FileTooLargeError, SizeMismatchError
+from src.application.services.webhook import notify
 from src.config import settings
 from src.infrastructure.cache import TaskStore
+from src.infrastructure.database.session import session_factory
 from src.infrastructure.enums import TaskStatus
 from src.infrastructure.media import extension
 
@@ -117,21 +119,29 @@ async def cancel_user_sessions(store: TaskStore, user_id: UUID) -> int:
     return cancelled
 
 
-async def cancel_task(store: TaskStore, task_id: UUID | str) -> str:
+async def cancel_task(
+    store: TaskStore, task_id: UUID | str, spawn: Callable[[Coroutine], object]
+) -> str:
     result = await store.cancel(task_id)
     if result == "cancelled":
         task = await store.get(task_id)
         await store.release(task_id, task["path"])
         remove_task_files(task)
+        if task["params"].get("callback_url"):
+            notify(
+                spawn, store, session_factory, task_id, task["params"]["callback_url"]
+            )
     return result
 
 
-async def cancel_user_tasks(store: TaskStore, user_id: UUID) -> int:
+async def cancel_user_tasks(
+    store: TaskStore, user_id: UUID, spawn: Callable[[Coroutine], object]
+) -> int:
     tasks = await store.get_many(await store.user_task_ids(user_id), ("status",))
     cancelled = 0
     for task in tasks:
         if task["status"] not in TaskStatus.finished():
-            await cancel_task(store, task["id"])
+            await cancel_task(store, task["id"], spawn)
             cancelled += 1
     if cancelled:
         logger.info("{} tasks of user {} cancelled", cancelled, user_id)

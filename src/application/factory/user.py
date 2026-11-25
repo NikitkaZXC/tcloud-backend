@@ -26,7 +26,7 @@ def get_service_user(
     runtime: AppRuntime = Depends(get_runtime),
     auth_service: UserAuthService = Depends(get_service_user_auth),
 ) -> UserService:
-    return UserService(session=session, auth_service=auth_service, store=runtime.store)
+    return UserService(session=session, auth_service=auth_service, runtime=runtime)
 
 
 def get_service_grant(

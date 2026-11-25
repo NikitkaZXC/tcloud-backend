@@ -48,11 +48,9 @@ from src.application.services.temp import (
     temp_path,
     write_body,
 )
-from src.application.services.webhook import notify
 from src.config import settings
 from src.infrastructure.background import AppRuntime, enqueue
 from src.infrastructure.database.repositories import FileRepository, UserRepository
-from src.infrastructure.database.session import session_factory
 from src.infrastructure.enums import (
     Permission,
     TaskPriority,
@@ -536,21 +534,11 @@ class UploadService:
 
     async def cancel(self, actor: Actor, task_id: UUID) -> TaskServiceRead:
         await self._tasks.get_raw(task_id, actor)
-        result = await cancel_task(self._store, task_id)
+        result = await cancel_task(self._store, task_id, self._runtime.spawn)
         if result == "missing":
             raise TaskNotFoundError("task not found")
         if result == "finished":
             raise TaskFinishedError("task is already finished")
-        if result == "cancelled":
-            task = await self._tasks.get_raw(task_id, actor)
-            if task["params"].get("callback_url"):
-                notify(
-                    self._runtime.spawn,
-                    self._store,
-                    session_factory,
-                    task_id,
-                    task["params"]["callback_url"],
-                )
         return await self._tasks.get(task_id, actor)
 
     async def set_priority(

@@ -19,7 +19,7 @@ from src.application.services.access import require_admin, require_root
 from src.application.services.temp import cancel_user_sessions, cancel_user_tasks
 from src.application.services.user_auth import UserAuthService
 from src.config import settings
-from src.infrastructure.cache import TaskStore
+from src.infrastructure.background import AppRuntime
 from src.infrastructure.database.models import UserDB
 from src.infrastructure.database.repositories import UserRepository
 from src.infrastructure.enums import UserRole
@@ -28,11 +28,12 @@ from src.infrastructure.security import hash_password, verify_password
 
 class UserService:
     def __init__(
-        self, session: AsyncSession, auth_service: UserAuthService, store: TaskStore
+        self, session: AsyncSession, auth_service: UserAuthService, runtime: AppRuntime
     ) -> None:
         self._session = session
         self._auth = auth_service
-        self._store = store
+        self._runtime = runtime
+        self._store = runtime.store
         self._repo = UserRepository(session)
 
     async def get_db(self, user_id: UUID) -> UserDB:
@@ -133,7 +134,7 @@ class UserService:
         await self._session.commit()
         if data.blocked:
             await cancel_user_sessions(self._store, user.id)
-            await cancel_user_tasks(self._store, user.id)
+            await cancel_user_tasks(self._store, user.id, self._runtime.spawn)
         logger.info("User {} updated by {}", user.id, actor.user_id)
         return UserServiceRead.from_db(await self.get_db(user.id))
 
@@ -143,5 +144,5 @@ class UserService:
         await self._repo.delete(user)
         await self._session.commit()
         await cancel_user_sessions(self._store, user_id)
-        await cancel_user_tasks(self._store, user_id)
+        await cancel_user_tasks(self._store, user_id, self._runtime.spawn)
         logger.info("User {} deleted by {}", user_id, actor.user_id)
