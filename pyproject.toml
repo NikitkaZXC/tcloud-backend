@@ -1,7 +1,8 @@
 [project]
 name = "tcloud"
-version = "0.3.0"
-description = "tcloud: media storage in private Telegram channels"
+version = "1.0.0"
+license = "MIT"
+description = "tcloud: file storage in private Telegram channels"
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [

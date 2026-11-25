@@ -11,7 +11,7 @@ class AppSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="APP_")
 
     TITLE: str = "tcloud"
-    VERSION: str = "0.3.0"
+    VERSION: str = "1.0.0"
     SECRET_KEY: SecretStr = Field(min_length=32)
     ENCRYPTION_KEY: SecretStr | None = None
     HOST: str = "0.0.0.0"
