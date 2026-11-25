@@ -1,6 +1,8 @@
 import asyncio
+import threading
 
 import main
+from src.application.services import pipeline
 from src.config import settings
 from tests.api.conftest import path, wait_task
 
@@ -143,3 +145,35 @@ async def test_archives_respect_the_quota(client, storage, make_user, monkeypatc
     assert task["status"] == "done" and task["source"] == "archive"
     assert task["retryable"] is False
     assert await store().user_disk(user.user_id) == (0, task["archive"]["size"])
+
+
+async def test_url_without_size_counts_while_downloading(
+    client, storage, make_user, monkeypatch
+):
+    monkeypatch.setattr(settings.upload, "USER_DISK_QUOTA_MB", 1)
+    user = await granted(make_user, storage, "qa5")
+    size = 1024 * KB
+    gate = threading.Event()
+
+    async def slow_download(url, target, limit, progress, expected=None):
+        target.write_bytes(b"u" * size)
+        progress(size, None)
+        await asyncio.to_thread(gate.wait, 10)
+
+    monkeypatch.setattr(pipeline, "download", slow_download)
+    body = {"url": "https://example.com/a.bin", "path": path(storage, "qa5/a.bin")}
+    first = await user.post("/uploads/from-url", json={**body, "encrypt": False})
+    assert first.status_code == 202, first.text
+    for _ in range(500):
+        if (await store().user_disk(user.user_id))[1]:
+            break
+        await asyncio.sleep(0.01)
+    assert await store().user_disk(user.user_id) == (0, size)
+    body["path"] = path(storage, "qa5/b.bin")
+    second = await user.post("/uploads/from-url", json=body)
+    gate.set()
+    assert second.status_code == 507
+    assert second.json()["error"]["code"] == "temp_quota_exceeded"
+    assert not await store().path_locked(path(storage, "qa5/b.bin"))
+    await wait_task(user, first.json()["id"])
+    assert await store().user_disk(user.user_id) == (0, 0)

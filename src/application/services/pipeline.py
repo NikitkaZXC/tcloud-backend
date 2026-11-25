@@ -63,6 +63,7 @@ CANCEL_POLL = 1.0
 BROKER_WAIT = 600.0
 BROKER_RETRY = 5.0
 PROGRESS_FIELDS = ("cancel", "params")
+USAGE_INTERVAL = 1.0
 PREVIEW_KINDS = {MediaKind.PHOTO, MediaKind.ANIMATION, MediaKind.VIDEO}
 
 
@@ -217,10 +218,25 @@ class UploadPipeline:
         reservation = await self._runtime.disk.reserve(
             task["id"], (params.get("size") or 0) * factor
         )
+        usage = {"at": 0.0, "save": None}
 
         def progress(done: int, total: int | None) -> None:
             reservation.update(done, (total or 0) * factor)
             self.progress(task["id"], done, total)
+            now = time.monotonic()
+            if params.get("size") is not None or now - usage["at"] < USAGE_INTERVAL:
+                return
+            if usage["save"] and not usage["save"].done():
+                return
+            usage["at"] = now
+            usage["save"] = self._runtime.spawn(
+                self._store.use_disk(
+                    task["id"],
+                    task.get("user_id"),
+                    max(done, total or 0) * factor,
+                    settings.upload.LOCK_TTL,
+                )
+            )
 
         try:
             await download(
@@ -231,8 +247,10 @@ class UploadPipeline:
                 params.get("size"),
             )
         except BaseException:
+            await asyncio.gather(*filter(None, [usage["save"]]), return_exceptions=True)
             await reservation.release()
             raise
+        await asyncio.gather(*filter(None, [usage["save"]]), return_exceptions=True)
         size = Path(params["file"]).stat().st_size
         await self._store.use_disk(
             task["id"], task.get("user_id"), size * factor, settings.upload.LOCK_TTL

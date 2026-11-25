@@ -524,10 +524,11 @@ class UploadService:
 
     async def _hold_url(self, actor: Actor, task: dict) -> None:
         size = task["params"].get("size")
-        if size is None:
-            return
         try:
             async with self._store.disk_lock():
+                if size is None:
+                    await check_quota(self._store, actor, 1, False)
+                    return
                 needed = size * 2 if task["params"]["encrypt"] else size
                 await hold_quota(self._store, actor, task["id"], needed)
                 await self._runtime.disk.hold(task["id"], needed)
