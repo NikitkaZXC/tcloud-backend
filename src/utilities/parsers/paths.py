@@ -11,20 +11,18 @@ BIDI_CONTROLS = frozenset(
 )
 
 
-def check_segment(segment: str) -> None:
+def check_segment(segment: str, new: bool = False) -> None:
     if segment in ("", ".", ".."):
         raise InvalidPathError("empty, '.' and '..' path segments are not allowed")
-    if "\\" in segment or any(
-        char in BIDI_CONTROLS or unicodedata.category(char) == "Cc" for char in segment
-    ):
-        raise InvalidPathError(
-            "control and bidi control characters and '\\' are not allowed in paths"
-        )
+    if "\\" in segment or any(unicodedata.category(char) == "Cc" for char in segment):
+        raise InvalidPathError("control characters and '\\' are not allowed in paths")
+    if new and any(char in BIDI_CONTROLS for char in segment):
+        raise InvalidPathError("bidi control characters are not allowed in new names")
     if len(segment.encode()) > SEGMENT_MAX:
         raise InvalidPathError(f"path segment is longer than {SEGMENT_MAX} bytes")
 
 
-def split_path(raw: str) -> tuple[UUID, list[str]]:
+def split_path(raw: str, new: bool = False) -> tuple[UUID, list[str]]:
     raw = unicodedata.normalize("NFC", raw)
     if len(raw) > PATH_MAX:
         raise InvalidPathError(f"path is longer than {PATH_MAX} characters")
@@ -38,17 +36,17 @@ def split_path(raw: str) -> tuple[UUID, list[str]]:
     if str(storage_id) != parts[1].lower():
         raise InvalidPathError("storage id must be a canonical uuid")
     for segment in parts[2:]:
-        check_segment(segment)
+        check_segment(segment, new)
     return storage_id, parts[2:]
 
 
-def split_folder(raw: str) -> tuple[UUID, str]:
-    storage_id, segments = split_path(raw)
+def split_folder(raw: str, new: bool = False) -> tuple[UUID, str]:
+    storage_id, segments = split_path(raw, new)
     return storage_id, "/".join(segments)
 
 
-def split_file(raw: str) -> tuple[UUID, str, str]:
-    storage_id, segments = split_path(raw)
+def split_file(raw: str, new: bool = False) -> tuple[UUID, str, str]:
+    storage_id, segments = split_path(raw, new)
     if not segments:
         raise InvalidPathError("file name is missing in path")
     return storage_id, "/".join(segments[:-1]), segments[-1]

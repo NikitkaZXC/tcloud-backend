@@ -153,7 +153,7 @@ class UploadService:
         for index in range(2, 10_000):
             candidate = f"{stem}-{index}{dot}{suffix}"
             if not await self._taken(storage_id, folder, candidate):
-                check_segment(candidate)
+                check_segment(candidate, new=True)
                 return candidate
         raise PathConflictError("no free name left")
 
@@ -176,7 +176,7 @@ class UploadService:
         self, actor: Actor, data: UploadServiceCreate, batch_id: UUID | None
     ) -> tuple[dict, bool]:
         data = data.with_defaults(actor.settings.uploads)
-        storage_id, folder, name = split_file(data.path)
+        storage_id, folder, name = split_file(data.path, new=True)
         self._check_access(actor, data.path, data.on_conflict)
         if data.callback_url:
             check_webhook(data.callback_url)

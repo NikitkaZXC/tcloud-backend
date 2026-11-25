@@ -119,7 +119,7 @@ class FolderService:
         self._files = FileRepository(session)
 
     async def create(self, actor: Actor, raw_path: str) -> FolderServiceRead:
-        storage_id, path = split_folder(raw_path)
+        storage_id, path = split_folder(raw_path, new=True)
         if not path:
             raise StorageRootError("storage root always exists")
         require(actor, storage_id, path, Permission.UPLOAD)

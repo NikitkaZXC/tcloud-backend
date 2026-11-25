@@ -6,11 +6,14 @@ from pathlib import Path
 
 import py7zr
 import pytest
+from sqlalchemy import update
 
 import main
 from src.application.services import TaskSweeper
 from src.config import settings
 from src.infrastructure.cache import TaskStore
+from src.infrastructure.database.models import FileDB, FolderDB
+from src.infrastructure.database.session import session_factory
 from src.infrastructure.integrations import TelegramFileReferenceError
 from tests.api.conftest import build_archive, listing, path, upload, wait_task
 from tests.factories import PDF, make_image
@@ -489,3 +492,33 @@ async def test_download_etag_needs_read_access(client, storage, make_user):
         headers={"If-None-Match": f'"{file["telegram"]["message_id"]}"'},
     )
     assert response.status_code == 403
+
+
+async def test_existing_bidi_names_stay_reachable(client, storage, photo):
+    folder, name = "a\u202e", "x\u202egpj.exe"
+    async with session_factory() as session:
+        await session.execute(
+            update(FolderDB)
+            .where(FolderDB.storage_id == storage["id"], FolderDB.path == "a")
+            .values(path=folder)
+        )
+        await session.execute(
+            update(FileDB)
+            .where(FileDB.id == photo["uuid"])
+            .values(folder_path=folder, name=name)
+        )
+        await session.commit()
+    target = path(storage, f"{folder}/{name}")
+    found = await client.get("/files/by-path", params={"path": target})
+    assert found.status_code == 200 and found.json()["uuid"] == photo["uuid"]
+    assert (await listing(client, path(storage, folder)))["files"][0]["name"] == name
+    response = await client.post(
+        "/uploads", params={"path": path(storage, "b\u202e.jpg")}, content=b"x"
+    )
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "invalid_path"
+    response = await client.post("/folders", json={"path": path(storage, "c\u2066")})
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "invalid_path"
+    deleted = await client.delete("/folders", params={"path": path(storage, folder)})
+    assert deleted.status_code == 200 and deleted.json()["deleted_files"] == 1
