@@ -4,7 +4,7 @@ This file provides guidance to Claude Code when working with code in this reposi
 
 ## Project
 
-tcloud: a FastAPI service that stores media (photo, video, audio, GIF) and other files of any type (non-media is served only as a sandboxed attachment: `attachment` + `nosniff` + CSP `sandbox`, docs/security.md) in private Telegram channels ("storages") through a Telegram **user** account (Telethon). Every file has a UUID and a path `tcloud/{storage uuid}/{folders}/{name}`; PostgreSQL keeps the index. Python 3.14, managed with `uv`. Structure and rules mirror `~/Desktop/nextgate/nextgate-backend`. Detailed docs (Russian) are in `docs/` (index `docs/README.md`).
+tcloud: a FastAPI service that stores media (photo, video, audio, GIF) and other files of any type (non-media is served only as a sandboxed attachment: `attachment` + `nosniff` + CSP `sandbox`, docs/security.md) in private Telegram channels ("storages") through a Telegram **user** account (Telethon). Every file has a UUID and a path `tcloud/{storage uuid}/{folders}/{name}`; PostgreSQL keeps the index. Python 3.14, managed with `uv`. Structure and rules mirror `~/Desktop/nextgate/nextgate-backend`. Detailed docs (Russian) are in `docs/` (index `docs/README.md`); `README.md` is English with a Russian copy in `README.ru.md` (keep both in sync). MIT license.
 
 ## Commands
 
@@ -17,6 +17,7 @@ make test | test-integration | test-api | test-all | test-cov
 make test-docker                  # whole suite in Docker with ffmpeg (tests needing ffmpeg are skipped locally without it)
 make format                       # black + isort
 make check                        # pip-audit + migration checks
+# Release: .github/workflows/release.yml (tag v*.*.* → ghcr.io/nikitkazxc/tcloud-backend:{version},{major}.{minor},latest; prod compose uses it via TCLOUD_IMAGE; version lives in pyproject.toml, uv.lock, AppSettings.VERSION, CHANGELOG.md)
 # CI: .github/workflows/ci.yml (push to main + PRs, concurrency cancels older runs, read-only token, actions pinned by SHA: tag map in docs/development.md; lint, test with Postgres/Redis/RabbitMQ/ffmpeg, audit); Dependabot: .github/dependabot.yml (monthly, one group per ecosystem, ≤ 2 open PRs)
 make load-up && make load-app && make load && make load-down   # locust stand with fake Telegram
 uv run alembic revision --autogenerate -m "msg"
