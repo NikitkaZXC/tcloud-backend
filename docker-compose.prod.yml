@@ -6,7 +6,7 @@ x-logging: &logging
 
 x-app: &app
   build: .
-  image: tcloud:latest
+  image: ${TCLOUD_IMAGE:-tcloud:latest}
   env_file: .env
   environment: &app-env
     POSTGRES_HOST: postgres

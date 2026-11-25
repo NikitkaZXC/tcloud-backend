@@ -11,6 +11,18 @@ make up             # сборка и запуск
 make logs
 ```
 
+Готовый образ из GHCR вместо сборки (публикуется на каждый тег `v*.*.*`, docs/development.md): задайте
+`TCLOUD_IMAGE` (в `.env` рядом с compose или в окружении), затем `pull` и `up` без сборки:
+
+```bash
+export TCLOUD_IMAGE=ghcr.io/nikitkazxc/tcloud-backend:1.0.0
+docker compose -f docker-compose.prod.yml pull
+docker compose -f docker-compose.prod.yml up -d --no-build
+```
+
+Без `TCLOUD_IMAGE` compose собирает локальный образ `tcloud:latest` (`make up`). Фронтенда в этом compose нет: образ
+`ghcr.io/nikitkazxc/tcloud-backend` — только API и воркеры.
+
 Перед первым запуском задайте в `.env` неочевидный `ROOT_LOGIN` (не `root`): после 5 неверных паролей подряд вход в
 учётную запись закрывается на 15 мин для всех, и по известному логину root можно держать запертым (security.md,
 «Доступ»). `ROOT_PASSWORD` — не короче 12 символов, `make env` генерирует 24.
