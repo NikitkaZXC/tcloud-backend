@@ -1,69 +1,69 @@
-# Тестирование
+# Testing
 
-| Команда | Что |
+| Command | What |
 |---|---|
-| `make test` | unit (`tests/unit`): пути, Range, медиа, SSRF, ClamAV-протокол, бюджет диска, параллельная выгрузка кусков, настройки |
-| `make test-integration` | `tests/integration`: миграции туда-обратно и `alembic check`, гонки на уровне БД, `TaskStore` и Lua-скрипты захвата, смены приоритета и отмены на Redis, `TaskSweeper`, приоритет очереди на настоящем RabbitMQ, сквозные тесты воркеров отдельными процессами |
-| `make test-api` | `tests/api`: HTTP через `httpx.AsyncClient` + `ASGITransport`, lifespan приложения и настоящие Celery-воркеры в потоках (брокер `memory://`) с фейковыми Telegram и ClamAV |
-| `make test-all` / `make test-cov` | всё / с покрытием |
-| `make test-docker` | всё в контейнере с ffmpeg и Postgres (`docker-compose.test.yml`) — так же, как в CI |
+| `make test` | unit (`tests/unit`): paths, Range, media, SSRF, the ClamAV protocol, disk budget, parallel chunk upload, settings |
+| `make test-integration` | `tests/integration`: migrations up and down and `alembic check`, DB-level races, `TaskStore` and the Lua scripts for claim, priority change and cancel on Redis, `TaskSweeper`, queue priority on a real RabbitMQ, end-to-end worker tests in separate processes |
+| `make test-api` | `tests/api`: HTTP through `httpx.AsyncClient` + `ASGITransport`, the app lifespan and real Celery workers in threads (broker `memory://`) with fake Telegram and ClamAV |
+| `make test-all` / `make test-cov` | everything / with coverage |
+| `make test-docker` | everything in a container with ffmpeg and Postgres (`docker-compose.test.yml`), the same as in CI |
 
-- Если `uv run pytest` падает из-за старых путей в `.venv`, запускайте `.venv/bin/python -m pytest` или пересоздайте
-  окружение (`rm -rf .venv && uv sync`).
-- Маркеры `unit`/`integration`/`api` ставятся по папке автоматически; `ffmpeg` — тесты, которым нужен ffmpeg,
-  без него они пропускаются.
-- Postgres: testcontainers (`postgres:18`) или готовый сервер через `TEST_POSTGRES_HOST`/`TEST_POSTGRES_PORT`
-  (тогда создаётся своя временная база). Перед каждым тестом таблицы очищаются.
-- Redis: testcontainers (`redis:8`) или `TEST_REDIS_HOST`; перед каждым тестом `FLUSHDB`.
-  RabbitMQ: testcontainers (`rabbitmq:4-alpine`) или `TEST_RABBITMQ_URL` — только для теста приоритета.
-- Воркеры (`celery.contrib.testing.worker.start_worker`, пул `threads`) поднимаются раз на сессию: download и prepare —
-  по 4 потока, telegram — 2. Тестовый воркер не шлёт `worker_ready`, поэтому heartbeat фикстура запускает сама.
-  На каждый тест — свой `WorkerRuntime` с фейками; после теста ждём, пока активные задачи закончатся.
-- `tests/api/test_tasks.py`: отмена в очереди и во время отправки (сообщение удаляется), смена приоритета, повтор по ссылке,
-  повторная доставка после падения воркера (после отправки и после коммита — без второго сообщения), дубль сообщения
-  и устаревшее поколение пропускаются, вебхук при отмене из очереди.
-- `tests/api/test_settings.py`: настройки пользователя — значения по умолчанию, частичный `PATCH`, ошибки (неизвестный
-  ключ, плохое значение, `unsafe_url`), сброс, изоляция пользователей, API-ключ, подстановка в загрузки (с устройства,
-  по ссылке, пачкой, `encrypt` + `media`, вебхук) и архивы; `tests/unit/test_settings.py` — `with_defaults`, `merged`,
+- If `uv run pytest` fails because of stale paths in `.venv`, run `.venv/bin/python -m pytest` or recreate
+  the environment (`rm -rf .venv && uv sync`).
+- The `unit`/`integration`/`api` markers are set by folder automatically; `ffmpeg` marks tests that need ffmpeg,
+  they are skipped without it.
+- Postgres: testcontainers (`postgres:18`) or an existing server through `TEST_POSTGRES_HOST`/`TEST_POSTGRES_PORT`
+  (then a temporary database of its own is created). Tables are cleared before every test.
+- Redis: testcontainers (`redis:8`) or `TEST_REDIS_HOST`; `FLUSHDB` before every test.
+  RabbitMQ: testcontainers (`rabbitmq:4-alpine`) or `TEST_RABBITMQ_URL`, only for the priority test.
+- Workers (`celery.contrib.testing.worker.start_worker`, pool `threads`) start once per session: download and prepare
+  with 4 threads each, telegram with 2. The test worker does not send `worker_ready`, so the fixture starts the heartbeat itself.
+  Every test gets its own `WorkerRuntime` with fakes; after the test we wait until active tasks finish.
+- `tests/api/test_tasks.py`: cancel in the queue and during sending (the message is deleted), priority change, URL retry,
+  redelivery after a worker crash (after sending and after the commit, without a second message), a duplicate message
+  and a stale generation are skipped, a webhook on cancel from the queue.
+- `tests/api/test_settings.py`: user settings: defaults, partial `PATCH`, errors (unknown
+  key, bad value, `unsafe_url`), reset, user isolation, API key, defaults applied to uploads (from a device,
+  from a URL, in a batch, `encrypt` + `media`, webhook) and archives; `tests/unit/test_settings.py`: `with_defaults`, `merged`,
   `check_webhook`.
-- API-тесты идут на брокере `memory://`: он не соблюдает приоритет, а несколько встроенных воркеров на RabbitMQ в одном
-  процессе делят цикл событий kombu и портят кадры AMQP (`UnexpectedFrame`). Поэтому порядок и падения проверяются
-  отдельно, в `tests/integration/test_workers_e2e.py`:
-  настоящие `celery worker` отдельными процессами (`tests/integration/worker_app.py`: фейковый Telegram пишет отправки
-  в общий файл) на RabbitMQ, Redis и Postgres из testcontainers:
-  - `high` обгоняет пять ждущих `low`; поднятый приоритет ждущей задачи двигает её вперёд;
-  - воркер убит `SIGKILL` во время отправки — второй воркер получает задачу от RabbitMQ и отправляет один раз;
-  - воркер убит после отправки, но до записи в `files` — второй воркер не отправляет заново, а дописывает строку
-    с тем же message_id.
-  Проверено мутациями: без `sent` в задаче тест падает с двумя сообщениями, без `x-max-priority` падают тесты порядка.
-- Гонки и защита ресурсов из аудита: `tests/api/test_replace_races.py` (`replace` после удаления цели, пропажа сообщения
-  при параллельной замене, старые сообщения удаляются после коммита и при повторной доставке; пауза отправки через
-  `FakeTelegram.sent_hook` и `threading.Event`), `tests/api/test_quota.py` (параллельные `POST /api/uploads`, файлы в
-  очереди, завершённая сессия и архивы в квоте), `tests/api/test_auth_tokens.py` (ветки JWT: истёк, нет `exp`, `none`,
-  HS256, не тот `token_type`, удалённый пользователь; заблокированный по ключу, куке и refresh — `403`),
-  `tests/unit/test_webhook.py` (один вебхук в полёте, повтор со свежим состоянием), `tests/unit/test_telegram_client.py`
-  (ветки `TelegramClient` и `TelegramLogin` на фейковом Telethon), `tests/unit/test_ci.py` (права токена CI и SHA-пины).
-- `tests/fakes.py` — `FakeTelegram` (каналы и сообщения в памяти, задержка, FloodWait, сетевые сбои, счётчик
-  одновременных отправок) и `FakeScanner`. `tests/factories.py` — образцы медиа (Pillow, ffmpeg lavfi).
-- Гонки: 100 параллельных загрузок при 2 потоках worker-telegram, ожидание в очереди `uploads.telegram`, пауза FloodWait,
-  блокировка пути в Redis, частичные обновления задачи не затирают друг друга.
+- API tests run on the `memory://` broker: it ignores priority, and several embedded workers on RabbitMQ in one
+  process share the kombu event loop and corrupt AMQP frames (`UnexpectedFrame`). So ordering and crashes are checked
+  separately, in `tests/integration/test_workers_e2e.py`:
+  real `celery worker` processes (`tests/integration/worker_app.py`: the fake Telegram writes sends
+  to a shared file) on RabbitMQ, Redis and Postgres from testcontainers:
+  - `high` overtakes five waiting `low`; a raised priority of a waiting task moves it forward;
+  - a worker killed with `SIGKILL` during sending: a second worker gets the task from RabbitMQ and sends once;
+  - a worker killed after sending but before the `files` write: the second worker does not send again but writes the row
+    with the same message_id.
+  Verified by mutation: without `sent` in the task the test fails with two messages, without `x-max-priority` the ordering tests fail.
+- Races and resource protection from the audit: `tests/api/test_replace_races.py` (`replace` after the target was deleted, a message gone
+  during a parallel replace, old messages are deleted after the commit and on redelivery; the send is paused through
+  `FakeTelegram.sent_hook` and `threading.Event`), `tests/api/test_quota.py` (parallel `POST /api/uploads`, files in
+  the queue, a finished session and archives in the quota), `tests/api/test_auth_tokens.py` (JWT branches: expired, no `exp`, `none`,
+  HS256, wrong `token_type`, deleted user; blocked by key, cookie and refresh gives `403`),
+  `tests/unit/test_webhook.py` (one webhook in flight, retry with the fresh state), `tests/unit/test_telegram_client.py`
+  (`TelegramClient` and `TelegramLogin` branches on a fake Telethon), `tests/unit/test_ci.py` (workflow token permissions and SHA pins).
+- `tests/fakes.py`: `FakeTelegram` (channels and messages in memory, delay, FloodWait, network failures, a counter of
+  concurrent sends) and `FakeScanner`. `tests/factories.py`: media samples (Pillow, ffmpeg lavfi).
+- Races: 100 parallel uploads with 2 worker-telegram threads, waiting in the `uploads.telegram` queue, the FloodWait pause,
+  the path lock in Redis, partial task updates do not overwrite each other.
 
-## Нагрузка
+## Load
 
 ```bash
-make load-up        # Postgres, Redis и RabbitMQ для стенда + миграции
-make load-app       # API на :8100 с фейковым Telegram
-make load-workers   # три Celery-воркера отдельными процессами на настоящем RabbitMQ (LOAD_TELEGRAM_DELAY, с на файл)
-make load           # locust headless: LOAD_CLIENTS, LOAD_SPAWN_RATE, LOAD_DURATION; отчёт в logs/load/
+make load-up        # Postgres, Redis and RabbitMQ for the stand + migrations
+make load-app       # API on :8100 with a fake Telegram
+make load-workers   # three Celery workers in separate processes on a real RabbitMQ (LOAD_TELEGRAM_DELAY, s per file)
+make load           # locust headless: LOAD_CLIENTS, LOAD_SPAWN_RATE, LOAD_DURATION; report in logs/load/
 make load-down
 ```
 
-Пороги: `LOAD_MAX_P95_MS` (500), `LOAD_MAX_FAIL_RATIO` (1%).
-Каждый виртуальный пользователь входит как root стенда (`ROOT_LOGIN=load` в `tests/load/env.load`) и выпускает себе
-API-ключ, поэтому прогон не упирается в 15-минутный срок access-токена. `make load-up` создаёт ключи JWT в `logs/load/`.
-Запросы подготовки (`setup: ...`: вход, ключ, хранилище) в пороги не входят: 30 одновременных входов упираются в argon2
-(p95 ~3,5 с) — это цена хеширования пароля, а не рабочей нагрузки.
-`429` от ограничителя — ожидаемое поведение, клиент стенда ждёт `retry_after`.
-Замер 2026-11-16, RabbitMQ и воркеры отдельными процессами, 100 пользователей / 30 с: ~450 RPS, 0% ошибок,
-`POST /api/uploads` p95 190 мс; полный путь загрузки упирается в пропускную способность Telegram
-(2 потока × 0,2 с на файл), остальные ждут в очереди.
+Thresholds: `LOAD_MAX_P95_MS` (500), `LOAD_MAX_FAIL_RATIO` (1%).
+Every virtual user signs in as the stand's root (`ROOT_LOGIN=load` in `tests/load/env.load`) and issues itself
+an API key, so the run is not bound by the 15-minute access token lifetime. `make load-up` creates JWT keys in `logs/load/`.
+Setup requests (`setup: ...`: sign-in, key, storage) are not counted against the thresholds: 30 concurrent sign-ins are bound by argon2
+(p95 ~3.5 s), which is the cost of password hashing, not of the working load.
+`429` from the limiter is expected behaviour, the stand client waits for `retry_after`.
+Measured on 2026-11-16, RabbitMQ and workers in separate processes, 100 users / 30 s: ~450 RPS, 0% errors,
+`POST /api/uploads` p95 190 ms; the full upload path is bound by Telegram throughput
+(2 threads × 0.2 s per file), the rest wait in the queue.

@@ -1,45 +1,45 @@
-# Документация tcloud
+# tcloud documentation
 
-Хранилище медиа поверх Telegram: файлы лежат в приватных каналах (хранилищах), у каждого файла свой UUID
-и путь `tcloud/{uuid хранилища}/{папки}/{файл}`, всё управляется через REST API.
+Media storage on top of Telegram: files live in private channels (storages), every file has its own UUID
+and a path `tcloud/{storage uuid}/{folders}/{file}`, everything is managed through a REST API.
 
-Точка входа — [`../README.md`](../README.md) (запуск, команды, настройки, тесты). Правила для Claude Code — в
-[`../CLAUDE.md`](../CLAUDE.md). Здесь — как всё устроено, со схемами Mermaid, сверенными с кодом, и путями к файлам,
-где это сделано. Как этим API пользуется фронтенд — в `../tcloud-frontend/docs/`.
+The entry point is [`../README.md`](../README.md) (launch, commands, settings, tests). Rules for Claude Code are in
+[`../CLAUDE.md`](../CLAUDE.md). This folder explains how everything works, with Mermaid diagrams checked against the code and paths to the files
+where it is done. How the frontend uses this API is in `../tcloud-frontend/docs/`.
 
-**Правило: изменение кода, которое меняет поток, показанный в `docs/`, обновляет документ и его схему в том же
-коммите.** Новая схема — блок ` ```mermaid `; перед коммитом проверьте, что она рендерится (`mmdc` из
-`@mermaid-js/mermaid-cli`, установленный вне репозитория).
+**Rule: a code change that alters a flow shown in `docs/` updates the document and its diagram in the same
+commit.** A new diagram is a ` ```mermaid ` block; before committing check that it renders (`mmdc` from
+`@mermaid-js/mermaid-cli`, installed outside the repository). Docs are written in English.
 
-## Содержание
+## Contents
 
-### Основы
+### Basics
 
-| Документ | О чём |
+| Document | About |
 |---|---|
-| [overview.md](overview.md) | что делает сервис, словарь терминов, главные правила, планы |
-| [architecture.md](architecture.md) | схема компонентов (API, воркеры, PostgreSQL, Redis, RabbitMQ, ClamAV, Telegram, nginx), слои, папки, сервисы, транзакции, соглашения |
-| [database.md](database.md) | ER-схема, таблицы, индексы и зачем они, миграции |
-| [redis.md](redis.md) | карта ключей Redis: задачи, очереди, блокировки, heartbeat, активность, токены |
-| [security.md](security.md) | доступ, проверка файлов, ClamAV, SSRF, контейнер, секреты |
-| [integrations.md](integrations.md) | Telegram (Telethon) и его лимиты, ClamAV, исходящий HTTP |
-| [background-tasks.md](background-tasks.md) | Celery и RabbitMQ: схема очередей, путь загрузки (sequence), статусы и коды ожидания (state), приоритеты, отмена, лимиты, FloodWait, вебхуки |
+| [overview.md](overview.md) | what the service does, glossary, main rules, plans |
+| [architecture.md](architecture.md) | component diagram (API, workers, PostgreSQL, Redis, RabbitMQ, ClamAV, Telegram, nginx), layers, folders, services, transactions, conventions |
+| [database.md](database.md) | ER diagram, tables, indexes and why they exist, migrations |
+| [redis.md](redis.md) | Redis key map: tasks, queues, locks, heartbeat, activity, tokens |
+| [security.md](security.md) | access, file checks, ClamAV, SSRF, container, secrets |
+| [integrations.md](integrations.md) | Telegram (Telethon) and its limits, ClamAV, outgoing HTTP |
+| [background-tasks.md](background-tasks.md) | Celery and RabbitMQ: queue diagram, upload path (sequence), statuses and waiting codes (state), priorities, cancel, limits, FloodWait, webhooks |
 
-### Работа с проектом
+### Working on the project
 
-| Документ | О чём |
+| Document | About |
 |---|---|
-| [development.md](development.md) | установка, запуск локально, команды `make`, миграции, форматирование, зависимости |
-| [deployment.md](deployment.md) | Docker-образ, compose для прода (API, воркеры, RabbitMQ, Redis), первый вход, [бэкапы и восстановление](deployment.md#бэкапы-и-восстановление) |
-| [testing.md](testing.md) | unit, integration, API и нагрузочные тесты |
+| [development.md](development.md) | install, local run, `make` commands, migrations, formatting, dependencies |
+| [deployment.md](deployment.md) | Docker image, production compose (API, workers, RabbitMQ, Redis), first sign-in, [backups and restore](deployment.md#backups-and-restore) |
+| [testing.md](testing.md) | unit, integration, API and load tests |
 
-### Процессы
+### Flows
 
-| Документ | О чём |
+| Document | About |
 |---|---|
-| [flows/users.md](flows/users.md) | пользователи и роли; схемы входа, refresh с reuse detection и проверки запроса (кука или API-ключ); гранты |
-| [flows/auth.md](flows/auth.md) | вход в Telegram через API: три сессии, состояния входа, что происходит после входа, старые сессии |
-| [flows/storages.md](flows/storages.md) | хранилища: создание и удаление (схема), подключение из `.env`, папка чатов `TCloud` (схема), кеш числа каналов (схема), индикаторы чтения и записи |
-| [flows/folders-and-files.md](flows/folders-and-files.md) | пути, папки, метаданные, скачивание с Range и расшифровкой (схема), архивы (схема), превью, поиск, удаление |
-| [flows/settings.md](flows/settings.md) | настройки пользователя: терпимое чтение, строгий `PATCH`, слияние (схема), все ключи, подстановка в загрузки и архивы |
-| [flows/uploads.md](flows/uploads.md) | загрузка с устройства, по ссылке, пачками; `send_as`, `on_conflict`, `encrypt`, прогресс, коды ожидания и предупреждений |
+| [flows/users.md](flows/users.md) | users and roles; diagrams of sign-in, refresh with reuse detection and request checks (cookie or API key); grants |
+| [flows/auth.md](flows/auth.md) | Telegram sign-in through the API: three sessions, login states, what happens after sign-in, old sessions |
+| [flows/storages.md](flows/storages.md) | storages: create and delete (diagram), connecting from `.env`, the `TCloud` chat folder (diagram), channel count cache (diagram), read and write indicators |
+| [flows/folders-and-files.md](flows/folders-and-files.md) | paths, folders, metadata, download with Range and decryption (diagram), archives (diagram), previews, search, delete |
+| [flows/settings.md](flows/settings.md) | user settings: tolerant read, strict `PATCH`, merge (diagram), all keys, defaults for uploads and archives |
+| [flows/uploads.md](flows/uploads.md) | upload from a device, from a URL, in batches; `send_as`, `on_conflict`, `encrypt`, progress, waiting and warning codes |

@@ -1,412 +1,412 @@
-# Загрузки
+# Uploads
 
-## С устройства — одним запросом
+## From a device in one request
 
-`POST /api/uploads?path=...&send_as=...&on_conflict=...&priority=...&allow_unscannable=...&encrypt=...&callback_url=...`, тело — сам файл.
-Размер берётся из `Content-Length` (без него `411 length_required`). Все проверки идут до чтения тела: путь, расширение,
-лимит сервера `uploads.max_file_size`, место на диске, число активных задач, конфликт, занятость пути. Затем тело пишется во временный файл,
-и задача встаёт в очередь. Ответ `202` с задачей `queued`. Весь путь по очередям и воркерам со схемами —
-background-tasks.md («Путь загрузки целиком», «Статусы и стадии»).
+`POST /api/uploads?path=...&send_as=...&on_conflict=...&priority=...&allow_unscannable=...&encrypt=...&callback_url=...`, the body is the file itself.
+The size comes from `Content-Length` (without it, `411 length_required`). All checks run before the body is read: path, extension,
+the server limit `uploads.max_file_size`, disk space, the number of active tasks, conflicts, whether the path is taken. Then the body is written to a temp file,
+and the task is queued. The answer is `202` with a `queued` task. The whole path through queues and workers with diagrams is in
+background-tasks.md ("The whole upload path", "Statuses and stages").
 
-Не переданные `send_as`, `on_conflict`, `priority`, `allow_unscannable`, `encrypt` и `callback_url` берутся из
-настроек пользователя (`uploads.*`, flows/settings.md); значения «по умолчанию» ниже — это значения настроек по
-умолчанию. Явный параметр всегда главнее. Пустой `callback_url=` выключает вебхук из настроек для одной загрузки.
-Тело больше заявленного → `413`, меньше → `400 size_mismatch`; в обоих случаях задача не создаётся.
-Клиент оборвал загрузку посреди тела (отмена в браузере) — Starlette поднимает `ClientDisconnect`: недописанный файл
-удаляется, путь освобождается, задача не создаётся, в лог — строка `INFO` без трассировки (обработчик в
-`api/exception/handlers.py`, ответ `400 client_disconnected` уже никто не читает).
+`send_as`, `on_conflict`, `priority`, `allow_unscannable`, `encrypt` and `callback_url` not given come from the
+user's settings (`uploads.*`, flows/settings.md); the "default" values below are the defaults of those
+settings. An explicit parameter always wins. An empty `callback_url=` turns off the settings webhook for one upload.
+A body bigger than declared → `413`, smaller → `400 size_mismatch`; in both cases no task is created.
+If the client drops the upload in the middle of the body (a cancel in the browser), Starlette raises `ClientDisconnect`: the partial file
+is deleted, the path is released, no task is created, the log gets an `INFO` line without a traceback (the handler is in
+`api/exception/handlers.py`, nobody reads the `400 client_disconnected` answer any more).
 
-## С устройства — частями (с докачкой)
+## From a device in chunks (resumable)
 
-Для больших файлов и нестабильной сети: файл уходит кусками, обрыв связи стоит максимум одного куска. Обычный
-`POST /api/uploads` работает как прежде. Код — `UploadService.create_session` / `put_chunk` / `abort_session`.
+For big files and unstable networks: the file goes in chunks, a dropped connection costs at most one chunk. A plain
+`POST /api/uploads` works as before. Code: `UploadService.create_session` / `put_chunk` / `abort_session`.
 
-| Запрос | Ответ |
+| Request | Response |
 |---|---|
-| `POST /api/uploads/sessions?size=N&path=...` + те же `send_as`, `on_conflict`, `priority`, `allow_unscannable`, `encrypt`, `callback_url` (умолчания из настроек) | `201 {session_id, path, size, offset: 0, chunk_size, expires_at}`; для `on_conflict=skip` и существующего файла — `200` с готовой задачей (`status: done`, предупреждение `skipped_exists`), сессии нет |
-| `PUT /api/uploads/sessions/{id}?offset=K`, тело — кусок, `Content-Length` обязателен | не последний кусок — `200` с тем же объектом сессии (новый `offset`); последний — `202` с задачей `queued` (та же форма, что у `POST /api/uploads`) |
-| `GET /api/uploads/sessions/{id}` | `200` объект сессии |
-| `HEAD /api/uploads/sessions/{id}` | `200`, заголовок `Upload-Offset` (открыт для CORS) |
-| `DELETE /api/uploads/sessions/{id}` | `204`: принятая часть удалена, путь и слот освобождены (владелец или тот, кто им управляет) |
-| `GET /api/uploads/sessions?user_id=` | `200 [UploadSession]`: открытые сессии свои или (admin/root) пользователя, которым управляешь |
+| `POST /api/uploads/sessions?size=N&path=...` + the same `send_as`, `on_conflict`, `priority`, `allow_unscannable`, `encrypt`, `callback_url` (defaults from settings) | `201 {session_id, path, size, offset: 0, chunk_size, expires_at}`; for `on_conflict=skip` and an existing file, `200` with a finished task (`status: done`, warning `skipped_exists`), no session |
+| `PUT /api/uploads/sessions/{id}?offset=K`, the body is a chunk, `Content-Length` is required | not the last chunk: `200` with the same session object (a new `offset`); the last one: `202` with a `queued` task (the same shape as `POST /api/uploads`) |
+| `GET /api/uploads/sessions/{id}` | `200` session object |
+| `HEAD /api/uploads/sessions/{id}` | `200`, header `Upload-Offset` (exposed for CORS) |
+| `DELETE /api/uploads/sessions/{id}` | `204`: the received part is deleted, the path and the slot are released (the owner or someone who manages them) |
+| `GET /api/uploads/sessions?user_id=` | `200 [UploadSession]`: open sessions, one's own or (admin/root) of a user one manages |
 
-- **Создание** делает все проверки `POST /api/uploads` сразу, по `size`: путь, права, вебхук, сессия Telegram,
-  `uploads.max_file_size` (`413 too_large`), место на диске (×2 при шифровании), `UPLOAD_MAX_ACTIVE_TASKS`, конфликт
-  (`409 conflict` с `suggested_name`; `keep_both` сразу выбирает свободное имя — оно в `path` ответа; `skip` — см.
-  таблицу), занятость пути (`409 upload_in_progress`). Затем путь блокируется (`path:{path}`, как у идущей загрузки),
-  берётся слот `UPLOAD_MAX_FILES_ON_DISK` (`429 too_many_tasks`) и создаётся пустой временный файл. `session_id` — это
-  будущий id задачи. `size` ≥ 1.
-- **Права на каждом куске**: каждый `PUT` заново проверяет право загрузки в папку (и удаления при `replace`) по
-  текущим грантам: грант отозвали — `403 forbidden`, сессия сразу удаляется (файл, путь, слот, квота освобождаются).
-- **Кусок**: `offset` должен равняться принятому, иначе `409 offset_mismatch` с `{offset}` — текущим смещением, с него и
-  продолжать. Кусок не больше `chunk_size` (`UPLOAD_CHUNK_SIZE`, 64 МиБ) и не больше остатка файла, иначе
-  `413 chunk_too_large` с `{limit}` — сколько можно прислать; размер куска внутри этого предела любой (рекомендуется
-  ровно `chunk_size`). Тело короче `Content-Length` → `400 size_mismatch`, длиннее → `413 too_large`, без заголовка →
-  `411 length_required`. При любой ошибке и при обрыве посреди куска файл обрезается до принятого смещения — битых
-  данных не остаётся, кусок просто шлётся заново. Последний кусок ставит задачу в очередь тем же кодом, что и
-  `POST /api/uploads` после приёма тела (`UploadService._queue_device`); сессия удаляется, дальше — обычная задача.
-- **Параллельно** куски одной сессии не принимаются: на время приёма куска берётся Redis-блокировка
-  `job:upload:{id}` (120 с, продлевается каждые 30 с, снимается в конце, в том числе при обрыве); второй `PUT` или
-  `DELETE` в это время — `409 upload_session_busy` с `retry_after`. Смещение перечитывается уже под блокировкой.
-- **Срок**: сессия без новых кусков живёт `UPLOAD_SESSION_IDLE_TTL` (1 ч) с последнего принятого куска (или с создания),
-  но не дольше `UPLOAD_SESSION_TTL` (24 ч) с создания (`started_at`): `expires_at = min(последний кусок + IDLE,
-  started_at + TTL)`. Каждый кусок продлевает её, блокировку пути (`UPLOAD_LOCK_TTL`) и слот диска. Брошенная сессия
-  так держит место и путь не больше часа. Держите `UPLOAD_SESSION_TTL` ≤ `UPLOAD_LOCK_TTL`.
-  Просроченная сессия сразу отвечает `404`, а `TaskSweeper.clean_tmp` удаляет её файл, ключи и освобождает путь
-  (background-tasks.md, «Сбои»).
-- **Доступ**: `GET`/`HEAD`/`PUT` сессии — только создателю; другим (и admin, и root) — `404 upload_session_not_found`,
-  как и несуществующей или истёкшей. `DELETE` и список `GET /api/uploads/sessions?user_id=` доступны ещё и тому, кто
-  управляет владельцем (как `UserService.get_manageable`): root — любым, admin — пользователями с ролью `user`; чужая
-  чужому — тоже `404`. Без `user_id` список — свои открытые сессии. Права на папку проверяются при создании.
-- **Блокировка и удаление пользователя** (`PATCH /api/users/{id}` с `blocked: true`, `DELETE /api/users/{id}`)
-  отменяют все его сессии: файл удаляется, путь, слот и резерв освобождаются (`temp.cancel_user_sessions`), и все его
-  незавершённые задачи (`temp.cancel_user_tasks`, flows/users.md). Сессия,
-  кусок которой принимается в этот момент (`job:upload:{id}` занят), пропускается и истечёт через
+- **Creation** runs all `POST /api/uploads` checks at once, by `size`: path, rights, webhook, Telegram session,
+  `uploads.max_file_size` (`413 too_large`), disk space (×2 with encryption), `UPLOAD_MAX_ACTIVE_TASKS`, conflict
+  (`409 conflict` with `suggested_name`; `keep_both` picks a free name right away, it is in the response `path`; `skip`, see
+  the table), whether the path is taken (`409 upload_in_progress`). Then the path is locked (`path:{path}`, as for a running upload),
+  an `UPLOAD_MAX_FILES_ON_DISK` slot is taken (`429 too_many_tasks`) and an empty temp file is created. `session_id` is
+  the future task id. `size` ≥ 1.
+- **Rights on every chunk**: every `PUT` checks again the right to upload into the folder (and to delete with `replace`) against the
+  current grants: if the grant was revoked, `403 forbidden`, and the session is deleted at once (file, path, slot, quota are released).
+- **Chunk**: `offset` must equal what was received, otherwise `409 offset_mismatch` with `{offset}`, the current offset to
+  continue from. A chunk is at most `chunk_size` (`UPLOAD_CHUNK_SIZE`, 64 MiB) and at most the remainder of the file, otherwise
+  `413 chunk_too_large` with `{limit}`, how much may be sent; within that bound any chunk size works (exactly
+  `chunk_size` is recommended). A body shorter than `Content-Length` → `400 size_mismatch`, longer → `413 too_large`, without the header →
+  `411 length_required`. On any error and on a drop in the middle of a chunk the file is truncated back to the received offset: no
+  broken data stays, the chunk is simply sent again. The last chunk queues the task with the same code as
+  `POST /api/uploads` after receiving the body (`UploadService._queue_device`); the session is deleted, from then on it is an ordinary task.
+- **In parallel**, chunks of one session are not accepted: while a chunk is received, a Redis lock
+  `job:upload:{id}` is taken (120 s, renewed every 30 s, released at the end, a drop included); a second `PUT` or
+  `DELETE` at that time gets `409 upload_session_busy` with `retry_after`. The offset is re-read under the lock.
+- **Lifetime**: a session without new chunks lives `UPLOAD_SESSION_IDLE_TTL` (1 h) from the last received chunk (or from creation),
+  but no longer than `UPLOAD_SESSION_TTL` (24 h) from creation (`started_at`): `expires_at = min(last chunk + IDLE,
+  started_at + TTL)`. Every chunk extends it, the path lock (`UPLOAD_LOCK_TTL`) and the disk slot. So an abandoned session
+  holds space and the path for at most an hour. Keep `UPLOAD_SESSION_TTL` ≤ `UPLOAD_LOCK_TTL`.
+  An expired session answers `404` at once, and `TaskSweeper.clean_tmp` deletes its file and keys and releases the path
+  (background-tasks.md, "Failures").
+- **Access**: `GET`/`HEAD`/`PUT` of a session only for its creator; others (admin and root too) get `404 upload_session_not_found`,
+  like a nonexistent or expired one. `DELETE` and the list `GET /api/uploads/sessions?user_id=` are also available to whoever
+  manages the owner (like `UserService.get_manageable`): root for anyone, admin for users with the `user` role; someone else's session for someone
+  else is also `404`. Without `user_id` the list shows one's own open sessions. Folder rights are checked at creation.
+- **Blocking and deleting a user** (`PATCH /api/users/{id}` with `blocked: true`, `DELETE /api/users/{id}`)
+  cancel all their sessions: the file is deleted, the path, slot and reservation are released (`temp.cancel_user_sessions`), and all their
+  unfinished tasks (`temp.cancel_user_tasks`, flows/users.md). A session
+  whose chunk is being received at that moment (`job:upload:{id}` is taken) is skipped and expires after
   `UPLOAD_SESSION_IDLE_TTL`.
-- **Квоты пользователя** (кроме root; `0` — без лимита): не больше `UPLOAD_USER_MAX_SESSIONS` (10) открытых сессий
-  (`429 too_many_upload_sessions` с `limit`) и не больше `UPLOAD_USER_DISK_QUOTA_MB` (51200 МиБ) временных файлов на
-  сервере (`507 temp_quota_exceeded` с `limit` и `used` в байтах). Занятое (`TaskStore.user_disk`) = полный размер
-  живых сессий (×2 при шифровании) + по каждой задаче пользователя большее из записи `disk:usage` (полный размер
-  задачи во `tmp`: тело ×2 при шифровании, архив) и остатка в `disk:reserved`. Запись `disk:usage` появляется под
-  `job:disk` вместе с проверкой — до приёма тела, поэтому параллельные `POST /api/uploads` видят друг друга, — и
-  держится до `release` (готово, ошибка, отмена, потеря), так что файлы, уже лежащие на диске в очереди в Telegram,
-  тоже считаются. Последний кусок сессии переносит её размер в `disk:usage` задачи; ссылка без `size`, пока скачивается,
-  считается уже записанными байтами (или `Content-Length`, если больше; ×2 при шифровании): воркер раз в секунду
-  обновляет её `disk:usage` (`UploadPipeline._download`, `USAGE_INTERVAL`), после скачивания — полным размером. Архивы (`POST /api/folders/archive*`)
-  проверяются так же (оценка `сумма + самый большой файл`), готовый архив считается своим размером
-  (`archive:{id}`), пока не истечёт `UPLOAD_ARCHIVE_TTL`. В общую проверку места `disk:usage` не входит (там только
-  ещё не записанные байты `disk:reserved`), двойного счёта нет.
-  Проверяется при создании сессии, при `POST /api/uploads` (размер тела), при загрузке по ссылке с `size` (и её
-  повторе) и при постановке архива; ссылка без `size` (и её повтор) отклоняется, только если пользователь уже на
-  квоте или сверх неё (занятое ≥ квоты), её размер узнаётся по ходу скачивания.
-- **Лимиты**: `POST` и `PUT` считаются в `UPLOAD_USER` (300 / 60 с), остальные — общее `API_USER`. Пока сессия не
-  завершена, задачи нет: она не входит в `UPLOAD_MAX_ACTIVE_TASKS` и не видна в `/api/tasks` — так же, как тело
-  обычной загрузки во время приёма. Слот `UPLOAD_MAX_FILES_ON_DISK` сессия держит с создания до конца задачи или отмены.
-  Место на диске проверяется при создании (резерв — сама сессия в Redis) и перед каждым куском (длина куска;
-  собственный остаток сессия из `session_bytes` исключает, чужие сессии и журнал `disk:reserved` — вычитает).
-- **Прокси**: тело одного запроса — не больше `chunk_size`, поэтому `client_max_body_size` прокси должен быть ≥ 64 МиБ
+- **User quotas** (except root; `0` means no limit): at most `UPLOAD_USER_MAX_SESSIONS` (10) open sessions
+  (`429 too_many_upload_sessions` with `limit`) and at most `UPLOAD_USER_DISK_QUOTA_MB` (51200 MiB) of temp files on the
+  server (`507 temp_quota_exceeded` with `limit` and `used` in bytes). Used (`TaskStore.user_disk`) = the full size of
+  live sessions (×2 with encryption) + for each of the user's tasks the larger of its `disk:usage` entry (the task's full
+  size in `tmp`: body ×2 with encryption, an archive) and its remainder in `disk:reserved`. The `disk:usage` entry appears under
+  `job:disk` together with the check, before the body is received, so parallel `POST /api/uploads` see each other, and
+  is kept until `release` (done, error, cancel, lost), so files already on disk while queued for Telegram
+  count too. The last chunk of a session moves its size into the task's `disk:usage`; a URL without `size` counts, while downloading,
+  as the bytes already written (or `Content-Length` if that is larger; ×2 with encryption): the worker updates
+  its `disk:usage` once per second (`UploadPipeline._download`, `USAGE_INTERVAL`), and after the download with the full size. Archives (`POST /api/folders/archive*`)
+  are checked the same way (an estimate of `sum + the largest file`), a ready archive counts with its size
+  (`archive:{id}`) until `UPLOAD_ARCHIVE_TTL` expires. `disk:usage` is not part of the global disk check (that one has only
+  the not yet written bytes of `disk:reserved`), there is no double counting.
+  It is checked when a session is created, on `POST /api/uploads` (the body size), on a URL upload with `size` (and its
+  retry) and when an archive is queued; a URL without `size` (and its retry) is rejected only if the user is already at
+  or over the quota (used ≥ quota), its size becomes known as it downloads.
+- **Limits**: `POST` and `PUT` count towards `UPLOAD_USER` (300 / 60 s), the rest towards the shared `API_USER`. Until the session is
+  finished there is no task: it does not count towards `UPLOAD_MAX_ACTIVE_TASKS` and is not visible in `/api/tasks`, the same as the body
+  of an ordinary upload while it is received. The session holds the `UPLOAD_MAX_FILES_ON_DISK` slot from creation until the task ends or is cancelled.
+  Disk space is checked at creation (the reservation is the session itself in Redis) and before every chunk (the chunk length;
+  the session excludes its own remainder from `session_bytes`, other sessions and the `disk:reserved` ledger are subtracted).
+- **Proxy**: the body of one request is at most `chunk_size`, so the proxy `client_max_body_size` must be ≥ 64 MiB
   (deployment.md).
 
 ```mermaid
 sequenceDiagram
-    participant C as Клиент
+    participant C as Client
     participant A as API
     participant R as Redis
     C->>A: POST /uploads/sessions?size&path
-    A->>R: path NX, disk slot, квоты user_disk (сессии, байты), upload_session:{id}
+    A->>R: path NX, disk slot, user_disk quotas (sessions, bytes), upload_session:{id}
     A-->>C: 201 session_id, chunk_size, offset 0
-    loop пока offset < size
-        C->>A: PUT /uploads/sessions/{id}?offset=K (кусок)
+    loop while offset < size
+        C->>A: PUT /uploads/sessions/{id}?offset=K (chunk)
         A->>R: job:upload:{id} NX
-        A->>A: права на папку (нет → удалить сессию, 403)
-        A->>A: дописать tmp с K (ошибка/обрыв: обрезать до K)
-        A->>R: offset += длина, срок = min(now + IDLE_TTL, started_at + SESSION_TTL)
+        A->>A: folder rights (none → delete the session, 403)
+        A->>A: append tmp from K (error/drop: truncate to K)
+        A->>R: offset += length, expiry = min(now + IDLE_TTL, started_at + SESSION_TTL)
         A-->>C: 200 {offset} / 409 offset_mismatch {offset}
     end
-    A->>R: задача queued, очередь uploads.prepare
-    A-->>C: 202 задача
-    Note over C,A: обрыв: HEAD → Upload-Offset, продолжить PUT с него
+    A->>R: task queued, queue uploads.prepare
+    A-->>C: 202 task
+    Note over C,A: drop: HEAD → Upload-Offset, continue PUT from it
 ```
 
-### Для фронтенда
+### For the frontend
 
-- Новые ручки: `POST /api/uploads/sessions`, `GET /api/uploads/sessions?user_id=` (список, `UploadSession[]`),
+- New endpoints: `POST /api/uploads/sessions`, `GET /api/uploads/sessions?user_id=` (list, `UploadSession[]`),
   `PUT|GET|HEAD|DELETE /api/uploads/sessions/{session_id}`.
-- Объект сессии `UploadSession`: `{session_id: uuid, user_id: uuid, path: string, size: number, offset: number,
-  chunk_size: number, expires_at: string (ISO)}`. `PUT` и `POST` могут вернуть вместо него `Task` (`202` / `200`): есть поле `id` и нет
-  `session_id` — загрузка закончилась, дальше опрашивать `/api/tasks/{id}`.
-- Ошибки: `404 upload_session_not_found`, `403 forbidden` у `PUT` (права отозваны, сессия удалена — начинать заново не
-  имеет смысла без нового гранта), `409 offset_mismatch` (`offset`), `409 upload_session_busy` (`retry_after`),
+- The session object `UploadSession`: `{session_id: uuid, user_id: uuid, path: string, size: number, offset: number,
+  chunk_size: number, expires_at: string (ISO)}`. `PUT` and `POST` may return a `Task` instead (`202` / `200`): it has an `id` field and no
+  `session_id`, the upload is finished, poll `/api/tasks/{id}` from then on.
+- Errors: `404 upload_session_not_found`, `403 forbidden` on `PUT` (rights revoked, the session is deleted; starting again makes no
+  sense without a new grant), `409 offset_mismatch` (`offset`), `409 upload_session_busy` (`retry_after`),
   `413 chunk_too_large` (`limit`), `429 too_many_upload_sessions` (`limit`), `507 temp_quota_exceeded` (`limit`,
-  `used`; также у `POST /api/uploads` и ссылок с `size`); плюс прежние `411 length_required`, `400 size_mismatch`, `413 too_large`,
+  `used`; also on `POST /api/uploads` and URLs with `size`); plus the existing `411 length_required`, `400 size_mismatch`, `413 too_large`,
   `409 conflict`, `409 upload_in_progress`, `429 too_many_tasks`, `507 insufficient_storage`.
-- Заголовок `Upload-Offset` (ответ `HEAD`) открыт в `APP_EXPOSED_HEADERS`.
-- Отмена до конца — `DELETE`; после `202` — обычная отмена задачи.
-- `POST /api/uploads/from-url` и пункты `POST /api/uploads/batch` принимают необязательный `size: number` (байты,
-  ≥ 1, раздел «По ссылке»): ранние `413 too_large` / `507 insufficient_storage`, `bytes_total` сразу известен;
-  несовпадение с реальным размером — задача `failed` с `size_mismatch` (или `too_large`, если тело длиннее).
+- The `Upload-Offset` header (the `HEAD` response) is exposed in `APP_EXPOSED_HEADERS`.
+- Cancel before the end with `DELETE`; after `202`, with an ordinary task cancel.
+- `POST /api/uploads/from-url` and the items of `POST /api/uploads/batch` accept an optional `size: number` (bytes,
+  ≥ 1, section "From a URL"): early `413 too_large` / `507 insufficient_storage`, `bytes_total` is known at once;
+  a mismatch with the real size makes the task `failed` with `size_mismatch` (or `too_large` if the body is longer).
 
-## По ссылке
+## From a URL
 
-`POST /api/uploads/from-url {url, path, size?, send_as, on_conflict, priority, allow_unscannable, encrypt, callback_url}`: имя файла берётся из `path`,
-а не из ссылки. Скачивает worker-download с теми же проверками и лимитами.
+`POST /api/uploads/from-url {url, path, size?, send_as, on_conflict, priority, allow_unscannable, encrypt, callback_url}`: the file name comes from `path`,
+not from the URL. worker-download downloads it with the same checks and limits.
 
-Необязательный `size` (байты, ≥ 1) — заявленный размер файла. С ним при создании идут те же проверки, что у загрузки
-с устройства: больше `uploads.max_file_size` → `413 too_large`, не хватает диска (`2 × size` при шифровании) →
-`507 insufficient_storage`; резерв `size` (`2 × size`) кладётся в журнал диска сразу при постановке под `job:disk`,
-а `bytes_total` задачи равен `size` с самого начала. В воркере `size` — потолок: `Content-Length`, не равный `size`,
-или тело короче `size` → задача `failed` с `size_mismatch`; тело длиннее `size` (сервер не прислал длину) →
-`too_large` (`limit` = `size`), как у `POST /api/uploads`. Повтор (`POST /api/tasks/{id}/retry`) сохраняет `size`
-и снова кладёт резерв. Без `size` поведение прежнее: размер узнаётся из `Content-Length` при скачивании.
+The optional `size` (bytes, ≥ 1) is the declared file size. With it the same checks as for a device upload run at
+creation: bigger than `uploads.max_file_size` → `413 too_large`, not enough disk (`2 × size` with encryption) →
+`507 insufficient_storage`; a reservation of `size` (`2 × size`) goes into the disk ledger right when queued under `job:disk`,
+and the task's `bytes_total` equals `size` from the very start. In the worker `size` is a ceiling: a `Content-Length` other than `size`,
+or a body shorter than `size` → the task is `failed` with `size_mismatch`; a body longer than `size` (the server sent no length) →
+`too_large` (`limit` = `size`), as for `POST /api/uploads`. A retry (`POST /api/tasks/{id}/retry`) keeps `size`
+and reserves again. Without `size` the behaviour is as before: the size is learned from `Content-Length` while downloading.
 
-## Пачкой
+## In a batch
 
-`POST /api/uploads/batch {items: [...]}`: до 100 загрузок по ссылкам (поля как у `from-url`, включая `size`;
-`413`/`507` по `size` приходят в `error` своего пункта, неверный `size` < 1 — `422` на весь запрос). В ответе `batch_id`
-и по каждому пункту `task` или `error`. Общий прогресс: `GET /api/tasks?batch_id=`. Файлы с устройства загружаются
-параллельными `POST /api/uploads` (или сессиями частями, выше), очередь и лимиты одни и те же.
+`POST /api/uploads/batch {items: [...]}`: up to 100 URL uploads (fields as in `from-url`, `size` included;
+`413`/`507` by `size` come in the `error` of their item, an invalid `size` < 1 is `422` for the whole request). The response has `batch_id`
+and for each item a `task` or an `error`. Overall progress: `GET /api/tasks?batch_id=`. Device files are uploaded with
+parallel `POST /api/uploads` (or chunked sessions, above), the queue and limits are the same.
 
 ## `priority`
 
-`low`, `normal` (по умолчанию), `high`. Задачи `high` берутся из очереди раньше, см. background-tasks.md.
+`low`, `normal` (default), `high`. `high` tasks are taken from the queue earlier, see background-tasks.md.
 
-`high` доступен только admin и root. У роли `user` он молча понижается до `normal` (`upload.task_priority`): в
-загрузке, сессии, по ссылке, в пачке, в архивах и в `POST /api/tasks/{id}/priority` — ошибки нет, в ответе задачи
-`priority: "normal"`. Настройка `uploads.priority`/`archives.priority` = `high` у пользователя сохраняется, но
-действует как `normal`.
+`high` is available only to admin and root. For the `user` role it is silently lowered to `normal` (`upload.task_priority`): in
+an upload, a session, a URL, a batch, archives and in `POST /api/tasks/{id}/priority`; there is no error, the task response says
+`priority: "normal"`. A user's `uploads.priority`/`archives.priority` setting of `high` is saved but
+acts as `normal`.
 
-## Квота отправок в Telegram
+## Telegram send quota
 
-Все загрузки идут через один аккаунт Telegram, поэтому у каждого пользователя, кроме root, есть квота на задачи,
-которые отправят файл в Telegram: `RATE_LIMIT_TELEGRAM_SEND_MINUTE_USER` (30 / 60 с) и
-`RATE_LIMIT_TELEGRAM_SEND_DAY_USER` (2000 / 86400 с), скользящее окно как у остальных правил (security.md). Оба правила
-проверяются без записи при создании задачи, до блокировки пути (`POST /api/uploads`, `POST /api/uploads/sessions`,
-`/uploads/from-url`, каждый пункт `/uploads/batch` и `POST /api/tasks/{id}/retry`), а отправка записывается в оба окна
-только когда задача поставлена в очередь (`UploadService._check_send` / `_record_send`; для сессии — после последнего
-куска). Отклонённые попытки (превышение другого правила, `upload_in_progress`, квота, диск, несовпадение размера) квоту
-не тратят; параллельные запросы между проверкой и записью могут немного превысить лимит. Пропуск `skip` существующего файла не считается, архивы —
-тоже (в Telegram они не пишут). Превышение — `429 send_quota_exceeded` с `retry_after`, `limit`, `window` и
-заголовком `Retry-After`; в пачке — в `error` своего пункта. Admin тоже считается, root — нет. Выключить вместе с
-остальными лимитами: `RATE_LIMIT_ENABLED=false`.
+All uploads go through one Telegram account, so every user except root has a quota on tasks
+that will send a file to Telegram: `RATE_LIMIT_TELEGRAM_SEND_MINUTE_USER` (30 / 60 s) and
+`RATE_LIMIT_TELEGRAM_SEND_DAY_USER` (2000 / 86400 s), a sliding window like the other rules (security.md). Both rules
+are checked without recording when a task is created, before the path lock (`POST /api/uploads`, `POST /api/uploads/sessions`,
+`/uploads/from-url`, every item of `/uploads/batch` and `POST /api/tasks/{id}/retry`), and the send is recorded in both windows
+only when the task is queued (`UploadService._check_send` / `_record_send`; for a session, after the last
+chunk). Rejected attempts (another rule exceeded, `upload_in_progress`, quota, disk, a size mismatch) do not spend the
+quota; parallel requests between the check and the record can exceed the limit slightly. A `skip` of an existing file does not count, archives
+neither (they do not write to Telegram). Exceeding it gives `429 send_quota_exceeded` with `retry_after`, `limit`, `window` and the
+`Retry-After` header; in a batch, in the `error` of its item. Admin counts too, root does not. Switch it off together with the
+other limits: `RATE_LIMIT_ENABLED=false`.
 
-## Управление задачей
+## Task control
 
-| Запрос | Что |
+| Request | What |
 |---|---|
-| `POST /api/tasks/{id}/cancel` | отмена на любом шаге: из очереди — сразу, во время работы — не позже ~1 с, итог `cancelled`, временные файлы и неподтверждённое сообщение в Telegram удаляются; `409 task_finished` для завершённых (background-tasks.md, «Отмена») |
-| `POST /api/tasks/{id}/priority {"priority": "high"}` | новый приоритет задачи, которая ждёт в очереди; иначе `409 task_not_queued` |
-| `POST /api/tasks/{id}/retry` | повтор упавшей или отменённой загрузки по ссылке; с устройства — `409 task_not_retryable` |
+| `POST /api/tasks/{id}/cancel` | cancel at any step: from the queue at once, while running within ~1 s, the result is `cancelled`, temp files and an unconfirmed Telegram message are deleted; `409 task_finished` for finished ones (background-tasks.md, "Cancel") |
+| `POST /api/tasks/{id}/priority {"priority": "high"}` | a new priority for a task waiting in a queue; otherwise `409 task_not_queued` |
+| `POST /api/tasks/{id}/retry` | retry of a failed or cancelled URL upload; for a device upload `409 task_not_retryable` |
 
-## Типы файлов
+## File types
 
-Медиа (`kind`: `photo`, `video`, `audio`, `animation`) и всё остальное (`kind = document`, MIME по содержимому; если
-содержимое не узнано (`filetype` не знает текст) — по расширению из встроенной таблицы Python `mimetypes`
-(`MimeTypes(filenames=())`, не зависит от `/etc/mime.types`): `.txt` → `text/plain`, `.md` → `text/markdown`, `.csv`,
-`.json` …; `image/*`, `audio/*`, `video/*` по имени не присваиваются; иначе `application/octet-stream`). MIME документа —
-только метаданные (поиск, фильтры): отдаются документы всегда как `application/octet-stream` + `attachment`. Миграция
-`0014` один раз проставила такие типы старым документам с `application/octet-stream` по расширению. Принимаются любые типы, в том числе исполняемые; не-медиа отдаётся только на скачивание (security.md «Скачивание»).
-Все проверки — в security.md.
+Media (`kind`: `photo`, `video`, `audio`, `animation`) and everything else (`kind = document`, MIME by content; if
+the content is not recognized (`filetype` does not know text), by extension from Python's built-in `mimetypes` table
+(`MimeTypes(filenames=())`, independent of `/etc/mime.types`): `.txt` → `text/plain`, `.md` → `text/markdown`, `.csv`,
+`.json` …; `image/*`, `audio/*`, `video/*` are never assigned by name; otherwise `application/octet-stream`). A document's MIME is
+only metadata (search, filters): documents are always served as `application/octet-stream` + `attachment`. Migration
+`0014` once set such types on old documents stored as `application/octet-stream`, by extension. Any types are accepted, executables included; non-media is served only as a download (security.md "Downloads").
+All checks are in security.md.
 
 ## `allow_unscannable`
 
-`false` по умолчанию: зашифрованные архивы и PDF, Office с макросами и файлы, на которых ClamAV упёрся в лимит
-содержимого (вложенный файл больше лимита, распаковка больше `MaxScanSize`, число файлов, вложенность, время), —
-`unscannable`. `true` — такие файлы принимаются, в задаче предупреждение `unscannable_accepted`. Вирусы отклоняются в
-любом случае.
+`false` by default: encrypted archives and PDFs, Office with macros and files on which ClamAV hit a content
+limit (a nested file over the limit, unpacking over `MaxScanSize`, the file count, nesting, time) are
+`unscannable`. `true`: such files are accepted, with the warning `unscannable_accepted` in the task. Viruses are rejected in
+any case.
 
-Файл больше `CLAMAV_MAX_FILE_SIZE` (2147483645 байт — потолок ClamAV, 2 ГиБ − 3 байта) в ClamAV не отправляется:
-он принимается **всегда**, независимо от `allow_unscannable`, с предупреждением `too_big_to_scan`
-(`params.limit` — лимит в байтах; решение владельца). Тип по magic bytes, проверка медиа декодером и SHA-256 по всему
-файлу остаются. Файл ровно в лимит проверяется как обычно.
+A file bigger than `CLAMAV_MAX_FILE_SIZE` (2147483645 bytes, the ClamAV ceiling, 2 GiB − 3 bytes) is not sent to ClamAV:
+it is accepted **always**, regardless of `allow_unscannable`, with the warning `too_big_to_scan`
+(`params.limit` is the limit in bytes; the owner's decision). The magic bytes type check, the media decoder check and SHA-256 over the whole
+file remain. A file exactly at the limit is checked as usual.
 
 ## `encrypt`
 
-По умолчанию включено (решение владельца): параметр не передан и `send_as=file` (тоже по умолчанию) — файл шифруется
-ключом сервера `APP_ENCRYPTION_KEY` перед отправкой в Telegram (security.md, «Шифрование файлов»). Параметр не передан и
-`send_as=media` — шифрование молча выключается, Telegram должен видеть настоящее медиа. Явный `encrypt=true` с
-`send_as=media` → `422 encrypt_requires_file`; явный `encrypt=false` — файл уходит открытым. Одинаково для
-`POST /api/uploads`, `/uploads/from-url` и каждого элемента `/uploads/batch`. Не переданный `encrypt` берётся из
-настройки `uploads.encrypt`, но с итоговым `send_as=media` (из запроса или из настройки) всё равно молча выключается. Шифрование нужно, а ключ не
-задан → `503 encryption_unavailable` (в том числе для загрузки по умолчанию: передайте `encrypt=false` или задайте ключ).
-Превью зашифрованных фото, GIF и видео делаем сами на стадии `scanning`, пока файл ещё открыт: Pillow (видео — кадр
-ffmpeg, как для открытых видео), JPEG ≤ 320 px, качество снижается до ≤ 20 КБ, ориентация по EXIF. Превью шифруется
-DEK файла и ложится в `files.thumbnail`; `/thumb` его расшифровывает. Ошибка генерации не валит загрузку: предупреждение
-в лог, `thumbnail = NULL`, `/thumb` → `404`. У аудио и документов превью нет. Root выключил `uploads.previews`
-(flows/settings.md) — шаг `previewing` пропускается у всех, `thumbnail = NULL`. Файлы, зашифрованные до миграции `0009`
-(и с ошибкой генерации), дозаполняет фоновая задача root `POST /api/files/previews/backfill` (background-tasks.md,
-«Дозаполнение превью»). Проверки типа и ClamAV идут по открытому файлу, как обычно. В Telegram уходит
-документ `{uuid}.bin` без превью и атрибутов, в БД — настоящие имя, MIME, тип, размер и `sha256` открытого файла.
-Шифротекст больше открытого файла (≈16 байт на 64 КиБ + 71 байт заголовка): файл, у которого он не влезает в одно
-сообщение, уходит частями (ниже). На стадии `scanning` на диске одновременно лежат открытый файл и шифротекст
-(поэтому проверка места в API требует ×2 размера при шифровании); открытый удаляется сразу после передачи в очередь
-`uploads.telegram`.
+On by default (the owner's decision): the parameter not given and `send_as=file` (also the default) means the file is encrypted
+with the server key `APP_ENCRYPTION_KEY` before it is sent to Telegram (security.md, "File encryption"). The parameter not given and
+`send_as=media` means encryption is silently off, since Telegram must see real media. An explicit `encrypt=true` with
+`send_as=media` → `422 encrypt_requires_file`; an explicit `encrypt=false` sends the file as plaintext. The same for
+`POST /api/uploads`, `/uploads/from-url` and every item of `/uploads/batch`. An `encrypt` not given comes from the
+`uploads.encrypt` setting, but with an effective `send_as=media` (from the request or the setting) it is still silently off. If encryption is needed and the key is not
+set → `503 encryption_unavailable` (including a default upload: pass `encrypt=false` or set the key).
+Previews of encrypted photos, GIFs and videos are made by us at the `scanning` stage while the file is still plaintext: Pillow (video: an ffmpeg
+frame, as for plaintext videos), JPEG ≤ 320 px, quality lowered to ≤ 20 KB, orientation from EXIF. The preview is encrypted with the
+file DEK and goes into `files.thumbnail`; `/thumb` decrypts it. A generation error does not fail the upload: a warning
+in the log, `thumbnail = NULL`, `/thumb` → `404`. Audio and documents have no preview. If root switched `uploads.previews` off
+(flows/settings.md), the `previewing` step is skipped for everyone, `thumbnail = NULL`. Files encrypted before migration `0009`
+(and those with a generation error) are backfilled by root's background task `POST /api/files/previews/backfill` (background-tasks.md,
+"Preview backfill"). The type checks and ClamAV run on the plaintext file as usual. Telegram receives
+a document `{uuid}.bin` without a preview or attributes, the DB keeps the real name, MIME, type, size and `sha256` of the plaintext file.
+The ciphertext is bigger than the plaintext file (≈16 bytes per 64 KiB + a 71-byte header): a file whose ciphertext does not fit into one
+message goes in parts (below). At the `scanning` stage the plaintext file and the ciphertext are on disk at the same time
+(that is why the API disk check needs ×2 the size with encryption); the plaintext one is deleted right after the handoff to the
+`uploads.telegram` queue.
 
-## Большие файлы частями
+## Big files in parts
 
-Ограничения размера файла:
+File size limits:
 
-- **`uploads.max_file_size`** — настройка root (flows/settings.md), байты, `0` (по умолчанию) — без ограничения. Больше
-  неё — `413 too_large` с `limit` в ответе (`POST /api/uploads` — до чтения тела по `Content-Length`; по ссылке — по
-  `Content-Length` ответа или во время скачивания). Лимит аккаунта Telegram больше **не** ограничивает размер файла.
-- **Место на диске** — `507 insufficient_storage` (`UPLOAD_MIN_FREE_DISK_MB`); при шифровании нужно 2× размер
-  (открытый файл + шифротекст). Все проверки идут через один `DiskBudget` (`check`/`hold`/`reserve`) и вычитают из
-  свободного места `shutil.disk_usage` **ожидаемые, но ещё не записанные байты** всех процессов (API и воркеров):
-  - живые сессии частями (`TaskStore.session_bytes`, сессии с `expires_at` в будущем): `size − offset`, у шифруемых
-    ещё `+ size` под шифротекст;
-  - общий журнал резервов в Redis (`disk:reserved` — владелец → байты, `disk:reserved:exp` — владелец → срок;
-    `TaskStore.reserve_disk`/`drop_disk`/`reserved_bytes`, Lua `RESERVED` суммирует живые записи и тут же стирает
-    просроченные). Владелец — id задачи (у превью — id файла); у сессии своей записи нет, пока она сессия, поэтому
-    двойного счёта нет.
+- **`uploads.max_file_size`**: root's setting (flows/settings.md), bytes, `0` (default) means unlimited. Above
+  it, `413 too_large` with `limit` in the response (`POST /api/uploads`: before reading the body, by `Content-Length`; from a URL: by the
+  response `Content-Length` or while downloading). The Telegram account limit **no longer** restricts the file size.
+- **Disk space**: `507 insufficient_storage` (`UPLOAD_MIN_FREE_DISK_MB`); with encryption 2× the size is needed
+  (plaintext file + ciphertext). All checks go through one `DiskBudget` (`check`/`hold`/`reserve`) and subtract from the
+  free space of `shutil.disk_usage` the **expected but not yet written bytes** of all processes (API and workers):
+  - live chunked sessions (`TaskStore.session_bytes`, sessions with `expires_at` in the future): `size − offset`, for encrypted ones
+    `+ size` more for the ciphertext;
+  - the shared reservation ledger in Redis (`disk:reserved`: owner → bytes, `disk:reserved:exp`: owner → expiry;
+    `TaskStore.reserve_disk`/`drop_disk`/`reserved_bytes`, Lua `RESERVED` sums the live entries and erases
+    expired ones on the spot). The owner is the task id (the file id for previews); a session has no entry of its own while it is a session, so
+    there is no double counting.
 
-  Резерв — это то, что ещё **будет** записано: `max(ожидаемое − записанное, 0)`. Уже записанное видит сам
-  `disk_usage`, поэтому растущий резерв (`Reservation.update(written, total)`) уменьшается по ходу записи. Держатель
-  раз в секунду (`SYNC_INTERVAL`) пишет свой остаток с коротким сроком `RESERVATION_TTL` (30 с) и перечитывает сумму
-  чужих — не чаще, Redis не долбится на каждый блок. Между записями чужие видят остаток с отставанием ≤ 1 с, то есть
-  с запасом (уже записанное считается дважды не дольше секунды). Свой резерв проверка исключает (`exclude` =
-  владелец), так что повторный `reserve` того же владельца (повторная доставка) не считает байты дважды и просто
-  перезаписывает запись.
+  A reservation is what **will still be** written: `max(expected − written, 0)`. What is already written is seen by
+  `disk_usage` itself, so a growing reservation (`Reservation.update(written, total)`) shrinks as writing goes on. The holder
+  writes its remainder once per second (`SYNC_INTERVAL`) with a short expiry `RESERVATION_TTL` (30 s) and re-reads the sum
+  of the others, no more often, so Redis is not hammered on every block. Between writes the others see the remainder with a lag of ≤ 1 s, that is
+  with a margin (what is already written counts twice for at most a second). The check excludes its own reservation (`exclude` =
+  owner), so a repeated `reserve` by the same owner (a redelivery) does not count the bytes twice and simply
+  overwrites the entry.
 
-  Жизненный цикл записи задачи:
+  The lifecycle of a task's entry:
 
-  | Этап | Запись в журнале |
+  | Stage | Ledger entry |
   |---|---|
-  | `POST /api/uploads` (под `job:disk`) | `size` (шифрование: `2 × size`) − принятое; после тела — `size` под будущий шифротекст или удаление |
-  | сессия частями | записи нет (считается сессия); перед каждым куском — `check(длина, exclude=сессия)`; после последнего куска шифруемой — `size` |
-  | ссылка с известным размером (`upload_url` с `size`, под `job:disk`) | `size` (шифрование: `2 × size`) сразу при постановке и при повторе; без `size` резерв появляется, когда воркер узнаёт `Content-Length` |
-  | скачивание в `worker-download` | заявленный `size`, иначе `total` (шифрование: `× 2`) − скачанное, растёт по мере того, как узнаётся размер; после — размер файла под шифротекст или удаление |
-  | шифрование в `worker-prepare` | `cipher_size(plain)` − зашифрованное; после — удаление (шифротекст уже на диске, открытый удаляется после передачи в `uploads.telegram`) |
-  | архив (постановка под `job:disk`, затем `worker-telegram`) | `sum + max` размеров сразу при постановке; воркер переводит в живой резерв и уменьшает по прогрессу; после сборки — удаление |
-  | превью (`PreviewBackfill`) | `file.size` − скачанное, владелец — id файла |
+  | `POST /api/uploads` (under `job:disk`) | `size` (encryption: `2 × size`) − received; after the body, `size` for the future ciphertext or deletion |
+  | chunked session | no entry (the session counts); before every chunk, `check(length, exclude=session)`; after the last chunk of an encrypted one, `size` |
+  | a URL with a known size (`upload_url` with `size`, under `job:disk`) | `size` (encryption: `2 × size`) right when queued and on retry; without `size` the reservation appears when the worker learns `Content-Length` |
+  | download in `worker-download` | the declared `size`, otherwise `total` (encryption: `× 2`) − downloaded, grows as the size becomes known; after it, the file size for the ciphertext or deletion |
+  | encryption in `worker-prepare` | `cipher_size(plain)` − encrypted; after it, deletion (the ciphertext is already on disk, the plaintext is deleted after the handoff to `uploads.telegram`) |
+  | archive (queued under `job:disk`, then `worker-telegram`) | `sum + max` of sizes right when queued; the worker turns it into a live reservation and shrinks it with progress; after the build, deletion |
+  | preview (`PreviewBackfill`) | `file.size` − downloaded, the owner is the file id |
 
-  Запись «между этапами» (в очереди) хранится со сроком `UPLOAD_LOCK_TTL` (24 ч), живая — 30 с с продлением раз в
-  секунду. Освобождение: `TaskStore.deactivate` (его зовёт `release`) стирает запись, поэтому её снимают `done`,
-  `failed`, `cancelled` (в том числе отмена задачи в очереди), `TaskSweeper` (потерянные задачи, задачи без хэша после
-  `UPLOAD_TASK_TTL`, истёкшие сессии). Упавший держатель перестаёт продлевать запись — она выпадает из суммы через
-  ≤ 30 с; повторная доставка резервирует заново по тому же владельцу.
-- **Гонка проверки и резерва.** Проверка и запись резерва в API (`save_session`, `reserve` тела `POST /api/uploads`,
-  `hold` ссылки с размером и архива) идут под коротким Redis-локом `job:disk` (`TaskStore.disk_lock`: `SET NX PX`
-  5 с, ждущий опрашивает каждые 20 мс до 10 с, потом с предупреждением в логе проверяет без лока; снимает только
-  владелец, и при ошибке). Внутри лока только проверка и запись, тело не читается. Поэтому из двух одновременных
-  запросов, вместе не влезающих, проходит ровно один, второй — `507`, даже если они пришли в разные процессы uvicorn:
-  резерв лежит в Redis, а не в памяти процесса. Ранняя проверка в `_new_task` остаётся без лока (быстрый отказ до
-  работы с БД). Воркеры резервируют без лока: их проверка видит журнал, но два воркера могут одновременно пройти
-  проверку в окне между чтением суммы и записью.
+  An entry "between stages" (in a queue) is kept with the expiry `UPLOAD_LOCK_TTL` (24 h), a live one for 30 s with renewal every
+  second. Release: `TaskStore.deactivate` (called by `release`) erases the entry, so it is removed by `done`,
+  `failed`, `cancelled` (a cancel of a queued task included), `TaskSweeper` (lost tasks, tasks without a hash after
+  `UPLOAD_TASK_TTL`, expired sessions). A dead holder stops renewing its entry, and it drops out of the sum within
+  ≤ 30 s; a redelivery reserves again under the same owner.
+- **The check and reservation race.** The check and the reservation write in the API (`save_session`, the `reserve` of the `POST /api/uploads` body,
+  the `hold` of a URL with a size and of an archive) run under the short Redis lock `job:disk` (`TaskStore.disk_lock`: `SET NX PX`
+  5 s, a waiter polls every 20 ms for up to 10 s, then checks without the lock with a warning in the log; only the
+  owner releases it, on errors too). Inside the lock there is only the check and the write, the body is not read. So of two simultaneous
+  requests that do not fit together exactly one passes and the second gets `507`, even if they arrived at different uvicorn processes:
+  the reservation lives in Redis, not in process memory. The early check in `_new_task` stays without the lock (a quick refusal before
+  touching the DB). Workers reserve without the lock: their check sees the ledger, but two workers can pass the
+  check at the same time in the window between reading the sum and writing.
 
-Файл, который не влезает в одно сообщение (`GET /api/account` → `file_limit`: 2000 МиБ, с Premium 4000 МиБ; для
-зашифрованного считается размер шифротекста), `worker-telegram` при отправке режет на части по `file_limit` и шлёт
-**по очереди** документами:
+A file that does not fit into one message (`GET /api/account` → `file_limit`: 2000 MiB, 4000 MiB with Premium; for
+an encrypted file the ciphertext size counts) is cut by `worker-telegram` into parts of `file_limit` at send time and sent
+**one after another** as documents:
 
-| | Имя части в Telegram | Где режется |
+| | Part name in Telegram | Where it is cut |
 |---|---|---|
-| зашифрованный | `{uuid}.part{N}.bin` | по границам блоков шифра (security.md, «Шифрование файлов»): часть 0 — заголовок + блоки |
-| открытый | `{name}.part{N}` | каждые `file_limit` байт |
+| encrypted | `{uuid}.part{N}.bin` | at cipher block boundaries (security.md, "File encryption"): part 0 is the header + blocks |
+| plaintext | `{name}.part{N}` | every `file_limit` bytes |
 
-- Конвейер до отправки не меняется: файл целиком на диске, ClamAV по всему файлу (больше `CLAMAV_MAX_FILE_SIZE` —
-  без антивируса с `too_big_to_scan`, см. `allow_unscannable`; упёрся в другие лимиты ClamAV — обычный `unscannable`), нужно ≈ 2× размера файла на диске при шифровании.
-- Части всегда документы. `send_as=media` → отправлено файлом, `sent_as = file`, предупреждение `too_big_sent_as_file`
-  (`params.parts` — число частей). Превью: у зашифрованных — наше (`files.thumbnail`, как обычно); у открытых видео
-  кадр-превью уходит миниатюрой части 0, `/thumb` читает его из Telegram.
-- Прогресс шага `sending` (`bytes_done/bytes_total`, `step_progress`) — по всему файлу.
-- Воркер убит после того, как Telegram принял часть, но до записи в задачу: при повторе часть находится в канале по
-  подписи `#tc{uuid}`, имени и размеру и принимается без повторной отправки; лишние сообщения удаляются, при отмене и
-  ошибке — тоже (background-tasks.md «Без дублей в Telegram»).
-- В БД одна строка `files` (`tg_message_id` — часть 0, `size`/`sha256` — всего открытого файла) и строки `file_parts`
-  (database.md). Файлы, которые влезли в одно сообщение, хранятся как раньше, без строк `file_parts`.
-- Скачивание (`Range`, `If-Range`, `ETag` = id сообщения части 0, `304`) и архивы читают части по `offset`, нужный
-  диапазон собирается через границы частей; заголовки ответа те же. Пропала любая часть — как пропажа сообщения
-  обычного файла: запись удаляется (`404`, в архиве `archive_file_gone`), остальные части удаляются из канала;
-  удаляется только `WHERE id AND tg_message_id = прочитанный` — если файл тем временем заменили (`replace`), новая
-  строка и её части остаются;
-  другой размер части — `409 file_changed` / `archive_file_changed`.
-- Удаление файла, папки, `replace` удаляют все части; удаление в Telegram сообщения **любой** части удаляет файл.
-  Переименование и перенос Telegram не трогают.
-- Повторная доставка после падения продолжает с первой неотправленной части, отмена и ошибка удаляют уже
-  отправленные (background-tasks.md, «Без дублей в Telegram»).
+- The pipeline before sending does not change: the whole file is on disk, ClamAV scans the whole file (above `CLAMAV_MAX_FILE_SIZE`
+  without the antivirus, with `too_big_to_scan`, see `allow_unscannable`; other ClamAV limits hit give an ordinary `unscannable`), ≈ 2× the file size of disk is needed with encryption.
+- Parts are always documents. `send_as=media` → sent as a file, `sent_as = file`, the warning `too_big_sent_as_file`
+  (`params.parts` is the number of parts). Previews: encrypted files have ours (`files.thumbnail`, as usual); for plaintext videos
+  the frame preview goes as the thumbnail of part 0, `/thumb` reads it from Telegram.
+- The progress of the `sending` step (`bytes_done/bytes_total`, `step_progress`) is over the whole file.
+- A worker killed after Telegram accepted a part but before the task write: on the retry the part is found in the channel by
+  the caption `#tc{uuid}`, the name and the size and is adopted without sending it again; extra messages are deleted, on cancel and
+  error too (background-tasks.md "No duplicates in Telegram").
+- The DB has one `files` row (`tg_message_id` is part 0, `size`/`sha256` describe the whole plaintext file) and `file_parts` rows
+  (database.md). Files that fit into one message are stored as before, without `file_parts` rows.
+- Downloads (`Range`, `If-Range`, `ETag` = message id of part 0, `304`) and archives read the parts by `offset`, the needed
+  range is assembled across part boundaries; the response headers are the same. Any part gone works like a gone message of
+  an ordinary file: the row is deleted (`404`, `archive_file_gone` in an archive), the other parts are deleted from the channel;
+  only `WHERE id AND tg_message_id = the one read` is deleted, so if the file was replaced meanwhile (`replace`), the new
+  row and its parts stay;
+  a different part size gives `409 file_changed` / `archive_file_changed`.
+- Deleting a file or a folder and `replace` delete all parts; deleting the message of **any** part in Telegram deletes the file.
+  Renaming and moving do not touch Telegram.
+- A redelivery after a crash continues from the first unsent part, cancel and error delete the ones already
+  sent (background-tasks.md, "No duplicates in Telegram").
 
 ## `send_as`
 
-| Значение | Фото | Видео | Аудио | GIF | Документ |
+| Value | Photo | Video | Audio | GIF | Document |
 |---|---|---|---|---|---|
-| `file` (по умолчанию) | документ, оригинал | документ | документ | документ | документ |
-| `media` | сжатое фото; не влезло в лимиты → документ с предупреждением; webp/heic/gif → JPEG | оригинал с атрибутами, превью и плеером | плеер, длительность, теги | анимация | документ с предупреждением |
+| `file` (default) | document, original | document | document | document | document |
+| `media` | compressed photo; does not fit the limits → document with a warning; webp/heic/gif → JPEG | original with attributes, preview and player | player, duration, tags | animation | document with a warning |
 
 ## `on_conflict`
 
-| Значение | Если путь занят файлом |
+| Value | If the path is taken by a file |
 |---|---|
-| `error` (по умолчанию) | `409 conflict` с `suggested_name` — свободное имя для `keep_both` |
-| `replace` | новое сообщение, UUID сохраняется, `updated_at` обновляется, старое сообщение удаляется; если файл удалили, пока шла загрузка, `UPDATE` не находит строку и она создаётся заново с тем же UUID (вместе с частями) |
-| `keep_both` | свободное имя с номером через дефис: `a-2.jpg`, `a-3.jpg`, без расширения `README-2`; резервируется сразу при создании задачи |
-| `skip` | задача сразу `done` со ссылкой на существующий файл, тело не читается |
+| `error` (default) | `409 conflict` with `suggested_name`, a free name for `keep_both` |
+| `replace` | a new message, the UUID is kept, `updated_at` is updated, the old message is deleted; if the file was deleted while the upload ran, the `UPDATE` finds no row and it is created again with the same UUID (parts included) |
+| `keep_both` | a free name with a number after a hyphen: `a-2.jpg`, `a-3.jpg`, without an extension `README-2`; reserved right when the task is created |
+| `skip` | the task is `done` at once with a link to the existing file, the body is not read |
 
-Если в этот путь уже идёт другая загрузка — `409 upload_in_progress` при любом режиме.
+If another upload to this path is already running, `409 upload_in_progress` in any mode.
 
-Без права чтения папки (грант только на загрузку, `can_read: false`) метаданные чужих файлов не выдаются: `409 conflict`
-приходит без `suggested_name`, а `skip` заканчивается `done` с `skipped_exists`, но `file: null` (и в ответе, и в
-вебхуке). Право чтения проверяется при создании задачи и сохраняется в `params.readable`; тот же флаг решает, будет ли
-`file` у задачи, которую пропустил воркер, когда файл появился уже после постановки в очередь.
+Without read access to the folder (an upload-only grant, `can_read: false`) metadata of other files is not given out: `409 conflict`
+comes without `suggested_name`, and `skip` ends with `done` and `skipped_exists`, but `file: null` (both in the response and in the
+webhook). Read access is checked when the task is created and kept in `params.readable`; the same flag decides whether
+a task skipped by the worker, because the file appeared after queueing, gets a `file`.
 
-Диалог «файл уже есть» на фронтенде: загрузить с `error`; на `409 conflict` показать выбор «Заменить» (повтор с
-`replace`, нужны права на удаление), «Оставить оба» (повтор с `keep_both`, имя из `suggested_name` — то, что получится,
-если никто не займёт его раньше) и «Отмена» (ничего не отправлять). `skip` — то же, что «Отмена», но без вопроса.
+The "file already exists" dialog on the frontend: upload with `error`; on `409 conflict` offer "Replace" (retry with
+`replace`, needs delete rights), "Keep both" (retry with `keep_both`, the name from `suggested_name` is what you will get
+unless someone takes it first) and "Cancel" (send nothing). `skip` is the same as "Cancel", but without asking.
 
-## Прогресс
+## Progress
 
 `GET /api/tasks/{id}`: `status` (`queued/running/done/failed/cancelled`), `stage`, `step`, `step_progress`, `priority`, `bytes_done`/`bytes_total`,
-`progress`, `speed`, `eta`, `queue_position` (номер в очереди, 1 — следующая), `waiting` (очередь, FloodWait, повтор),
+`progress`, `speed`, `eta`, `queue_position` (position in the queue, 1 is next), `waiting` (queue, FloodWait, retry),
 `cancel_requested`, `error`, `warnings`, `warning_details`, `file`, `source`, `retryable`.
-Задача хранится 7 дней (`UPLOAD_TASK_TTL`). Вебхук описан в background-tasks.md.
+A task is kept for 7 days (`UPLOAD_TASK_TTL`). The webhook is described in background-tasks.md.
 
-Для фронтенда: `source` — откуда задача: `device` (`POST /api/uploads` и загрузка частями), `url` (по ссылке, пачка),
-`archive` (сборка архива); поле задачи `source` в Redis — копия `params.source`; у задач, созданных до этого поля,
-оно берётся из `params.source` (`TaskService.render_many` дочитывает `params` только для таких задач), `null` — если нет
-и его. `retryable: boolean` — `true` только у `source = url` в статусе `failed` или `cancelled`: показывать
-«Повторить» (`POST /api/tasks/{id}/retry`) только при нём; права на папку всё равно проверяются при повторе.
+For the frontend: `source` is where the task came from: `device` (`POST /api/uploads` and chunked upload), `url` (from a URL, a batch),
+`archive` (an archive build); the task field `source` in Redis is a copy of `params.source`; for tasks created before this field
+it comes from `params.source` (`TaskService.render_many` reads `params` only for such tasks), `null` if that is missing
+too. `retryable: boolean` is `true` only for `source = url` in status `failed` or `cancelled`: show
+"Retry" (`POST /api/tasks/{id}/retry`) only when it is set; folder rights are still checked on retry.
 
-Опрос многих задач одним запросом: `GET /api/tasks?ids={id}&ids={id}…` — до 100 id (больше → `422 validation_error`),
-повторы схлопываются; ответ как у пачки — `{items, summary}`, в `items` только существующие задачи, которые вы видите
-(свои; admin и root — любые), в порядке `ids`; чужие и пропавшие молча отсутствуют. Ровно один из `ids` / `batch_id`,
-иначе `422`. Один `HGETALL` на id в одном pipeline Redis и один запрос в БД за файлами.
+Polling many tasks in one request: `GET /api/tasks?ids={id}&ids={id}…`, up to 100 ids (more → `422 validation_error`),
+repeats are collapsed; the response is as for a batch, `{items, summary}`, `items` holds only existing tasks you can see
+(your own; admin and root, any), in `ids` order; other people's and missing ones are silently absent. Exactly one of `ids` / `batch_id`,
+otherwise `422`. One `HGETALL` per id in one Redis pipeline and one DB query for the files.
 
-`GET /api/tasks/counts` → `{total, by_status: {"done": 12, "failed": 1, …}}` — ваши задачи (загрузки и архивы,
-созданные вами, у admin тоже только свои) за `UPLOAD_TASK_TTL`; статусы без задач в `by_status` не попадают. Индекс —
-sorted set `user_tasks:{user_id}` в Redis, подсчёт — один `HGET status` на задачу в pipeline.
+`GET /api/tasks/counts` → `{total, by_status: {"done": 12, "failed": 1, …}}`: your tasks (uploads and archives
+you created, for admin too only their own) over `UPLOAD_TASK_TTL`; statuses without tasks are not in `by_status`. The index is
+the sorted set `user_tasks:{user_id}` in Redis, the count is one `HGET status` per task in a pipeline.
 
-### Шаги
+### Steps
 
-`step` — что задача делает сейчас (или на чём остановилась, если завершена). `step_progress` — доля 0..1 у шагов с
-«да», пока задача `running`; `bytes_done`/`bytes_total`/`progress`/`speed`/`eta` в это время тоже про текущий шаг.
+`step` is what the task is doing now (or where it stopped, if finished). `step_progress` is a share of 0..1 for steps marked
+"yes" while the task is `running`; `bytes_done`/`bytes_total`/`progress`/`speed`/`eta` then also refer to the current step.
 
-| `step` | Стадия | Что | `step_progress` |
+| `step` | Stage | What | `step_progress` |
 |---|---|---|---|
-| `queued_for_download` | `downloading` | ждёт `worker-download` (по ссылке) | нет |
-| `downloading` | `downloading` | скачивание по ссылке (и ожидание слота `disk_slots`) | да, если сервер прислал размер |
-| `queued_for_prepare` | `scanning` | ждёт `worker-prepare` | нет |
-| `analyzing` | `scanning` | определение типа, ffprobe/Pillow, SHA-256 | да |
-| `scanning` | `scanning` | проверка ClamAV (и паузы `retry`) | да |
-| `converting` | `scanning` | фото не jpeg/png → jpeg для `media`, кадр-превью видео | нет |
-| `encrypting` | `scanning` | AES-256-GCM | да |
-| `previewing` | `scanning` | своё превью зашифрованного фото/GIF/видео | нет |
-| `queued_for_telegram` | `uploading_tg` | ждёт `worker-telegram` | нет |
-| `sending` | `uploading_tg` | отправка в Telegram (и пауза `flood_wait`) | да |
-| `finishing` | `uploading_tg` | запись в БД | нет |
-| `queued_for_archive` | `archiving` | архив ждёт `worker-telegram` | нет |
-| `archiving` | `archiving` | сборка архива | да |
+| `queued_for_download` | `downloading` | waiting for `worker-download` (URL) | no |
+| `downloading` | `downloading` | URL download (and waiting for a `disk_slots` slot) | yes, if the server sent the size |
+| `queued_for_prepare` | `scanning` | waiting for `worker-prepare` | no |
+| `analyzing` | `scanning` | type detection, ffprobe/Pillow, SHA-256 | yes |
+| `scanning` | `scanning` | ClamAV check (and `retry` pauses) | yes |
+| `converting` | `scanning` | photo not jpeg/png → jpeg for `media`, video frame preview | no |
+| `encrypting` | `scanning` | AES-256-GCM | yes |
+| `previewing` | `scanning` | our own preview of an encrypted photo/GIF/video | no |
+| `queued_for_telegram` | `uploading_tg` | waiting for `worker-telegram` | no |
+| `sending` | `uploading_tg` | sending to Telegram (and the `flood_wait` pause) | yes |
+| `finishing` | `uploading_tg` | DB write | no |
+| `queued_for_archive` | `archiving` | the archive waits for `worker-telegram` | no |
+| `archiving` | `archiving` | archive build | yes |
 
-Шага `receiving` нет: тело `POST /api/uploads` принимается до создания задачи (ответ приходит, когда файл уже на
-сервере), прогресс приёма видит сам клиент. `null` — у задач `done` с `on_conflict=skip` и у задач, созданных до
-появления поля.
+There is no `receiving` step: the body of `POST /api/uploads` is received before the task is created (the response comes when the file is already on the
+server), the client sees the receive progress itself. `null` for `done` tasks with `on_conflict=skip` and for tasks created before
+the field appeared.
 
-### Коды ожидания и предупреждений
+### Waiting and warning codes
 
-Тексты (`waiting.reason`, `warnings`, `error.message`) — английские и для людей; фронтенд переводит по кодам.
-Коды стабильны, новые могут добавляться — неизвестный код показывайте текстом `message`.
+The texts (`waiting.reason`, `warnings`, `error.message`) are in English and meant for people; the frontend translates by code.
+The codes are stable, new ones may be added; show an unknown code as its `message` text.
 
-`waiting = {reason, code, params, seconds}` (`seconds` — сколько ещё ждать, если известно):
+`waiting = {reason, code, params, seconds}` (`seconds` is how much longer to wait, if known):
 
-| `code` | `params` | Когда |
+| `code` | `params` | When |
 |---|---|---|
-| `queue` | `queue`: `uploads.download` / `uploads.prepare` / `uploads.telegram` / `archives.build` | ждёт воркера в очереди (`reason` = `queue:{queue}`), номер — `queue_position` |
-| `disk_slots` | — | ждёт места на диске сервера (`UPLOAD_MAX_FILES_ON_DISK`) |
-| `retry` | — | сеть Telegram или ClamAV недоступна, повтор через `seconds` |
-| `flood_wait` | — | Telegram попросил паузу (FloodWait), вся выгрузка ждёт `seconds` |
+| `queue` | `queue`: `uploads.download` / `uploads.prepare` / `uploads.telegram` / `archives.build` | waiting for a worker in the queue (`reason` = `queue:{queue}`), the position is `queue_position` |
+| `disk_slots` | none | waiting for disk space on the server (`UPLOAD_MAX_FILES_ON_DISK`) |
+| `retry` | none | the Telegram or ClamAV network is unavailable, retry in `seconds` |
+| `flood_wait` | none | Telegram asked for a pause (FloodWait), all uploads wait `seconds` |
 
-`warnings` — список английских строк (как раньше), `warning_details` — те же предупреждения по порядку как
+`warnings` is a list of English strings (as before), `warning_details` the same warnings in order as
 `{code, params, message}`:
 
-| `code` | `params` | Текст |
+| `code` | `params` | Meaning |
 |---|---|---|
-| `skipped_exists` | — | `on_conflict=skip`, файл уже был, загрузка пропущена |
-| `unscannable_accepted` | `reason` — сигнатура ClamAV (`Heuristics.Encrypted.Zip`, …) | антивирус не проверил файл целиком, принят из-за `allow_unscannable` |
-| `too_big_to_scan` | `limit` — лимит антивируса в байтах | файл больше лимита ClamAV, антивирусом не проверен; принят всегда, без `allow_unscannable` |
-| `not_media_sent_as_file` | — | просили `send_as=media`, но это не медиа — отправлен файлом |
-| `photo_too_big_sent_as_file` | — | фото не влезает в лимиты фото Telegram (10 МБ, стороны) — отправлено файлом |
-| `video_may_show_as_file` | `mime` | видео не mp4: Telegram может показать его файлом, а не плеером |
-| `too_big_sent_as_file` | `parts` — число частей | просили `send_as=media`, но файл больше одного сообщения Telegram — отправлен файлом частями |
-| `archive_file_gone` | `name` — путь внутри архива | файла уже нет в Telegram, в архив не попал |
-| `archive_file_changed` | `name` | файл в Telegram изменился (другой размер), в архив не попал |
-| `archive_file_undecryptable` | `name` | зашифрованный файл не расшифровался, в архив не попал |
-| `archive_files_deleted` | `count` | столько выбранных файлов удалили до сборки архива |
-| `other` | — | задачи, созданные до появления кодов: только `message` |
+| `skipped_exists` | none | `on_conflict=skip`, the file already existed, the upload was skipped |
+| `unscannable_accepted` | `reason`: the ClamAV signature (`Heuristics.Encrypted.Zip`, …) | the antivirus did not check the whole file, accepted because of `allow_unscannable` |
+| `too_big_to_scan` | `limit`: the antivirus limit in bytes | the file is bigger than the ClamAV limit, not checked by the antivirus; always accepted, without `allow_unscannable` |
+| `not_media_sent_as_file` | none | `send_as=media` was asked, but it is not media: sent as a file |
+| `photo_too_big_sent_as_file` | none | the photo does not fit the Telegram photo limits (10 MB, sides): sent as a file |
+| `video_may_show_as_file` | `mime` | the video is not mp4: Telegram may show it as a file instead of a player |
+| `too_big_sent_as_file` | `parts`: the number of parts | `send_as=media` was asked, but the file is bigger than one Telegram message: sent as a file in parts |
+| `archive_file_gone` | `name`: the path inside the archive | the file is no longer in Telegram, it did not go into the archive |
+| `archive_file_changed` | `name` | the file in Telegram changed (a different size), it did not go into the archive |
+| `archive_file_undecryptable` | `name` | an encrypted file could not be decrypted, it did not go into the archive |
+| `archive_files_deleted` | `count` | that many selected files were deleted before the archive was built |
+| `other` | none | tasks created before the codes appeared: only `message` |
 
-Коды ошибок задач (`error.code`) — те же, что у ошибок API (`docs/flows/*`, `src/api/exception/errors.py`).
+Task error codes (`error.code`) are the same as API error codes (`docs/flows/*`, `src/api/exception/errors.py`).

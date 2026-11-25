@@ -13,7 +13,7 @@ Telegram user account (Telethon). Every file has its own UUID and a path `tcloud
 - Content-based type detection and ClamAV. AES-256-GCM encryption is on by default; files over the Telegram limit are stored in parts.
 - Folders, search, previews, archives (zip, 7z, tar.*), users with roles, folder grants and API keys.
 
-All features are described in [docs/overview.md](docs/overview.md) (the detailed docs in `docs/` are in Russian).
+All features are described in [docs/overview.md](docs/overview.md).
 
 ```mermaid
 flowchart LR

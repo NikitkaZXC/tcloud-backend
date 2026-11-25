@@ -1,18 +1,18 @@
-# Развёртывание
+# Deployment
 
 `docker-compose.prod.yml`: `app` (API), `worker-download`, `worker-prepare`, `worker-telegram`, `flower`, `postgres:18`,
 `rabbitmq:4`, `redis:8`, `clamav`.
-Образ один на API и воркеры — `python:3.14-slim` + ffmpeg + uv, только runtime-зависимости, пользователь `appuser`.
-`scripts/docker-entrypoint.sh` применяет миграции (у воркеров `RUN_MIGRATIONS=0`) и запускает команду сервиса.
+One image for the API and the workers: `python:3.14-slim` + ffmpeg + uv, runtime dependencies only, user `appuser`.
+`scripts/docker-entrypoint.sh` applies migrations (workers have `RUN_MIGRATIONS=0`) and runs the service command.
 
 ```bash
-make env            # заполнить TELEGRAM_API_ID / TELEGRAM_API_HASH в .env; пароли RabbitMQ, Redis и Flower сгенерируются
-make up             # сборка и запуск
+make env            # fill in TELEGRAM_API_ID / TELEGRAM_API_HASH in .env; RabbitMQ, Redis and Flower passwords are generated
+make up             # build and start
 make logs
 ```
 
-Готовый образ из GHCR вместо сборки (публикуется на каждый тег `v*.*.*`, docs/development.md): задайте
-`TCLOUD_IMAGE` (в `.env` рядом с compose или в окружении), затем `pull` и `up` без сборки:
+A ready image from GHCR instead of a build (published on every `v*.*.*` tag, docs/development.md): set
+`TCLOUD_IMAGE` (in the `.env` next to the compose file or in the environment), then `pull` and `up` without building:
 
 ```bash
 export TCLOUD_IMAGE=ghcr.io/nikitkazxc/tcloud-backend:1.0.0
@@ -20,131 +20,131 @@ docker compose -f docker-compose.prod.yml pull
 docker compose -f docker-compose.prod.yml up -d --no-build
 ```
 
-Без `TCLOUD_IMAGE` compose собирает локальный образ `tcloud:latest` (`make up`). Фронтенда в этом compose нет: образ
-`ghcr.io/nikitkazxc/tcloud-backend` — только API и воркеры.
+Without `TCLOUD_IMAGE` compose builds the local image `tcloud:latest` (`make up`). There is no frontend in this compose: the
+`ghcr.io/nikitkazxc/tcloud-backend` image is only the API and the workers.
 
-Перед первым запуском задайте в `.env` неочевидный `ROOT_LOGIN` (не `root`): после 5 неверных паролей подряд вход в
-учётную запись закрывается на 15 мин для всех, и по известному логину root можно держать запертым (security.md,
-«Доступ»). `ROOT_PASSWORD` — не короче 12 символов, `make env` генерирует 24.
+Before the first start set a non-obvious `ROOT_LOGIN` in `.env` (not `root`): after 5 wrong passwords in a row, sign-in to
+the account is closed for 15 min for everyone, and with a known login root can be kept locked (security.md,
+"Access"). `ROOT_PASSWORD` must be at least 12 characters, `make env` generates 24.
 
-Затем вход как root (`ROOT_LOGIN`/`ROOT_PASSWORD`) во фронтенд и вход в Telegram на его странице `/telegram` —
-отдельно для сессий `api`, `upload` и `download` (flows/auth.md). Файлы сессий лежат в volume `session` и переживают пересборку; входить заново нужно, только если
-volume удалён или сессию завершили в Telegram. Без входа приложение работает, но Telegram-запросы отвечают
+Then sign in as root (`ROOT_LOGIN`/`ROOT_PASSWORD`) on the frontend and sign in to Telegram on its `/telegram` page,
+separately for the `api`, `upload` and `download` sessions (flows/auth.md). Session files live in the `session` volume and survive rebuilds; you only need to sign in again if
+the volume was deleted or the session was terminated in Telegram. Without sign-in the app works, but Telegram requests answer
 `503 telegram_unauthorized`.
 
-- Swagger, ReDoc и `/openapi.json` в prod выключены: compose передаёт `app` пустые `APP_DOCS_URL`, `APP_REDOC_URL`,
-  `APP_OPENAPI_URL` (пустое значение — маршрута нет, `404`). Чтобы временно войти в Telegram через Swagger без
-  фронтенда, задайте в `.env` `APP_DOCS_URL=/docs` и `APP_OPENAPI_URL=/openapi.json`, выполните
-  `docker compose -f docker-compose.prod.yml up -d app` и откройте `http://127.0.0.1:8000/docs` на сервере или через
-  `ssh -L 8000:127.0.0.1:8000`, не публикуя через прокси; потом уберите переменные и пересоздайте `app` так же.
-- **`FORWARDED_ALLOW_IPS`** (в `.env`, compose передаёт его API, по умолчанию `127.0.0.1`): адреса, от которых uvicorn
-  верит `X-Forwarded-For`. Если reverse proxy в другом контейнере (nginx фронтенда), задайте IP или подсеть его
-  docker-сети (`docker network inspect …`, например `172.18.0.0/16`), **никогда `*`**. Иначе API видит у всех
-  клиентов один IP прокси: лимиты по IP (`SIGNIN_IP`, `REFRESH_IP`, `HEALTH_IP`) общие на всех, один перебор паролей
-  отрезает вход всем (security.md, «Rate limiting»).
-- Порт — `127.0.0.1:8000`. Для доступа снаружи — reverse proxy с TLS: фронтенд на `site.com`, на бэк — только `/api/*`, с сохранением `Host` (иначе проверка `Origin` отклонит запросы, см. security.md).
-- `make env` кладёт RS256-ключи JWT в `certs/` (в git и образ не попадают), compose монтирует их в `/certs` read-only.
-  Куки `Secure` (`JWT_SECURE=true`): снаружи нужен TLS. Приложение в контейнере — uid 1000: на Linux, если вы не uid 1000,
-  выполните `sudo chown 1000 certs/jwt-private.pem`, иначе API не стартует (`JWT key ... is not readable`).
-- `worker-telegram` — ровно одна реплика (общая пауза FloodWait и одна сессия), слушает `uploads.telegram` и
-  `archives.build` (сборка архивов папок); параллельность —
-  `TELEGRAM_CONCURRENCY` и `TELEGRAM_UPLOAD_WORKERS`. `worker-download` и `worker-prepare` можно масштабировать
-  репликами (`docker compose up --scale worker-prepare=2`), потоков на реплику — `UPLOAD_DOWNLOAD_CONCURRENCY` и
+- Swagger, ReDoc and `/openapi.json` are disabled in prod: compose passes `app` empty `APP_DOCS_URL`, `APP_REDOC_URL`,
+  `APP_OPENAPI_URL` (an empty value means no route, `404`). To sign in to Telegram through Swagger temporarily without
+  the frontend, set `APP_DOCS_URL=/docs` and `APP_OPENAPI_URL=/openapi.json` in `.env`, run
+  `docker compose -f docker-compose.prod.yml up -d app` and open `http://127.0.0.1:8000/docs` on the server or through
+  `ssh -L 8000:127.0.0.1:8000`, without publishing it through the proxy; then remove the variables and recreate `app` the same way.
+- **`FORWARDED_ALLOW_IPS`** (in `.env`, compose passes it to the API, default `127.0.0.1`): the addresses from which uvicorn
+  trusts `X-Forwarded-For`. If the reverse proxy is in another container (the frontend nginx), set the IP or subnet of its
+  docker network (`docker network inspect …`, for example `172.18.0.0/16`), **never `*`**. Otherwise the API sees one proxy IP for all
+  clients: the IP limits (`SIGNIN_IP`, `REFRESH_IP`, `HEALTH_IP`) are shared by everyone, and one password brute force
+  locks everyone out of sign-in (security.md, "Rate limiting").
+- The port is `127.0.0.1:8000`. For outside access use a reverse proxy with TLS: the frontend on `site.com`, only `/api/*` to the backend, keeping `Host` (otherwise the `Origin` check rejects requests, see security.md).
+- `make env` puts the RS256 JWT keys into `certs/` (they never get into git or the image), compose mounts them into `/certs` read-only.
+  Cookies are `Secure` (`JWT_SECURE=true`): TLS is required outside. The app in the container is uid 1000: on Linux, if you are not uid 1000,
+  run `sudo chown 1000 certs/jwt-private.pem`, otherwise the API does not start (`JWT key ... is not readable`).
+- `worker-telegram` is exactly one replica (a shared FloodWait pause and one session), it listens on `uploads.telegram` and
+  `archives.build` (folder archive builds); parallelism is
+  `TELEGRAM_CONCURRENCY` and `TELEGRAM_UPLOAD_WORKERS`. `worker-download` and `worker-prepare` can be scaled
+  with replicas (`docker compose up --scale worker-prepare=2`), threads per replica are `UPLOAD_DOWNLOAD_CONCURRENCY` and
   `UPLOAD_PREPARE_CONCURRENCY`.
-- Память воркеров ограничена: `mem_limit: ${WORKER_MEM_LIMIT:-2g}` у `worker-download`, `worker-prepare` и
-  `worker-telegram` (переменная в `.env` или окружении compose, формат Docker: `1g`, `3g`). Файл-бомба для Pillow,
-  ffprobe или сборка архива убивает только контейнер воркера (OOM), не весь хост; задача после рестарта воркера
-  повторяется или помечается потерянной (background-tasks.md, «Сбои»). При многих потоках
-  (`*_CONCURRENCY`) лимит поднимайте.
-- Flower — `127.0.0.1:5555` с basic auth (`FLOWER_USER` / `FLOWER_PASSWORD`); наружу — только через reverse proxy с TLS.
-  Flower не получает `.env` и volumes: в compose ему переданы только `RABBITMQ_USER`, `RABBITMQ_PASSWORD`,
-  `FLOWER_USER`, `FLOWER_PASSWORD`, и он запускается как `celery --broker=amqp://… flower` без `--app`: приложение
-  tcloud (и его настройки с `APP_*`, `POSTGRES_*`, `TELEGRAM_*`) не импортируется. Воркеры, задачи и `inspect` видны
-  по событиям и pidbox; имена задач приходят в событиях. Пароль RabbitMQ должен быть URL-безопасным (`make env` такой и
-  генерирует), vhost — `/`.
-- `GET /api/health` с входом (кука или `X-API-Key`) показывает полный отчёт: БД, брокер, живые воркеры по очередям, авторизацию сессий
-  (`telegram`, `telegram_upload`, `telegram_download`), ClamAV, Redis, общий `ok` и `details` (время каждой проверки `latency_ms`, возраст heartbeat воркеров `last_seen_s`, background-tasks.md); ответ всегда `200`. Без входа — только
-  `{"status": "ok"}` с `200` или `{"status": "degraded"}` с `503` (то же `ok`, без подробностей) — подходит для внешнего
-  мониторинга и балансировщика. Неверные учётные данные → `401`, как у остальных ручек.
-- Volume `tmp` общий для API и воркеров и должен вмещать файлы, которые ждут в очереди (размер не ограничен, если root не задал `uploads.max_file_size`; при шифровании — ≈ 2× размера файла).
-- RabbitMQ: `consumer_timeout` поднят до 24 ч, иначе брокер закрывает канал на долгой выгрузке (по умолчанию 30 мин).
-  Очереди durable, сообщения persistent; Redis с `appendonly yes` — очередь и статусы переживают рестарт.
-- Обрыв сети воркера с брокером (проверено до 3 мин) процесс не роняет: Celery переподключается сам (pidbox-очередь
-  не эксклюзивная, background-tasks.md). Страховка — `restart: unless-stopped` у API и воркеров в prod и dev compose.
-- Логи контейнеров (prod и dev compose): драйвер `json-file` с ротацией `max-size: 50m`, `max-file: "5"` — до
-  250 МБ на контейнер (якорь `x-logging`), иначе логи Docker растут без предела и забивают диск.
-- Первый старт ClamAV качает базы несколько минут — до этого загрузки отвечают `503 scanner_unavailable`.
-- ClamAV (`docker/clamd.conf`, integrations.md): `MaxFileSize 2147483645` (потолок libclamav), `StreamMaxLength`/
-  `MaxScanSize 4000M`, `MaxScanTime` 30 мин; файлы больше `CLAMAV_MAX_FILE_SIZE` не сканируются (`too_big_to_scan`).
-  Меняя `MaxFileSize`, меняйте и `CLAMAV_MAX_FILE_SIZE`. Память: базы сигнатур ≈ 1–1,5 ГБ RAM, при обновлении баз
-  (`ConcurrentDatabaseReload` по умолчанию) clamd на время держит две копии — закладывайте 3–4 ГБ RAM на контейнер.
-  `INSTREAM` пишет поток во временный файл clamd на диске (не в память): на каждую одновременную проверку нужно до
-  2 ГиБ места в контейнере плюс распакованное содержимое архивов (до `MaxScanSize`). Проверок одновременно не больше
-  потоков `worker-prepare` (`UPLOAD_PREPARE_CONCURRENCY` × реплики). Проверка 2 ГиБ занимает минуты; клиент ждёт ответа
-  до `CLAMAV_TIMEOUT` (1860 с).
-- Пароль Postgres задаётся при первом создании volume `pgdata`; сменить его в `.env` позже — значит пересоздать volume.
-- Размер тела запроса на прокси: обычный `POST /api/uploads` несёт файл целиком, поэтому у nginx фронтенда для `/api/`
-  стоят `client_max_body_size 0` и `proxy_request_buffering off` (остальным ручкам хватает 1 МиБ: API сам режет тела
-  больше `APP_MAX_BODY_SIZE`, security.md). Если прокси ограничивает тело (свой nginx, CDN с
-  лимитом ~100 МБ), большие файлы грузите сессиями частями (flows/uploads.md): тело одного `PUT` не больше
-  `UPLOAD_CHUNK_SIZE` (64 МиБ), так что лимит прокси должен быть ≥ `UPLOAD_CHUNK_SIZE` — иначе уменьшите его.
-- Reverse proxy перед API (nginx фронтенда): тела файлов нельзя сжимать — `GET /api/files/{id}/download` и
-  `GET /api/tasks/{id}/archive` отдают `Cache-Control: no-transform` и точный `Content-Length` (на нём держатся `Range`
-  и прогресс в браузере). nginx `no-transform` не учитывает, а `gzip_proxied` смотрит только на запросы с `Via`,
-  поэтому gzip для этих путей выключается отдельным `location` с тем же проксированием, что и `/api/`:
+- Worker memory is capped: `mem_limit: ${WORKER_MEM_LIMIT:-2g}` on `worker-download`, `worker-prepare` and
+  `worker-telegram` (a variable in `.env` or the compose environment, Docker format: `1g`, `3g`). A file bomb for Pillow,
+  ffprobe or an archive build kills only the worker container (OOM), not the whole host; after the worker restarts the task
+  is retried or marked lost (background-tasks.md, "Failures"). With many threads
+  (`*_CONCURRENCY`) raise the limit.
+- Flower is `127.0.0.1:5555` with basic auth (`FLOWER_USER` / `FLOWER_PASSWORD`); outside only through a reverse proxy with TLS.
+  Flower gets neither `.env` nor volumes: compose passes it only `RABBITMQ_USER`, `RABBITMQ_PASSWORD`,
+  `FLOWER_USER`, `FLOWER_PASSWORD`, and it runs as `celery --broker=amqp://… flower` without `--app`: the tcloud
+  app (and its settings with `APP_*`, `POSTGRES_*`, `TELEGRAM_*`) is not imported. Workers, tasks and `inspect` are visible
+  through events and pidbox; task names come in the events. The RabbitMQ password must be URL-safe (`make env` generates
+  such a one), the vhost is `/`.
+- `GET /api/health` when signed in (cookie or `X-API-Key`) shows the full report: DB, broker, live workers per queue, session authorization
+  (`telegram`, `telegram_upload`, `telegram_download`), ClamAV, Redis, the overall `ok` and `details` (the time of each check `latency_ms`, the age of worker heartbeats `last_seen_s`, background-tasks.md); the answer is always `200`. Without sign-in only
+  `{"status": "ok"}` with `200` or `{"status": "degraded"}` with `503` (the same `ok`, no details), suitable for external
+  monitoring and a load balancer. Wrong credentials → `401`, as on the other endpoints.
+- The `tmp` volume is shared by the API and the workers and must fit the files waiting in the queue (the size is unlimited unless root set `uploads.max_file_size`; with encryption ≈ 2× the file size).
+- RabbitMQ: `consumer_timeout` is raised to 24 h, otherwise the broker closes the channel during a long upload (30 min by default).
+  Queues are durable, messages persistent; Redis runs with `appendonly yes`, so the queue and statuses survive a restart.
+- A network drop between a worker and the broker (tested up to 3 min) does not kill the process: Celery reconnects by itself (the pidbox queue
+  is not exclusive, background-tasks.md). The safety net is `restart: unless-stopped` on the API and workers in the prod and dev compose.
+- Container logs (prod and dev compose): the `json-file` driver with rotation `max-size: 50m`, `max-file: "5"`, up to
+  250 MB per container (the `x-logging` anchor), otherwise Docker logs grow without limit and fill the disk.
+- The first ClamAV start downloads the databases for a few minutes; until then uploads answer `503 scanner_unavailable`.
+- ClamAV (`docker/clamd.conf`, integrations.md): `MaxFileSize 2147483645` (the libclamav ceiling), `StreamMaxLength`/
+  `MaxScanSize 4000M`, `MaxScanTime` 30 min; files bigger than `CLAMAV_MAX_FILE_SIZE` are not scanned (`too_big_to_scan`).
+  When changing `MaxFileSize`, change `CLAMAV_MAX_FILE_SIZE` too. Memory: the signature databases take ≈ 1–1.5 GB RAM, during a database update
+  (`ConcurrentDatabaseReload` by default) clamd briefly holds two copies, so plan 3–4 GB RAM for the container.
+  `INSTREAM` writes the stream to a clamd temp file on disk (not to memory): every concurrent check needs up to
+  2 GiB of space in the container plus the unpacked archive contents (up to `MaxScanSize`). There are never more concurrent checks than
+  `worker-prepare` threads (`UPLOAD_PREPARE_CONCURRENCY` × replicas). Checking 2 GiB takes minutes; the client waits for the answer
+  up to `CLAMAV_TIMEOUT` (1860 s).
+- The Postgres password is set when the `pgdata` volume is first created; changing it in `.env` later means recreating the volume.
+- Request body size at the proxy: a plain `POST /api/uploads` carries the whole file, so the frontend nginx has
+  `client_max_body_size 0` and `proxy_request_buffering off` for `/api/` (the other endpoints are fine with 1 MiB: the API itself cuts bodies
+  above `APP_MAX_BODY_SIZE`, security.md). If the proxy limits the body (your own nginx, a CDN with
+  a ~100 MB limit), upload big files with chunked sessions (flows/uploads.md): the body of one `PUT` is at most
+  `UPLOAD_CHUNK_SIZE` (64 MiB), so the proxy limit must be ≥ `UPLOAD_CHUNK_SIZE`, otherwise lower it.
+- Reverse proxy in front of the API (the frontend nginx): file bodies must not be compressed; `GET /api/files/{id}/download` and
+  `GET /api/tasks/{id}/archive` send `Cache-Control: no-transform` and an exact `Content-Length` (`Range`
+  and browser progress rely on it). nginx ignores `no-transform`, and `gzip_proxied` only looks at requests with `Via`,
+  so gzip for these paths is turned off by a separate `location` with the same proxying as `/api/`:
 
   ```nginx
   location ~ ^/api/(files/[^/]+/(download|thumb)|tasks/[^/]+/archive)$ {
       gzip off;
       proxy_pass ${API_UPSTREAM};
-      # те же proxy_set_header / proxy_buffering off / таймауты, что в location /api/
+      # the same proxy_set_header / proxy_buffering off / timeouts as in location /api/
   }
   ```
 
-  Документы и так приходят как `application/octet-stream`, а медиа и архивы — не `application/json`, так что при
-  `gzip_types application/json` сейчас под сжатие ничего из этого не попадает; `location` — страховка на случай
-  расширения `gzip_types`.
+  Documents already come as `application/octet-stream`, and media and archives are not `application/json`, so with
+  `gzip_types application/json` none of them is compressed today; the `location` is a safety net in case
+  `gzip_types` is extended.
 
-## Бэкапы и восстановление
+## Backups and restore
 
-Telegram хранит только тела файлов. Индекс (пути, имена, MIME, ключи файлов) — только в PostgreSQL, ключи — только в
-`.env`. Восстановить индекс из каналов Telegram нельзя.
+Telegram holds only the file bodies. The index (paths, names, MIME, file keys) lives only in PostgreSQL, the keys only in
+`.env`. The index cannot be rebuilt from the Telegram channels.
 
-| Что | Как бэкапить | Что теряется без него |
+| What | How to back it up | What is lost without it |
 |---|---|---|
-| PostgreSQL | регулярный `pg_dump` (ниже), копия вне сервера, зашифрованная | весь индекс: файлы в каналах остаются, но без путей, имён и обёрнутых ключей — по сути потеряны |
-| `APP_ENCRYPTION_KEY` (`.env`) | офлайн-копия `.env` (менеджер паролей, бумага, сейф), отдельно от дампа БД | все зашифрованные файлы и их превью — навсегда, ключи файлов обёрнуты этим ключом |
-| `APP_SECRET_KEY` (`.env`) | там же, с той же копией `.env` | все API-ключи и refresh-токены (все входят заново, ключи выпускаются заново), ключи подписи вебхуков всех пользователей меняются — получатели должны заново взять ключ из `GET /api/account/webhook-secret` |
-| `certs/` (ключи JWT) | копия вместе с `.env` | только сессии пользователей: все входят заново |
-| volume `session` (сессии Telegram) | архив, **зашифрованный** (файл сессии = доступ к аккаунту Telegram) | повторный вход в Telegram для `api`, `upload`, `download` (flows/auth.md); файлы не теряются |
-| Redis | не бэкапится | задачи в очереди и готовые архивы (`archives`): их запускают заново; статусы, кеши и лимиты пересоздаются сами |
+| PostgreSQL | a regular `pg_dump` (below), an encrypted copy off the server | the whole index: the files stay in the channels, but without paths, names and wrapped keys they are effectively lost |
+| `APP_ENCRYPTION_KEY` (`.env`) | an offline copy of `.env` (password manager, paper, a safe), separate from the DB dump | all encrypted files and their previews, forever: the file keys are wrapped by this key |
+| `APP_SECRET_KEY` (`.env`) | the same place, with the same copy of `.env` | all API keys and refresh tokens (everyone signs in again, keys are issued again), every user's webhook signing key changes, so receivers must fetch the key again from `GET /api/account/webhook-secret` |
+| `certs/` (JWT keys) | a copy together with `.env` | only user sessions: everyone signs in again |
+| the `session` volume (Telegram sessions) | an **encrypted** archive (a session file is access to the Telegram account) | signing in to Telegram again for `api`, `upload`, `download` (flows/auth.md); no files are lost |
+| Redis | not backed up | queued tasks and ready archives (`archives`): they are started again; statuses, caches and limits rebuild themselves |
 
-Остальные секреты `.env` (пароли Postgres, RabbitMQ, Redis, Flower) восстанавливаются сменой, но копия `.env` целиком
-проще. Дамп БД и `.env` храните раздельно: в дампе обёрнутые ключи файлов, в `.env` — ключ, который их открывает.
+The other `.env` secrets (Postgres, RabbitMQ, Redis, Flower passwords) can be restored by changing them, but a full copy of `.env`
+is simpler. Keep the DB dump and `.env` apart: the dump holds the wrapped file keys, `.env` the key that opens them.
 
 ```bash
-# дамп (cron, например раз в сутки) и шифрование
+# dump (cron, for example once a day) and encryption
 docker compose -f docker-compose.prod.yml exec -T postgres pg_dump -U tcloud -Fc tcloud \
   | gpg --symmetric --cipher-algo AES256 -o tcloud-$(date +%F).dump.gpg
-# сессии Telegram
+# Telegram sessions
 docker run --rm -v tcloud_session:/s:ro alpine tar czf - -C /s . \
   | gpg --symmetric --cipher-algo AES256 -o tcloud-session-$(date +%F).tgz.gpg
-# восстановление БД (API и воркеры остановлены)
+# DB restore (API and workers stopped)
 gpg -d tcloud-2026-01-01.dump.gpg \
   | docker compose -f docker-compose.prod.yml exec -T postgres pg_restore -U tcloud -d tcloud --clean --if-exists
 ```
 
-Восстановленный дамп не знает о файлах, загруженных после него (они останутся в каналах без строк в БД), а файлы,
-удалённые после него, будут в индексе без сообщений в Telegram. Поэтому дамп делайте часто.
+A restored dump does not know about files uploaded after it (they stay in the channels without DB rows), and files
+deleted after it remain in the index without messages in Telegram. So dump often.
 
-**Пробное восстановление** — сразу после настройки бэкапов и потом регулярно: поднять отдельный `postgres:18`
-(`docker run -d --name restore-test -e POSTGRES_PASSWORD=x postgres:18`), восстановить в него свежий дамп
-(`pg_restore -U postgres -d postgres --no-owner`), проверить `SELECT count(*) FROM files` и
-`SELECT max(created_at) FROM files` и удалить контейнер. Ключ из офлайн-копии `.env` сверить с рабочим, например по
-`sha256sum` строки `APP_ENCRYPTION_KEY`. Не проверенный бэкап считайте отсутствующим.
+**Test restore**, right after setting up backups and regularly afterwards: start a separate `postgres:18`
+(`docker run -d --name restore-test -e POSTGRES_PASSWORD=x postgres:18`), restore a fresh dump into it
+(`pg_restore -U postgres -d postgres --no-owner`), check `SELECT count(*) FROM files` and
+`SELECT max(created_at) FROM files` and delete the container. Compare the key from the offline copy of `.env` with the live one, for example by
+the `sha256sum` of the `APP_ENCRYPTION_KEY` line. Treat an untested backup as missing.
 
-- **Ротации ключей нет**: ни `APP_ENCRYPTION_KEY`, ни `APP_SECRET_KEY` нельзя сменить без потерь из таблицы выше.
-  Утёк ключ — старые файлы остаются под ним.
-- **Volume `tmp`**: тела загрузок до шифрования и отправки, а также готовые архивы папок (до `UPLOAD_ARCHIVE_TTL`,
-  по умолчанию 24 ч) лежат там открытыми. Держите Docker volumes (`/var/lib/docker`) на зашифрованном диске
-  (LUKS/dm-crypt или шифрование диска облака) — это же закрывает `session` и `pgdata`. В бэкап `tmp` не нужен.
+- **There is no key rotation**: neither `APP_ENCRYPTION_KEY` nor `APP_SECRET_KEY` can be changed without the losses in the table above.
+  If a key leaks, old files stay under it.
+- **The `tmp` volume**: upload bodies before encryption and sending, and ready folder archives (until `UPLOAD_ARCHIVE_TTL`,
+  24 h by default), sit there as plaintext. Keep the Docker volumes (`/var/lib/docker`) on an encrypted disk
+  (LUKS/dm-crypt or cloud disk encryption); that also covers `session` and `pgdata`. `tmp` does not need a backup.

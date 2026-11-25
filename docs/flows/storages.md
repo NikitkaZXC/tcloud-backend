@@ -1,21 +1,21 @@
-# Хранилища
+# Storages
 
-Хранилище — приватный канал Telegram (broadcast, без username и инвайт-ссылок). В БД — только наш UUID и `tg_chat_id`.
+A storage is a private Telegram channel (broadcast, no username and no invite links). The DB holds only our UUID and `tg_chat_id`.
 
-| Действие | Ручка | Что происходит |
+| Action | Endpoint | What happens |
 |---|---|---|
-| Создать | `POST /api/storages` `{name, description?}` | `CreateChannelRequest`, запись в БД, ответ с UUID. Аккаунт уже в 500 (1000 с Premium) каналах и группах → `409 channels_limit`; не больше `RATE_LIMIT_STORAGE_CREATE_USER` (5 в час) на пользователя → `429 rate_limited` |
-| Список | `GET /api/storages` | id из БД + название/описание/фото из Telegram (`GetFullChannel` на канал, кеш в Redis 10 мин, см. ниже); недоступный канал → `available: false`; `files` и `total_size` (открытый размер), `preview_count` и `preview_bytes` (файлы с нашим превью в `files.thumbnail` и сумма `octet_length(thumbnail)`) — одним запросом `GROUP BY storage_id` по всем хранилищам, только читаемые пользователем файлы (как у одного хранилища) |
-| Одно | `GET /api/storages/{id}` | то же для одного хранилища |
-| Изменить | `PATCH /api/storages/{id}` `{name?, description?}` | `EditTitle` / `EditChatAbout`; неизменённые значения Telegram не роняют |
-| Удалить | `DELETE /api/storages/{id}?keep_channel=false` | `204`. Записи файлов и папок удаляются из БД (каскад), канал — `DeleteChannelRequest` вместе со всеми сообщениями, безвозвратно. `keep_channel=true` — канал с файлами остаётся в Telegram, отвязывается только БД. Идут загрузки в хранилище — `409 storage_busy` (дождаться или отменить). Канал уже удалён руками — удаление всё равно проходит |
-| Фото | `PUT` / `GET` / `DELETE /api/storages/{id}/photo` | PUT — тело-картинка ≤ 10 МБ, проверка типа и ClamAV, не JPEG/PNG → JPEG; GET — байты из Telegram, кешируются в Redis `channel_photo:{chat_id}` на `REDIS_CACHE_TTL` (180 с, base64; «нет фото» тоже кешируется), `ETag` — хеш байтов, `Cache-Control: private, no-cache`, `If-None-Match` → `304`; `PUT`/`DELETE`/`PATCH` и удаление хранилища удаляют ключ |
+| Create | `POST /api/storages` `{name, description?}` | `CreateChannelRequest`, a DB row, a response with the UUID. The account is already in 500 (1000 with Premium) channels and groups → `409 channels_limit`; at most `RATE_LIMIT_STORAGE_CREATE_USER` (5 per hour) per user → `429 rate_limited` |
+| List | `GET /api/storages` | ids from the DB + title/description/photo from Telegram (`GetFullChannel` per channel, cached in Redis for 10 min, see below); an unavailable channel → `available: false`; `files` and `total_size` (plaintext size), `preview_count` and `preview_bytes` (files with our preview in `files.thumbnail` and the sum of `octet_length(thumbnail)`) in one `GROUP BY storage_id` query over all storages, only files the user can read (as for a single storage) |
+| One | `GET /api/storages/{id}` | the same for one storage |
+| Update | `PATCH /api/storages/{id}` `{name?, description?}` | `EditTitle` / `EditChatAbout`; unchanged values do not make Telegram fail |
+| Delete | `DELETE /api/storages/{id}?keep_channel=false` | `204`. File and folder rows are deleted from the DB (cascade), the channel by `DeleteChannelRequest` together with all its messages, irreversibly. `keep_channel=true`: the channel with its files stays in Telegram, only the DB is detached. Uploads to the storage are running → `409 storage_busy` (wait or cancel them). The channel was already deleted by hand: the delete still goes through |
+| Photo | `PUT` / `GET` / `DELETE /api/storages/{id}/photo` | PUT: an image body ≤ 10 MB, type check and ClamAV, non-JPEG/PNG → JPEG; GET: bytes from Telegram, cached in Redis `channel_photo:{chat_id}` for `REDIS_CACHE_TTL` (180 s, base64; "no photo" is cached too), `ETag` is a hash of the bytes, `Cache-Control: private, no-cache`, `If-None-Match` → `304`; `PUT`/`DELETE`/`PATCH` and storage deletion delete the key |
 
 ```mermaid
 sequenceDiagram
     participant C as admin
     participant S as StorageService
-    participant TG as Telegram (сессия api)
+    participant TG as Telegram (api session)
     participant DB as PostgreSQL
     participant R as Redis
     C->>S: POST /api/storages {name, description}
@@ -23,130 +23,130 @@ sequenceDiagram
     alt CHANNELS_TOO_MUCH
         S-->>C: 409 channels_limit
     end
-    S->>R: DEL account:premium, account:channels (сброс кеша аккаунта)
+    S->>R: DEL account:premium, account:channels (account cache reset)
     S->>DB: INSERT storages (tg_chat_id), commit
-    S->>TG: sync_folder TCloud (ошибки только в лог)
-    S-->>C: 201, хранилище с названием и фото из GetFullChannel
+    S->>TG: sync_folder TCloud (errors only logged)
+    S-->>C: 201, storage with title and photo from GetFullChannel
     C->>S: DELETE /api/storages/{id}?keep_channel=
-    S->>R: SCAN path:tcloud/{id}/* (есть → 409 storage_busy)
+    S->>R: SCAN path:tcloud/{id}/* (found → 409 storage_busy)
     opt keep_channel=false
         S->>TG: channels.deleteChannel
         S->>R: DEL account:*
     end
-    S->>DB: DELETE storages (каскад folders, files, folder_grants), commit
+    S->>DB: DELETE storages (cascade folders, files, folder_grants), commit
     S->>TG: sync_folder TCloud
     S-->>C: 204
 ```
 
-Код — `src/application/services/storage.py`, вызовы Telegram — `src/infrastructure/integrations/telegram/client.py`.
+Code: `src/application/services/storage.py`, Telegram calls: `src/infrastructure/integrations/telegram/client.py`.
 
-## Папка TCloud
+## TCloud folder
 
-Все каналы хранилищ (созданные приложением и подключённые из `TELEGRAM_CHATS`) лежат в папке чатов Telegram
-(dialog filter) с фиксированным названием `TCloud`. Включено по умолчанию, выключается настройкой
-`telegram.chat_folder` (settings.md). Аккаунт Telegram один на всё приложение и принадлежит root, поэтому действует
-только настройка root; у остальных пользователей ключ хранится, но ни на что не влияет.
+All storage channels (created by the app and connected from `TELEGRAM_CHATS`) live in a Telegram chat folder
+(dialog filter) with the fixed title `TCloud`. On by default, switched off with the
+`telegram.chat_folder` setting (settings.md). There is one Telegram account for the whole app and it belongs to root, so only
+root's setting applies; for other users the key is stored but has no effect.
 
-`StorageService.sync_folder` → `TelegramClient.sync_folder`: `messages.getDialogFilters`, папка ищется по названию
-(в БД ничего не хранится), `messages.updateDialogFilter` выставляет `include_peers` ровно в текущие каналы хранилищ
-(по порядку создания, не больше лимита — 100 / 200 с Premium), эмодзи и цвет папки сохраняются, закрепления
-сбрасываются. Новой папке достаётся первый свободный id в 2..255. Каналов нет или настройка выключена — папка удаляется
-(каналы остаются). Настройки root читаются терпимо (`SettingsServiceRead.from_stored`), и весь sync, включая чтение
-настроек, идёт после commit внутри `try`: любая ошибка — только warning, запрос успешен.
+`StorageService.sync_folder` → `TelegramClient.sync_folder`: `messages.getDialogFilters`, the folder is found by title
+(nothing is stored in the DB), `messages.updateDialogFilter` sets `include_peers` to exactly the current storage channels
+(in creation order, up to the limit of 100 / 200 with Premium), the folder emoji and colour are kept, pins
+are reset. A new folder gets the first free id in 2..255. No channels or the setting is off: the folder is deleted
+(the channels stay). Root's settings are read tolerantly (`SettingsServiceRead.from_stored`), and the whole sync, including reading
+the settings, runs after the commit inside a `try`: any error is only a warning, the request succeeds.
 
 
 ```mermaid
 flowchart TD
-    trig["создание или удаление хранилища,<br/>connect_chats (старт, вход в api),<br/>root меняет telegram.chat_folder"] --> root["StorageService.sync_folder:<br/>настройки root из users.settings (from_stored)"]
+    trig["storage create or delete,<br/>connect_chats (startup, api sign-in),<br/>root changes telegram.chat_folder"] --> root["StorageService.sync_folder:<br/>root settings from users.settings (from_stored)"]
     root --> en{"chat_folder?"}
-    en -->|да| ids["tg_chat_id всех storages"]
-    en -->|нет| none["пустой список"]
-    ids --> tg["TelegramClient.sync_folder:<br/>messages.getDialogFilters, папка по названию TCloud"]
+    en -->|yes| ids["tg_chat_id of all storages"]
+    en -->|no| none["empty list"]
+    ids --> tg["TelegramClient.sync_folder:<br/>messages.getDialogFilters, folder by title TCloud"]
     none --> tg
-    tg --> peers["каналы → input peers, не больше 100 / 200 с Premium;<br/>недоступный канал — warning"]
-    peers --> empty{"peers пустой?"}
-    empty -->|да| del["папка есть → updateDialogFilter(id) без фильтра = удалить"]
-    empty -->|нет| upd["updateDialogFilter: id своей папки или первый свободный 2..255,<br/>include_peers, эмодзи и цвет сохраняются, pinned сбрасываются"]
-    root -. "любая ошибка" .-> log
-    tg -. "любая ошибка" .-> log["warning в лог, запрос успешен"]
+    tg --> peers["channels → input peers, at most 100 / 200 with Premium;<br/>an unavailable channel is a warning"]
+    peers --> empty{"peers empty?"}
+    empty -->|yes| del["folder exists → updateDialogFilter(id) without a filter = delete"]
+    empty -->|no| upd["updateDialogFilter: id of our folder or the first free 2..255,<br/>include_peers, emoji and colour kept, pinned reset"]
+    root -. "any error" .-> log
+    tg -. "any error" .-> log["warning in the log, request succeeds"]
 ```
 
-Когда синхронизируется: после создания и удаления хранилища, после подключения из `TELEGRAM_CHATS` (при каждом старте
-и входе в API-сессию), когда root меняет `telegram.chat_folder` (`PATCH` или `DELETE /api/account/settings`).
-Любая ошибка (лимит папок, флуд, нет сессии) — только warning в лог: запрос всё равно успешен. Папку, изменённую руками
-в Telegram, следующая синхронизация перезапишет.
+When it syncs: after a storage is created or deleted, after connecting from `TELEGRAM_CHATS` (on every startup
+and API session sign-in), when root changes `telegram.chat_folder` (`PATCH` or `DELETE /api/account/settings`).
+Any error (folder limit, flood, no session) is only a warning in the log: the request succeeds anyway. A folder changed by hand
+in Telegram is overwritten by the next sync.
 
-## Сколько каналов ещё можно создать
+## How many channels can still be created
 
 `GET /api/account` → `{telegram_connected, premium, file_limit, channels_used, channels_limit, previews_enabled}`.
-`file_limit` — размер одного сообщения Telegram (2000/4000 МиБ), то есть размер **части** большого файла; размер файла
-им больше не ограничен (flows/uploads.md, «Большие файлы частями»).
-`previews_enabled` — настройка root `uploads.previews` (flows/settings.md), всегда есть, не зависит от Telegram; фронтенд
-прячет по ней блок «Превью» дашборда. `channels_used` — сколько каналов и
-супергрупп, в которых состоит аккаунт API-сессии: все диалоги из всех папок, включая архив (`iter_dialogs` без `folder`),
-у которых сущность — `Channel` (вещательные каналы, супергруппы и гигагруппы, свои и чужие, хранилища tcloud и любые
-другие). Не считаются обычные группы (`Chat`), личные чаты, боты, каналы, из которых аккаунт вышел или забанен
-(`ChannelForbidden`, их нет среди диалогов). Ровно это Telegram ограничивает `channels_limit_default` /
-`channels_limit_premium` и отвечает `CHANNELS_TOO_MUCH` при создании хранилища, поэтому число совпадает с тем, что
-видно в приложении Telegram (каналы + супергруппы во всех папках и архиве). `channels_limit` — 500 или 1000 с Premium.
-Подсчёт — один проход по диалогам, он медленный, поэтому `channels_used` и `premium` кешируются в Redis
-(`tcloud:account:channels`, `tcloud:account:premium`, TTL `REDIS_CACHE_TTL`, 180 с; тот же `premium` даёт размер части
-большого файла в `worker-telegram`). Создание и удаление хранилища (с каналом), подключение канала из `TELEGRAM_CHATS` и новый вход в
-API-сессию удаляют оба ключа, так что изменения tcloud видны сразу; изменения в самом Telegram (вступление в каналы,
-выход, Premium) сбрасывают кеш через события Telegram (раздел «События Telegram»), а TTL — страховка, если событие
-потерялось. Telegram не ответил (флуд, сеть, сессия отозвана) → `channels_used: null`, остальные поля как обычно, ошибка
-не кешируется. Пока root не вошёл в API-сессию, ручка отвечает `200` с `telegram_connected: false` и `null`
-во всех полях Telegram (`premium`, `file_limit`, `channels_used`, `channels_limit`); после входа
-`telegram_connected: true` и `premium` читается из Telegram.
+`file_limit` is the size of one Telegram message (2000/4000 MiB), that is the size of a **part** of a big file; the file size
+is no longer limited by it (flows/uploads.md, "Big files in parts").
+`previews_enabled` is root's `uploads.previews` setting (flows/settings.md), always present, independent of Telegram; the frontend
+hides the dashboard "Previews" block by it. `channels_used` is how many channels and
+supergroups the API session account is in: all dialogs from all folders, including the archive (`iter_dialogs` without `folder`),
+whose entity is a `Channel` (broadcast channels, supergroups and gigagroups, own and foreign, tcloud storages and any
+others). Not counted: basic groups (`Chat`), private chats, bots, channels the account left or was banned from
+(`ChannelForbidden`, they are not among the dialogs). Exactly this is what Telegram limits with `channels_limit_default` /
+`channels_limit_premium` and answers `CHANNELS_TOO_MUCH` to when a storage is created, so the number matches what
+the Telegram app shows (channels + supergroups in all folders and the archive). `channels_limit` is 500, or 1000 with Premium.
+Counting is one pass over the dialogs and it is slow, so `channels_used` and `premium` are cached in Redis
+(`tcloud:account:channels`, `tcloud:account:premium`, TTL `REDIS_CACHE_TTL`, 180 s; the same `premium` gives the part size of
+a big file in `worker-telegram`). Creating and deleting a storage (with its channel), connecting a channel from `TELEGRAM_CHATS` and a new sign-in to the
+API session delete both keys, so tcloud's own changes show at once; changes in Telegram itself (joining channels,
+leaving, Premium) reset the cache through Telegram events (section "Telegram events"), and the TTL is a safety net if an event
+was lost. Telegram did not answer (flood, network, session revoked) → `channels_used: null`, the other fields as usual, the error
+is not cached. Until root signs in to the API session, the endpoint answers `200` with `telegram_connected: false` and `null`
+in all Telegram fields (`premium`, `file_limit`, `channels_used`, `channels_limit`); after sign-in
+`telegram_connected: true` and `premium` is read from Telegram.
 
 ```mermaid
 flowchart TD
-    get["GET /api/account"] --> auth{"сессия api вошла?"}
-    auth -->|нет| off["telegram_connected false, остальные поля null"]
-    auth -->|да| prem{"Redis account:premium есть?"}
-    prem -->|нет| me["get_me().premium → SET EX 180"]
-    prem -->|да| cache{"Redis account:channels есть?"}
+    get["GET /api/account"] --> auth{"api session signed in?"}
+    auth -->|no| off["telegram_connected false, other fields null"]
+    auth -->|yes| prem{"Redis account:premium exists?"}
+    prem -->|no| me["get_me().premium → SET EX 180"]
+    prem -->|yes| cache{"Redis account:channels exists?"}
     me --> cache
-    cache -->|да| hit["channels_used из кеша"]
-    cache -->|нет| count["iter_dialogs: число dialog.is_channel"]
-    count -->|ок| put["SET account:channels EX 180"]
-    count -->|ошибка Telegram| nul["channels_used null, не кешируется"]
-    reset["создание хранилища, удаление с каналом,<br/>TELEGRAM_CHATS, вход в сессию api,<br/>события Telegram"] -. "DEL account:*" .-> prem
+    cache -->|yes| hit["channels_used from cache"]
+    cache -->|no| count["iter_dialogs: count of dialog.is_channel"]
+    count -->|ok| put["SET account:channels EX 180"]
+    count -->|Telegram error| nul["channels_used null, not cached"]
+    reset["storage create, delete with channel,<br/>TELEGRAM_CHATS, api session sign-in,<br/>Telegram events"] -. "DEL account:*" .-> prem
 ```
 
-## Кеш сведений о каналах
+## Channel info cache
 
-Название, описание и «есть фото» каждого канала (`StorageService.channel_infos`) берутся из Redis
-`tcloud:channel:{chat_id}` (JSON, TTL `REDIS_CACHE_TTL`, 180 с); в Telegram (`GetFullChannel`, бывало до 10 с) идут только
-каналы без записи — одним `GetFullChannel` на канал (название и фото берутся из его `chats`, отдельного
-`GetChannels` нет), до 5 каналов параллельно (`CHANNELS_PARALLEL`), — и ответ сразу кладётся в кеш. Так `GET /api/storages`, `GET /api/storages/{id}` и поиск (имена
-хранилищ в результатах) не ждут Telegram на каждом запросе. Свои изменения видны сразу: `PATCH`, `PUT`/`DELETE …/photo`
-и удаление хранилища удаляют ключ (вместе с аватаркой `channel_photo:{chat_id}`). Переименование руками в Telegram или удаление канала там видно не позже чем через
-3 мин. Telegram недоступен (сеть, флуд, сессия) — warning в лог, закешированные каналы отдаются как есть, остальные —
-`available: false` (раньше весь список отвечал `503`).
+The title, description and "has a photo" of each channel (`StorageService.channel_infos`) come from Redis
+`tcloud:channel:{chat_id}` (JSON, TTL `REDIS_CACHE_TTL`, 180 s); only channels without an entry go to Telegram
+(`GetFullChannel`, which used to take up to 10 s), one `GetFullChannel` per channel (title and photo come from its `chats`, there is no separate
+`GetChannels`), up to 5 channels in parallel (`CHANNELS_PARALLEL`), and the answer goes into the cache at once. So `GET /api/storages`, `GET /api/storages/{id}` and search (storage
+names in the results) do not wait for Telegram on every request. Our own changes show at once: `PATCH`, `PUT`/`DELETE …/photo`
+and storage deletion delete the key (together with the avatar `channel_photo:{chat_id}`). A rename by hand in Telegram or a channel deleted there shows within
+3 min. Telegram unavailable (network, flood, session): a warning in the log, cached channels are returned as they are, the rest as
+`available: false` (the whole list used to answer `503`).
 
-## События Telegram
+## Telegram events
 
-Кеши выше (`channel:*`, `channel_photo:*`, `account:*`) живут 180 с, но изменения, сделанные в самом Telegram, видны
-почти сразу: клиент API-сессии (единственный с `receive_updates=True`) в `AuthService.connect` регистрирует через
-`TelegramClient.watch` вместе с `MessageDeleted` сырой обработчик (`events.Raw`) и только потом вызывает `catch_up()`.
-Обработчик в Telegram не ходит (никаких `GetFullChannel`), только удаляет ключи Redis; свежие данные читаются при
-следующем запросе.
+The caches above (`channel:*`, `channel_photo:*`, `account:*`) live 180 s, but changes made in Telegram itself show
+almost at once: the API session client (the only one with `receive_updates=True`) registers a raw handler (`events.Raw`)
+through `TelegramClient.watch` together with `MessageDeleted` in `AuthService.connect`, and only then calls `catch_up()`.
+The handler never goes to Telegram (no `GetFullChannel`), it only deletes Redis keys; fresh data is read on
+the next request.
 
-| Обновление Telegram | Когда приходит | Что удаляется |
+| Telegram update | When it arrives | What is deleted |
 |---|---|---|
-| `UpdateChannel` | у канала поменялись сведения или наше членство: переименование, фото, канал удалён, мы вышли или нас выгнали; вступление в любой канал | `channel:{chat_id}`, `channel_photo:{chat_id}`, `account:*` (`channels_used`) |
-| `UpdateNewChannelMessage` со служебным `MessageActionChatEditTitle` / `EditPhoto` / `DeletePhoto` | новое название или фото канала | то же |
-| `UpdateUser` с id нашего аккаунта (`me.id`, запомнен в `start`) | изменились сведения об аккаунте, в том числе Premium | `account:*` |
+| `UpdateChannel` | the channel's info or our membership changed: rename, photo, channel deleted, we left or were kicked; joining any channel | `channel:{chat_id}`, `channel_photo:{chat_id}`, `account:*` (`channels_used`) |
+| `UpdateNewChannelMessage` with a service `MessageActionChatEditTitle` / `EditPhoto` / `DeletePhoto` | a new channel title or photo | the same |
+| `UpdateUser` with our account id (`me.id`, remembered in `start`) | the account info changed, Premium included | `account:*` |
 
-Обработчики живут на объекте Telethon-клиента, поэтому переживают переподключения (`ensure_connected` вызывает тот же
-`connect()`, который заново запускает цикл обновлений; пропущенное Telethon догоняет `getDifference` по состоянию из
-файла сессии). Новый вход в API-сессию создаёт новый клиент, и `connect()` регистрирует обработчики на нём. Ошибка
-Redis в обработчике только пишется в лог. События, потерянные совсем (долгий простой, сбой), покрывает TTL 180 с.
+The handlers live on the Telethon client object, so they survive reconnects (`ensure_connected` calls the same
+`connect()`, which restarts the update loop; Telethon catches up on what was missed with `getDifference` from the state in
+the session file). A new sign-in to the API session creates a new client, and `connect()` registers the handlers on it. A Redis
+error in a handler is only logged. Events lost entirely (a long downtime, a failure) are covered by the 180 s TTL.
 
-Описание канала, изменённое в самом Telegram, обновления не присылает (ни `UpdateChannel`, ни служебного
-сообщения; проверено вживую): новое описание видно только после истечения `channel:{chat_id}`, не позже чем через
-180 с. Изменение описания через tcloud (`PATCH`) видно сразу.
+A channel description changed in Telegram itself sends no update (neither `UpdateChannel` nor a service
+message; verified live): the new description shows only after `channel:{chat_id}` expires, within
+180 s. A description change through tcloud (`PATCH`) shows at once.
 
 ```mermaid
 sequenceDiagram
@@ -154,54 +154,54 @@ sequenceDiagram
     participant C as TelegramClient (api, receive_updates)
     participant A as AuthService.forget_channel / forget_account
     participant R as Redis
-    TG-->>C: UpdateChannel / служебное сообщение EditTitle, EditPhoto, DeletePhoto
+    TG-->>C: UpdateChannel / service message EditTitle, EditPhoto, DeletePhoto
     C->>A: channel_changed(chat_id)
     A->>R: DEL channel:{chat_id}, channel_photo:{chat_id}, account:premium, account:channels
-    TG-->>C: UpdateUser (наш id)
+    TG-->>C: UpdateUser (our id)
     C->>A: account_changed()
     A->>R: DEL account:premium, account:channels
-    Note over C,R: в Telegram не ходим, следующий запрос читает заново
+    Note over C,R: no calls to Telegram, the next request reads again
 ```
 
-## Активность чтения и записи (индикаторы)
+## Read and write activity (indicators)
 
-`GET /api/storages/activity` → `[{storage_id, read, write}]` — по одной записи на каждое хранилище, которое видит
-пользователь (как `GET /api/storages`), `true` — с хранилищем **сейчас** идёт операция чтения или записи, или она
-закончилась меньше 1 с назад (`ACTIVITY_TAIL`, чтобы короткие операции успели мигнуть), независимо от того, кто и
-с какого устройства. Рассчитано на опрос раз в 1–3 с: один `SELECT` хранилищ и один конвейер `ZCOUNT` в Redis, в
-Telegram не ходит.
+`GET /api/storages/activity` → `[{storage_id, read, write}]`, one entry for every storage the
+user sees (like `GET /api/storages`), `true` means a read or write operation is running on the storage **right now**, or it
+finished less than 1 s ago (`ACTIVITY_TAIL`, so short operations get to blink), no matter who runs it and
+from which device. Designed for polling every 1–3 s: one `SELECT` of storages and one `ZCOUNT` pipeline in Redis, no
+calls to Telegram.
 
-| Флаг | Что его ставит |
+| Flag | What sets it |
 |---|---|
-| `read` | `GET /api/files/{id}/download` — пока идёт поток, до последнего байта или обрыва клиентом (`services/file.tracked`); сборка архива (`archives.build`) и дозаполнение превью — пока воркер читает |
-| `write` | отправка в Telegram (`uploads.telegram`) — пока воркер работает над задачей, включая ожидание FloodWait и замену старого сообщения; `DELETE /api/files/{id}` и `DELETE /api/folders` — пока идёт удаление в Telegram |
+| `read` | `GET /api/files/{id}/download` while the stream runs, until the last byte or a client disconnect (`services/file.tracked`); an archive build (`archives.build`) and preview backfill while the worker reads |
+| `write` | sending to Telegram (`uploads.telegram`) while the worker works on the task, including the FloodWait wait and replacing the old message; `DELETE /api/files/{id}` and `DELETE /api/folders` while the deletion in Telegram runs |
 
-Превью (`/thumb`), листинги и метаданные чтением не считаются. Каждая операция — `TaskStore.active(storage, kind)`
-(асинхронный контекст): член `uuid` операции в zset `tcloud:activity:{storage_id}:{read|write}` со score «живо до»
-(unix-время). В начале и раз в секунду, пока операция идёт, score = сейчас + 5 с (`ACTIVITY_TTL`); на выходе из
-контекста — при успехе, ошибке, отмене задачи и обрыве клиента (Starlette отменяет отдачу, генератор тела закрывается
-и выходит из контекста; запись на выходе под `asyncio.shield`) — score = сейчас + 1 с (`ACTIVITY_TAIL`). Флаг — есть
-ли член со score > сейчас (`ZCOUNT`), так что несколько параллельных операций считаются независимо, а конец одной не
-гасит другую. Упал процесс посреди операции — его член просто устаревает через ≤ 5 с. Просроченные члены чистятся
-при каждой записи, весь ключ живёт 5 с с последней записи.
+Previews (`/thumb`), listings and metadata do not count as reads. Every operation is `TaskStore.active(storage, kind)`
+(an async context): the operation's `uuid` member in the zset `tcloud:activity:{storage_id}:{read|write}` with an "alive until" score
+(unix time). At the start and every second while the operation runs, score = now + 5 s (`ACTIVITY_TTL`); on leaving the
+context (success, error, task cancel and client disconnect: Starlette cancels the response, the body generator closes
+and leaves the context; the exit write is under `asyncio.shield`) score = now + 1 s (`ACTIVITY_TAIL`). The flag is whether
+there is a member with score > now (`ZCOUNT`), so several parallel operations count independently and the end of one does not
+turn off another. If a process dies mid-operation, its member simply goes stale within ≤ 5 s. Expired members are cleaned
+on every write, the whole key lives 5 s from the last write.
 
 ```mermaid
 sequenceDiagram
-    participant O as операция (поток, отправка, удаление)
+    participant O as operation (stream, send, delete)
     participant R as Redis zset activity:{storage}:{kind}
     participant F as GET /api/storages/activity
-    O->>R: ZADD op = now+5 (начало)
-    loop раз в 1 с, пока идёт
+    O->>R: ZADD op = now+5 (start)
+    loop every 1 s while running
         O->>R: ZADD op = now+5
     end
-    O->>R: ZADD op = now+1 (конец, ошибка, отмена, обрыв клиента)
-    F->>R: ZCOUNT (now, +inf) по каждому ключу
+    O->>R: ZADD op = now+1 (end, error, cancel, client disconnect)
+    F->>R: ZCOUNT (now, +inf) per key
     R-->>F: > 0 → true
 ```
 
-## Подключение из `.env`
+## Connecting from `.env`
 
-`TELEGRAM_CHATS=-1001234567890,-1009876543210` — только id существующих каналов. При старте каждый id, которого ещё нет
-в БД, проверяется (канал, без username, мы владелец или админ с правами публиковать, удалять и менять информацию)
-и подключается. Не прошёл проверку — ошибка в лог, остальные подключаются. Повторный старт ничего не дублирует. Удалённое через API хранилище, чей id остался в `TELEGRAM_CHATS`, при следующем
-старте подключится снова (если канал оставлен `keep_channel=true`) — уберите id из `.env`.
+`TELEGRAM_CHATS=-1001234567890,-1009876543210`: only ids of existing channels. At startup every id not yet
+in the DB is checked (a channel, no username, we are the owner or an admin with rights to post, delete and change info)
+and connected. One that fails the check is an error in the log, the rest are connected. A repeated start duplicates nothing. A storage deleted through the API whose id is still in `TELEGRAM_CHATS` is connected again on the next
+start (if the channel was kept with `keep_channel=true`): remove the id from `.env`.

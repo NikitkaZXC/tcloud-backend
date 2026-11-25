@@ -1,99 +1,99 @@
-# Интеграции
+# Integrations
 
 ## Telegram (Telethon)
 
-Пользовательский аккаунт, а не бот: бот не может создавать каналы и не имеет Premium.
-Три сессии одного аккаунта в volume `session`: `TELEGRAM_SESSION` (API: каналы, удаление, события),
-`TELEGRAM_UPLOAD_SESSION` (worker-telegram: выгрузка) и `TELEGRAM_DOWNLOAD_SESSION` (API: отдача файлов). Один
-SQLite-файл сессии нельзя открывать из двух процессов — будут блокировки и риск `AUTH_KEY_DUPLICATED`; скачивания
-вынесены в свою сессию, чтобы их трафик и FloodWait не задевали управление каналами. В каждую входят отдельно через
-`/api/telegram` (только root; в Telegram это три устройства, `api`, `upload`, `download`; flows/auth.md).
-Обновления получает только API-сессия — ради событий об удалённых сообщениях (flows/folders-and-files.md).
+A user account, not a bot: a bot cannot create channels and has no Premium.
+Three sessions of one account in the `session` volume: `TELEGRAM_SESSION` (API: channels, deletes, events),
+`TELEGRAM_UPLOAD_SESSION` (worker-telegram: uploads) and `TELEGRAM_DOWNLOAD_SESSION` (API: serving files). One
+SQLite session file cannot be opened from two processes, that gives locks and a risk of `AUTH_KEY_DUPLICATED`; downloads
+have their own session so that their traffic and FloodWait do not affect channel management. Each one is signed in separately through
+`/api/telegram` (root only; in Telegram these are three devices, `api`, `upload`, `download`; flows/auth.md).
+Only the API session receives updates, for the events about deleted messages (flows/folders-and-files.md).
 
-| Лимит | Значение | Как учитываем |
+| Limit | Value | How we handle it |
 |---|---|---|
-| Файл в одном сообщении | 2 ГБ, с Premium 4 ГБ (4000/8000 кусков по 512 КБ) | файл больше уходит несколькими сообщениями-частями (flows/uploads.md, «Большие файлы частями»); Premium кешируется в Redis на `REDIS_CACHE_TTL` (180 с) |
-| Фото как фото | 10 МБ, сумма сторон ≤ 10000, соотношение ≤ 1:20 | не влезло → отправляем документом с предупреждением |
-| Фото как фото — формат | только JPEG/PNG | webp/heic/gif переводим в JPEG (Telegram всё равно сожмёт) |
-| Подпись | 1024 символа | в подписи только `#tc<hex>`; одно слово без дефисов — поиск Telegram находит его целиком |
-| Превью видео | JPEG ≤ 200 КБ, ≤ 320 px | ffmpeg, качество снижается, пока не влезет |
-| Превью зашифрованных файлов | JPEG ≤ 20 КБ, ≤ 320 px | делаем сами (Pillow, кадр видео — ffmpeg), в Telegram не уходит, лежит зашифрованным в `files.thumbnail` |
-| Превью при чтении (`/thumb`) | размеры Telegram, ≤ 320 px (`THUMB_SIDE`) | один `messages.getMessages` + скачивание маленького размера сессией `download`; встроенные размеры (`PhotoCachedSize`) без запроса |
-| Название / описание канала | 128 / 255 | валидация запроса |
-| Каналов и супергрупп на аккаунт | 500 / 1000 с Premium (`CHANNELS_MAX*`) | Telegram `CHANNELS_TOO_MUCH` при создании хранилища → `409 channels_limit` с `limit`; считаются все каналы и группы аккаунта, не только хранилища, поэтому заранее не проверяем; текущее число — `GET /api/account` `channels_used` (кеш в Redis на `REDIS_CACHE_TTL`) |
-| Папка чатов «TCloud» | 100 чатов / 200 с Premium (`FOLDER_PEERS_MAX*`); id папок 2..255; папок на аккаунт 10 / 30 с Premium | лишние каналы в папку не попадают (warning в лог); новая папка — первый свободный id; лимит папок, флуд и прочие ошибки синхронизации только пишутся в лог (storages.md, «Папка TCloud») |
-| Удаление сообщений | 100 за запрос | пачками |
-| FloodWait | — | ≤ 60 с Telethon пережидает сам; дольше — пауза всей выгрузки (см. background-tasks.md) |
+| File in one message | 2 GB, 4 GB with Premium (4000/8000 chunks of 512 KB) | a bigger file goes as several part messages (flows/uploads.md, "Big files in parts"); Premium is cached in Redis for `REDIS_CACHE_TTL` (180 s) |
+| Photo as a photo | 10 MB, sum of sides ≤ 10000, ratio ≤ 1:20 | does not fit → sent as a document with a warning |
+| Photo as a photo: format | JPEG/PNG only | webp/heic/gif are converted to JPEG (Telegram compresses anyway) |
+| Caption | 1024 characters | the caption holds only `#tc<hex>`; one word without hyphens, so Telegram search finds it whole |
+| Video preview | JPEG ≤ 200 KB, ≤ 320 px | ffmpeg, quality is lowered until it fits |
+| Preview of encrypted files | JPEG ≤ 20 KB, ≤ 320 px | made by us (Pillow, a video frame via ffmpeg), never sent to Telegram, stored encrypted in `files.thumbnail` |
+| Preview on read (`/thumb`) | Telegram sizes, ≤ 320 px (`THUMB_SIDE`) | one `messages.getMessages` + download of a small size with the `download` session; inline sizes (`PhotoCachedSize`) without a request |
+| Channel title / description | 128 / 255 | request validation |
+| Channels and supergroups per account | 500 / 1000 with Premium (`CHANNELS_MAX*`) | Telegram `CHANNELS_TOO_MUCH` on storage create → `409 channels_limit` with `limit`; all channels and groups of the account count, not only storages, so we do not check in advance; the current number is `GET /api/account` `channels_used` (cached in Redis for `REDIS_CACHE_TTL`) |
+| "TCloud" chat folder | 100 chats / 200 with Premium (`FOLDER_PEERS_MAX*`); folder ids 2..255; folders per account 10 / 30 with Premium | extra channels do not go into the folder (a warning in the log); a new folder takes the first free id; the folder limit, flood and other sync errors are only logged (storages.md, "TCloud folder") |
+| Message deletion | 100 per request | in batches |
+| FloodWait | none | ≤ 60 s Telethon waits by itself; longer pauses all uploads (see background-tasks.md) |
 
-- Видео не перекодируем: Telegram не пережимает видео, загруженное через API. Размеры, длительность и поворот берём
-  из ffprobe и передаём в `DocumentAttributeVideo` — без них соотношение сторон «плывёт». Плеер надёжно работает
-  с MP4; другие контейнеры могут показаться файлом — в ответе будет предупреждение.
-- Куски файлов > 10 МБ отправляются параллельно (`TELEGRAM_UPLOAD_WORKERS`, `SaveBigFilePart`): Telethon шлёт их по одному
-  и упирается в задержку сети. Плюс `cryptg` для быстрого AES.
-- Скачивание: смещение запроса к Telegram должно быть кратно 512 КБ, лишние байты в начале отрезаем — так работает `Range`.
-- Сжатое фото (`send_as=media`) хранится в Telegram в нескольких размерах (`PhotoSize`/`PhotoSizeProgressive`, плюс встроенные `PhotoStrippedSize`/`PhotoCachedSize`), и последний в списке не всегда самый тяжёлый. Telethon в `message.file.size` отдаёт самый тяжёлый размер, а `iter_download` по умолчанию качает последний — из-за этого `Content-Length` не совпадал с телом. Теперь размер при отправке, проверка `file_changed`, скачивание, `Range` и архивы берут один и тот же размер — самый тяжёлый `PhotoSize`/`PhotoSizeProgressive` (`client.photo_size`, `download_location`). У старых записей в `files.size` уже лежит именно он, миграция не нужна.
-- Канал адресуется через `get_input_entity` (`TelegramClient._peer`): id и `access_hash` берутся из кеша сессии без
-  запроса к Telegram. `get_entity` в Telethon 1.45 всегда делает `channels.GetChannels`, поэтому полная сущность
-  (`_entity`) нужна только там, где читаются её поля: права в `check_channel` и фото в `photo`. Если `access_hash`
-  канала ещё нет в сессии, список диалогов загружается один раз.
-- Переподключение. Telethon сам пробует восстановить оборванное соединение (`auto_reconnect`, 5 попыток), после
-  чего клиент остаётся отключённым навсегда — так API и worker-telegram стояли с `503 telegram_unavailable` до
-  перезапуска. Теперь каждый вызов клиента (`translate_errors`) сначала делает `TelegramClient.ensure_connected`: клиент,
-  который был запущен (`start`) и не остановлен (`stop`, `forget`, `log_out`), но отключён, переподключается
-  (`connect`, таймаут 15 с) под замком, чтобы параллельные запросы не плодили подключения. Неудача → `503
-  telegram_unavailable` и экспоненциальная пауза 1, 2, 4 … 60 с (`RECONNECT_MIN`/`RECONNECT_MAX`), в которую вызовы
-  сразу отвечают `telegram_unavailable` без новой попытки; успех сбрасывает паузу. Так работают все процессы: API
-  (сессии `api` и `download`) и воркеры (сессия `upload`). Дополнительно API раз в 15 с (`AuthService.run_keepalive`)
-  вызывает `ensure_connected` у клиентов `api` и `download`, чтобы события об удалениях и проверки здоровья
-  вернулись и без запросов пользователей.
+- Videos are not re-encoded: Telegram does not recompress video uploaded through the API. Dimensions, duration and rotation come
+  from ffprobe and go into `DocumentAttributeVideo`; without them the aspect ratio "drifts". The player works reliably
+  with MP4; other containers may show up as a file, and the response carries a warning.
+- Chunks of files > 10 MB are sent in parallel (`TELEGRAM_UPLOAD_WORKERS`, `SaveBigFilePart`): Telethon sends them one by one
+  and is bound by network latency. Plus `cryptg` for fast AES.
+- Downloads: the offset of a request to Telegram must be a multiple of 512 KB, extra bytes at the start are cut off; that is how `Range` works.
+- A compressed photo (`send_as=media`) is stored in Telegram in several sizes (`PhotoSize`/`PhotoSizeProgressive`, plus the inline `PhotoStrippedSize`/`PhotoCachedSize`), and the last one in the list is not always the heaviest. Telethon reports the heaviest size in `message.file.size`, while `iter_download` downloads the last one by default, which made `Content-Length` disagree with the body. Now the size at send time, the `file_changed` check, the download, `Range` and archives all use the same size, the heaviest `PhotoSize`/`PhotoSizeProgressive` (`client.photo_size`, `download_location`). Old rows already hold exactly that in `files.size`, no migration is needed.
+- A channel is addressed through `get_input_entity` (`TelegramClient._peer`): id and `access_hash` come from the session cache without
+  a request to Telegram. `get_entity` in Telethon 1.45 always calls `channels.GetChannels`, so the full entity
+  (`_entity`) is needed only where its fields are read: rights in `check_channel` and the photo in `photo`. If the channel's `access_hash`
+  is not in the session yet, the dialog list is loaded once.
+- Reconnect. Telethon tries to restore a dropped connection by itself (`auto_reconnect`, 5 attempts), after
+  which the client stays disconnected forever; that is how the API and worker-telegram used to sit at `503 telegram_unavailable` until
+  a restart. Now every client call (`translate_errors`) first runs `TelegramClient.ensure_connected`: a client
+  that was started (`start`) and not stopped (`stop`, `forget`, `log_out`) but is disconnected reconnects
+  (`connect`, 15 s timeout) under a lock, so parallel requests do not pile up connections. Failure → `503
+  telegram_unavailable` and an exponential pause of 1, 2, 4 … 60 s (`RECONNECT_MIN`/`RECONNECT_MAX`), during which calls
+  answer `telegram_unavailable` at once without a new attempt; success resets the pause. Every process works this way: the API
+  (sessions `api` and `download`) and the workers (session `upload`). In addition, the API calls `ensure_connected` on the `api` and `download`
+  clients every 15 s (`AuthService.run_keepalive`), so that deletion events and health checks
+  come back even without user requests.
 
 ```mermaid
 flowchart TD
-    call["вызов клиента (translate_errors)"] --> wanted{"start был, stop/forget/log_out — нет?"}
-    wanted -->|нет| run["запрос к Telegram"]
-    wanted -->|да| conn{"is_connected?"}
-    conn -->|да| run
-    conn -->|нет| pause{"идёт пауза после неудачи?"}
-    pause -->|да| unav["503 telegram_unavailable"]
-    pause -->|нет| try["connect, таймаут 15 с"]
-    try -->|ошибка| back["пауза ×2: 1 … 60 с"] --> unav
-    try -->|ок| reset["пауза = 0"] --> run
-    keep["API: run_keepalive раз в 15 с"] --> conn
+    call["client call (translate_errors)"] --> wanted{"started, and not stop/forget/log_out?"}
+    wanted -->|no| run["request to Telegram"]
+    wanted -->|yes| conn{"is_connected?"}
+    conn -->|yes| run
+    conn -->|no| pause{"pause after a failure running?"}
+    pause -->|yes| unav["503 telegram_unavailable"]
+    pause -->|no| try["connect, 15 s timeout"]
+    try -->|error| back["pause ×2: 1 … 60 s"] --> unav
+    try -->|ok| reset["pause = 0"] --> run
+    keep["API: run_keepalive every 15 s"] --> conn
 ```
-- Исключения Telethon переводятся в `TelegramFloodWaitError`, `TelegramUnavailableError`, `TelegramUnauthorizedError`
-  (401: сессия не вошла или отозвана), ошибки входа (`invalid_code`, `invalid_password`, `invalid_phone`,
-  `password_needed`, `session_too_fresh`) и `TelegramError` для остального.
-- Вход (`TelegramLogin`): QR (`auth.exportLoginToken`, ждёт `UpdateLoginToken`, поэтому клиент входа получает обновления)
-  или код (`auth.sendCode` / `auth.signIn`), 2FA через SRP. Старые сессии: `account.getAuthorizations` /
-  `account.resetAuthorization`, который Telegram разрешает только сессиям старше 24 ч.
+- Telethon exceptions are translated into `TelegramFloodWaitError`, `TelegramUnavailableError`, `TelegramUnauthorizedError`
+  (401: the session is not signed in or was revoked), sign-in errors (`invalid_code`, `invalid_password`, `invalid_phone`,
+  `password_needed`, `session_too_fresh`) and `TelegramError` for the rest.
+- Sign-in (`TelegramLogin`): QR (`auth.exportLoginToken`, waits for `UpdateLoginToken`, so the login client receives updates)
+  or a code (`auth.sendCode` / `auth.signIn`), 2FA through SRP. Old sessions: `account.getAuthorizations` /
+  `account.resetAuthorization`, which Telegram allows only for sessions older than 24 h.
 
 ## ClamAV
 
-Контейнер `clamav/clamav:*-debian` (alpine-теги собраны только под amd64). `docker/clamd.conf` поднимает лимиты
-до потолка ClamAV (по умолчанию clamd режет на 100 МБ) и включает строгие проверки, см. security.md:
-`MaxFileSize 2147483645` (libclamav не сканирует файлы больше 2 ГиБ − 3 байта и сам урезает больший `MaxFileSize`
-до этого значения), `StreamMaxLength`/`MaxScanSize 4000M` (максимум clamd, < 4 ГБ; `MaxScanSize` — сколько байт всего
-распаковывается из архива), `MaxScanTime` 30 мин, `ReadTimeout`/`CommandReadTimeout` 15 мин (простой сокета).
-`CLAMAV_MAX_FILE_SIZE` равен `MaxFileSize` (`test_scan_limit_mirrors_clamd_config`): файлы больше в ClamAV не
-отправляются вовсе (иначе ответ был бы `Heuristics.Limits.Exceeded.MaxFileSize`). `CLAMAV_TIMEOUT` (1860 с) — сколько
-клиент ждёт ответа после потока, больше `MaxScanTime`, чтобы clamd успел ответить лимитом, а не обрывом.
-Первый старт качает базы несколько минут.
+The `clamav/clamav:*-debian` container (alpine tags are built for amd64 only). `docker/clamd.conf` raises the limits
+to the ClamAV ceiling (by default clamd cuts at 100 MB) and enables strict checks, see security.md:
+`MaxFileSize 2147483645` (libclamav does not scan files above 2 GiB − 3 bytes and clamps a bigger `MaxFileSize`
+to that value by itself), `StreamMaxLength`/`MaxScanSize 4000M` (the clamd maximum, < 4 GB; `MaxScanSize` is how many bytes in total
+are unpacked from an archive), `MaxScanTime` 30 min, `ReadTimeout`/`CommandReadTimeout` 15 min (socket idle).
+`CLAMAV_MAX_FILE_SIZE` equals `MaxFileSize` (`test_scan_limit_mirrors_clamd_config`): bigger files are not sent
+to ClamAV at all (otherwise the answer would be `Heuristics.Limits.Exceeded.MaxFileSize`). `CLAMAV_TIMEOUT` (1860 s) is how long
+the client waits for an answer after the stream, longer than `MaxScanTime`, so that clamd answers with a limit rather than a dropped connection.
+The first start downloads the databases for a few minutes.
 
-Ответы `clamd` делятся на два класса:
+`clamd` answers fall into two classes:
 
-| Ответ | Код | Что значит |
+| Answer | Code | Meaning |
 |---|---|---|
-| `Heuristics.Encrypted.*` | `unscannable` | зашифрованный архив, PDF или документ: внутрь не заглянуть |
-| `Heuristics.Limits.Exceeded.*` | `unscannable` | упёрлись в лимит (размер вложенного файла, `MaxScanSize`, число файлов, вложенность, время) — проверено не всё; это свойство содержимого (zip-бомба, глубокая вложенность), поэтому идёт под `allow_unscannable` |
-| — (файл больше `CLAMAV_MAX_FILE_SIZE`, в clamd не отправлялся) | — | принимается с предупреждением `too_big_to_scan` независимо от `allow_unscannable` |
-| `Heuristics.OLE2.ContainsMacros*` | `unscannable` | Office с макросами |
-| любой другой `FOUND` (сигнатуры, `PUA.*`, `Heuristics.Broken.*`, фишинг) | `infected` | отклоняется всегда |
+| `Heuristics.Encrypted.*` | `unscannable` | an encrypted archive, PDF or document: no way to look inside |
+| `Heuristics.Limits.Exceeded.*` | `unscannable` | a limit was hit (nested file size, `MaxScanSize`, file count, nesting, time), not everything was checked; it is a property of the content (zip bomb, deep nesting), so it goes under `allow_unscannable` |
+| none (file bigger than `CLAMAV_MAX_FILE_SIZE`, not sent to clamd) | none | accepted with the warning `too_big_to_scan` regardless of `allow_unscannable` |
+| `Heuristics.OLE2.ContainsMacros*` | `unscannable` | Office with macros |
+| any other `FOUND` (signatures, `PUA.*`, `Heuristics.Broken.*`, phishing) | `infected` | always rejected |
 
-`HeuristicScanPrecedence no`: эвристика сообщается только в конце, а найденная сигнатура важнее. Поэтому
-`allow_unscannable` не пропустит вирус, лежащий рядом с зашифрованным архивом: проверено на `clamav 1.5.4` —
-zip с EICAR и зашифрованным zip внутри даёт `Eicar-Test-Signature`, а не `Heuristics.Encrypted.Zip`.
-Опции `AllMatchScan` в `clamd.conf` нет (это флаг `clamscan`).
+`HeuristicScanPrecedence no`: heuristics are reported only at the end, and a matched signature wins. So
+`allow_unscannable` does not let through a virus lying next to an encrypted archive: checked on `clamav 1.5.4`,
+a zip with EICAR and an encrypted zip inside gives `Eicar-Test-Signature`, not `Heuristics.Encrypted.Zip`.
+There is no `AllMatchScan` option in `clamd.conf` (it is a `clamscan` flag).
 
-## Исходящий HTTP
+## Outgoing HTTP
 
-`src/infrastructure/integrations/web` — httpx с проверкой адресов (см. security.md), используется для загрузки по ссылке и вебхуков.
+`src/infrastructure/integrations/web` is httpx with address checks (see security.md), used for URL uploads and webhooks.

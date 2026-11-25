@@ -1,317 +1,317 @@
-# Фоновая обработка загрузок и архивов
+# Background processing of uploads and archives
 
-Загрузки и сборку архивов папок обрабатывают воркеры Celery. Брокер — RabbitMQ, состояние задач хранится в Redis. Таблицы задач в PostgreSQL нет.
+Uploads and folder archive builds are processed by Celery workers. The broker is RabbitMQ, task state is kept in Redis. There is no tasks table in PostgreSQL.
 
 ```mermaid
 flowchart LR
-    dev["POST /api/uploads<br/>тело → том tmp"] --> qp
+    dev["POST /api/uploads<br/>body → tmp volume"] --> qp
     url["POST /api/uploads/from-url, /batch"] --> qd
     arc["POST /api/folders/archive, /archive/selection"] --> qa
     bf["POST /api/files/previews/backfill (root)"] --> qa
-    qd[["uploads.download"]] --> wd["worker-download<br/>скачивание по ссылке (SSRF-фильтр)"]
+    qd[["uploads.download"]] --> wd["worker-download<br/>URL download (SSRF filter)"]
     wd --> qp[["uploads.prepare"]]
-    qp --> wp["worker-prepare<br/>magic bytes, Pillow/ffprobe, sha256, ClamAV,<br/>JPEG для фото, превью видео (ffmpeg),<br/>шифрование и зашифрованное превью"]
+    qp --> wp["worker-prepare<br/>magic bytes, Pillow/ffprobe, sha256, ClamAV,<br/>JPEG for photos, video preview (ffmpeg),<br/>encryption and encrypted preview"]
     wp --> qt[["uploads.telegram"]]
-    qt --> wt["worker-telegram (1 реплика, сессия upload)<br/>отправка в TG → строка files → вебхук"]
+    qt --> wt["worker-telegram (1 replica, upload session)<br/>send to TG → files row → webhook"]
     qa[["archives.build"]] --> wt
 ```
 
-| Очередь | Воркер | Потоков | Реплики |
+| Queue | Worker | Threads | Replicas |
 |---|---|---|---|
-| `uploads.download` | `worker-download` | `UPLOAD_DOWNLOAD_CONCURRENCY` (4) | сколько угодно |
-| `uploads.prepare` | `worker-prepare` | `UPLOAD_PREPARE_CONCURRENCY` (4) | сколько угодно |
-| `uploads.telegram` | `worker-telegram` | `TELEGRAM_CONCURRENCY` (2) | **одна**: общая пауза FloodWait и одна сессия |
-| `archives.build` | `worker-telegram` | те же потоки | та же реплика: архив читает файлы из Telegram сессией `upload` |
+| `uploads.download` | `worker-download` | `UPLOAD_DOWNLOAD_CONCURRENCY` (4) | any number |
+| `uploads.prepare` | `worker-prepare` | `UPLOAD_PREPARE_CONCURRENCY` (4) | any number |
+| `uploads.telegram` | `worker-telegram` | `TELEGRAM_CONCURRENCY` (2) | **one**: a shared FloodWait pause and one session |
+| `archives.build` | `worker-telegram` | the same threads | the same replica: an archive reads files from Telegram with the `upload` session |
 
-Сборка архива (`POST /api/folders/archive` и `POST /api/folders/archive/selection`, flows/folders-and-files.md) — задача того же вида, что и загрузка (статус,
-приоритет, отмена, место в очереди, heartbeat, `TaskSweeper`), со стадией `archiving` и `params.source = archive`.
-Она занимает поток `worker-telegram`: при двух потоках два больших архива задержат выгрузку в Telegram, поднимите
-`TELEGRAM_CONCURRENCY`, если это мешает. Готовый архив лежит в `tmp` `UPLOAD_ARCHIVE_TTL` (24 ч): путь и срок — в
-Redis (`archives`), уборка `TaskSweeper` их не трогает до срока и удаляет после. Ошибка или отмена посреди сборки закрывает
-архиватор (`ArchiveWriter.abort`) до закрытия файла, поэтому `ZipFile`/`TarFile` не пытаются дописать оглавление в
-уже закрытый файл при сборке мусора.
+An archive build (`POST /api/folders/archive` and `POST /api/folders/archive/selection`, flows/folders-and-files.md) is a task of the same kind as an upload (status,
+priority, cancel, queue position, heartbeat, `TaskSweeper`), with the stage `archiving` and `params.source = archive`.
+It takes a `worker-telegram` thread: with two threads two big archives delay uploads to Telegram, so raise
+`TELEGRAM_CONCURRENCY` if that gets in the way. A ready archive stays in `tmp` for `UPLOAD_ARCHIVE_TTL` (24 h): the path and the expiry are in
+Redis (`archives`), the `TaskSweeper` cleanup leaves them until then and deletes them after. An error or a cancel in the middle of a build closes
+the archiver (`ArchiveWriter.abort`) before the file is closed, so `ZipFile`/`TarFile` do not try to write the central directory into
+an already closed file during garbage collection.
 
-## Дозаполнение превью
+## Preview backfill
 
-`POST /api/files/previews/backfill` (только root, `202 {"status": "queued"}`; при выключенной у root настройке `uploads.previews` —
-`409 previews_disabled`) кладёт в `archives.build` с низким приоритетом сообщение
-задачи Celery `previews.backfill` (`FileService.backfill_previews`); его выполняет `worker-telegram`
-(`PreviewBackfill` в `services/previews.py`). Записи задачи в Redis у неё нет: прогресс — в логах воркера. Задача ищет
-зашифрованные фото, GIF и видео без `files.thumbnail` (частичный индекс `ix_files_missing_preview`), пачками по 100 в
-порядке `(kind, id)`, и по одному файлу: читает его из Telegram сессией `upload` (как архив), расшифровывает
-(`file_body`), делает превью тем же кодом, что и при загрузке (видео — кадр ffmpeg, затем `preview`), шифрует ключом
-файла (`seal`) и пишет `UPDATE … WHERE thumbnail IS NULL AND encryption_header = прочитанный` без смены
-`updated_at`: файл, который тем временем заменили (`replace`, новый ключ), чужое превью не получит. Во время чтения горит `read` у
-хранилища (`tracked`). FloodWait — ждём и повторяем тот же файл, заодно ставим общую паузу `telegram_resume_at`
-для загрузок; любая другая ошибка (сообщения нет, файл изменён, нет места, битый файл) — warning и следующий файл;
-`telegram_unauthorized` останавливает задачу; перед каждой пачкой задача перечитывает настройки root и, если
-`uploads.previews` выключили, завершается. Повторный запуск идемпотентен: берутся только файлы без превью, так что
-пропущенные в прошлый раз пробуются снова. Одновременно работает одна задача: Redis-ключ `job:previews` со значением
-id задачи Celery (`TaskStore.hold_job`, `SET NX EX 120`, продлевается каждые 30 с); второй запуск при живом ключе
-сразу завершается, а повторная доставка того же сообщения после падения воркера (`acks_late`) — то же id, поэтому
-продолжает работу.
+`POST /api/files/previews/backfill` (root only, `202 {"status": "queued"}`; with root's `uploads.previews` setting off,
+`409 previews_disabled`) puts a low-priority message of the Celery task
+`previews.backfill` (`FileService.backfill_previews`) into `archives.build`; `worker-telegram` runs it
+(`PreviewBackfill` in `services/previews.py`). It has no task record in Redis: progress goes to the worker logs. The task looks for
+encrypted photos, GIFs and videos without `files.thumbnail` (the partial index `ix_files_missing_preview`), in batches of 100 in
+`(kind, id)` order, one file at a time: it reads the file from Telegram with the `upload` session (like an archive), decrypts it
+(`file_body`), makes the preview with the same code as at upload time (video: an ffmpeg frame, then `preview`), encrypts it with the
+file key (`seal`) and writes `UPDATE … WHERE thumbnail IS NULL AND encryption_header = the one read` without changing
+`updated_at`: a file that was replaced meanwhile (`replace`, a new key) does not get someone else's preview. While reading, the storage's `read`
+indicator is lit (`tracked`). FloodWait: wait and retry the same file, also setting the shared pause `telegram_resume_at`
+for uploads; any other error (no message, file changed, no space, broken file) is a warning and the next file;
+`telegram_unauthorized` stops the task; before each batch the task re-reads root's settings and, if
+`uploads.previews` was switched off, finishes. A repeated run is idempotent: only files without previews are taken, so
+the ones skipped last time are tried again. Only one task runs at a time: the Redis key `job:previews` with the
+Celery task id as value (`TaskStore.hold_job`, `SET NX EX 120`, renewed every 30 s); a second run with a live key
+finishes at once, while a redelivery of the same message after a worker crash (`acks_late`) has the same id and so
+continues the work.
 
 ```mermaid
 flowchart TD
-    api["POST /api/files/previews/backfill (root)"] --> q[["archives.build, приоритет low"]]
-    q --> lock{"hold_job job:previews<br/>(id задачи Celery)"}
-    lock -->|занято другой| skip["лог и выход"]
-    lock -->|наше| on{"uploads.previews у root?"}
+    api["POST /api/files/previews/backfill (root)"] --> q[["archives.build, priority low"]]
+    q --> lock{"hold_job job:previews<br/>(Celery task id)"}
+    lock -->|held by another| skip["log and exit"]
+    lock -->|ours| on{"root's uploads.previews?"}
     on -->|false| done
-    on -->|true| batch["пачка ≤ 100: encrypted, thumbnail IS NULL,<br/>kind photo/animation/video, (kind, id) > последнего"]
-    batch -->|пусто| done["лог итога, ключ снят"]
-    batch --> file["message_media + iter_media (сессия upload),<br/>decrypt, activity read"]
-    file --> prev["видео: кадр ffmpeg → preview; фото, GIF: preview"]
-    prev --> seal["seal ключом файла → UPDATE files SET thumbnail"]
+    on -->|true| batch["batch ≤ 100: encrypted, thumbnail IS NULL,<br/>kind photo/animation/video, (kind, id) > last"]
+    batch -->|empty| done["log the result, key released"]
+    batch --> file["message_media + iter_media (upload session),<br/>decrypt, activity read"]
+    file --> prev["video: ffmpeg frame → preview; photo, GIF: preview"]
+    prev --> seal["seal with the file key → UPDATE files SET thumbnail"]
     seal --> on
-    file -. "FloodWait" .-> wait["пауза, тот же файл"] --> file
-    file -. "другая ошибка" .-> warn["warning, следующий файл"] --> on
+    file -. "FloodWait" .-> wait["pause, same file"] --> file
+    file -. "other error" .-> warn["warning, next file"] --> on
 ```
 
-Скачивание вынесено в отдельную очередь, поэтому медленные ссылки не занимают потоки проверки. Проверка, в свою
-очередь, не занимает слоты Telegram. Чтение из Telegram (скачивание, превью, каналы) остаётся в API: очередь не подходит
-для потоковой отдачи с Range.
+Downloading has its own queue, so slow URLs do not take the checking threads. Checking, in turn,
+does not take the Telegram slots. Reading from Telegram (downloads, previews, channels) stays in the API: a queue does not fit
+streaming responses with Range.
 
-## Путь загрузки целиком
+## The whole upload path
 
-API — `UploadService` (`src/application/services/upload.py`), стадии воркеров — `UploadPipeline`
-(`src/application/services/pipeline.py`, вход — `src/application/tasks/upload.py`), состояние — `TaskStore`
-(`src/infrastructure/cache/tasks.py`, карта ключей — redis.md).
+API: `UploadService` (`src/application/services/upload.py`), worker stages: `UploadPipeline`
+(`src/application/services/pipeline.py`, entry point `src/application/tasks/upload.py`), state: `TaskStore`
+(`src/infrastructure/cache/tasks.py`, key map in redis.md).
 
 ```mermaid
 sequenceDiagram
     autonumber
-    participant C as Клиент
+    participant C as Client
     participant A as API (UploadService)
     participant R as Redis (TaskStore)
     participant Q as RabbitMQ
     participant D as worker-download
     participant P as worker-prepare
     participant T as worker-telegram
-    participant TG as Telegram (сессия upload)
+    participant TG as Telegram (upload session)
     participant DB as PostgreSQL
-    C->>A: POST /api/uploads (тело) или /uploads/from-url
-    A->>A: with_defaults из настроек, права, сессия upload, лимит файла, диск, конфликт пути
-    A->>R: SET NX path:{path} (занят → 409 upload_in_progress)
-    alt с устройства
-        A->>R: take_disk_slot (нет слота → 429 too_many_tasks)
+    C->>A: POST /api/uploads (body) or /uploads/from-url
+    A->>A: with_defaults from settings, rights, upload session, file limit, disk, path conflict
+    A->>R: SET NX path:{path} (taken → 409 upload_in_progress)
+    alt from a device
+        A->>R: take_disk_slot (no slot → 429 too_many_tasks)
         A->>A: write_body → tmp (Content-Length, 413 / 400 size_mismatch)
         A->>R: create, activate, join_queue(uploads.prepare)
         A->>Q: uploads.prepare {task_id, generation}
-        A-->>C: 202 задача queued
-    else по ссылке
+        A-->>C: 202 task queued
+    else from a URL
         A->>R: create, activate, join_queue(uploads.download)
         A->>Q: uploads.download
-        A-->>C: 202 задача queued
-        Q->>D: сообщение
+        A-->>C: 202 task queued
+        Q->>D: message
         D->>R: CLAIM (status running)
-        D->>R: take_disk_slot (ждёт, waiting = disk_slots)
-        D->>D: download() через SSRF-фильтр в tmp
+        D->>R: take_disk_slot (waits, waiting = disk_slots)
+        D->>D: download() through the SSRF filter into tmp
         D->>R: stage scanning, join_queue(uploads.prepare)
         D->>Q: uploads.prepare
     end
-    Q->>P: сообщение
+    Q->>P: message
     P->>R: CLAIM
-    P->>P: probe (magic bytes, Pillow/ffprobe), sha256, ClamAV (повторы)
-    P->>P: send_as=media: фото → JPEG, видео: превью ffmpeg
+    P->>P: probe (magic bytes, Pillow/ffprobe), sha256, ClamAV (retries)
+    P->>P: send_as=media: photo → JPEG, video: ffmpeg preview
     opt encrypt
         P->>P: encrypt_file → .bin (AES-256-GCM), preview() + seal → thumbnail
     end
     P->>R: prepared, stage uploading_tg, join_queue(uploads.telegram)
     P->>Q: uploads.telegram
-    Q->>T: сообщение
+    Q->>T: message
     T->>R: CLAIM
-    alt первая отправка
-        T->>TG: id последнего сообщения канала
+    alt first send
+        T->>TG: id of the channel's last message
         T->>R: sending {file_id, chat_id, after, spans}
-    else повторная доставка
-        T->>TG: сообщения после after с подписью #tc{file_id}
-        T->>R: sent += следующие части (имя и размер совпали)
-        T->>TG: удалить остальные незаписанные
+    else redelivery
+        T->>TG: messages newer than after, caption #tc{file_id}
+        T->>R: sent += next parts (name and size match)
+        T->>TG: delete the other unrecorded ones
     end
-    loop по частям (одна, если файл влезает в сообщение)
-        T->>TG: send (куски параллельно, FloodWait — общая пауза)
+    loop per part (one if the file fits into a message)
+        T->>TG: send (chunks in parallel, FloodWait is a shared pause)
         T->>R: sent {file_id, chat_id, message, parts?, spans?}
     end
     opt replace
-        T->>R: stale = старые сообщения (все части)
+        T->>R: stale = old messages (all parts)
     end
-    T->>DB: folders.ensure, UPDATE files (0 строк → INSERT) или INSERT, file_parts, commit
+    T->>DB: folders.ensure, UPDATE files (0 rows → INSERT) or INSERT, file_parts, commit
     T->>R: committed
     opt replace
-        T->>TG: удалить stale (ошибка → предупреждение в лог, задача всё равно done)
+        T->>TG: delete stale (an error is a warning in the log, the task is still done)
     end
     T->>R: status done, release (path, disk, active, waiting)
-    T-->>C: вебхук на callback_url (на каждой стадии)
+    T-->>C: webhook to callback_url (at every stage)
 ```
 
-Переход между стадиями — `UploadPipeline._handoff`: проверка отмены, новая стадия с
-`waiting = queue:{следующая очередь}`, затем под `handoff_lock` запись в `waiting:{queue}` и публикация в RabbitMQ.
-Архив — тот же механизм с одной стадией: `FolderService._queue_archive` → `archives.build` →
+Moving between stages is `UploadPipeline._handoff`: a cancel check, a new stage with
+`waiting = queue:{next queue}`, then under `handoff_lock` the write to `waiting:{queue}` and the publish to RabbitMQ.
+An archive uses the same mechanism with one stage: `FolderService._queue_archive` → `archives.build` →
 `UploadPipeline._archive` (flows/folders-and-files.md).
 
-## Воркер изнутри
+## Worker internals
 
-Celery-задача синхронная, а Telethon, asyncpg и redis — асинхронные. `WorkerRuntime` держит в процессе воркера один
-event loop в отдельном потоке. Задачи пула `threads` отдают ему корутины и ждут результат. Так на процесс получается
-один клиент Telethon и одно соединение с базой и Redis.
+A Celery task is synchronous, while Telethon, asyncpg and redis are asynchronous. `WorkerRuntime` keeps one
+event loop in a separate thread of the worker process. Tasks of the `threads` pool hand it coroutines and wait for the result. That gives one
+Telethon client and one connection to the database and Redis per process.
 
-Фоновые корутины воркера (heartbeat задачи, метки активности, сохранение прогресса, вебхуки) запускаются через
-`WorkerRuntime.spawn` и лежат в множестве `_tasks`; задача удаляется из него done-callback'ом, который loop выполняет
-только на следующей итерации. `drain()` (остановка воркера, тесты) поэтому ждёт, пока есть **незавершённые** задачи, а
-не пока множество непусто: `asyncio.gather` по уже завершённым задачам завершается сразу, без передачи управления loop,
-и цикл «пока множество непусто» крутился бы вечно, не давая callback'у удалить задачу (так зависал финализатор тестов).
+Background coroutines of the worker (task heartbeat, activity markers, progress saves, webhooks) are started through
+`WorkerRuntime.spawn` and kept in the `_tasks` set; a task is removed from it by a done callback that the loop runs
+only on its next iteration. So `drain()` (worker shutdown, tests) waits while there are **unfinished** tasks, not
+while the set is non-empty: `asyncio.gather` over already finished tasks returns at once without yielding to the loop,
+and a "while the set is non-empty" loop would spin forever, never letting the callback remove the task (that is how the test finalizer used to hang).
 
-Настройки Celery (`src/infrastructure/background/celery/app.py`):
-- `acks_late` и `reject_on_worker_lost`: если воркер упал, задача вернётся в очередь;
-- `prefetch_multiplier=1`: воркер не набирает задачи впрок, иначе приоритет бы не соблюдался;
-- события задач включены для Flower.
-- очередь удалённого управления воркера (`{host}.celery.pidbox`: `celery inspect`, Flower) не эксклюзивная и durable
-  с `x-expires` 10 с (`control_queue_exclusive=False`, `control_queue_durable=True`). Эксклюзивная очередь (по
-  умолчанию) после обрыва сети принадлежит старому соединению, пока брокер не заметит его смерть по heartbeat;
-  переподключившийся воркер получал `ResourceLocked (405)` и Celery завершал процесс. Транзиентные неэксклюзивные
-  очереди RabbitMQ 4 запрещает (`transient_nonexcl_queues`), поэтому durable; без потребителей очередь сама
-  удаляется через 10 с. Предупреждение kombu `A node named … is already using this process mailbox` после
-  переподключения — это старое соединение, оно уходит само. Сообщение, выданное старому соединению до обрыва,
-  возвращается в очередь, когда брокер его закроет (до ~2 мин по heartbeat), и выполняется заново.
+Celery settings (`src/infrastructure/background/celery/app.py`):
+- `acks_late` and `reject_on_worker_lost`: if a worker dies, the task returns to the queue;
+- `prefetch_multiplier=1`: a worker does not grab tasks in advance, otherwise priority would not hold;
+- task events are enabled for Flower.
+- the worker remote control queue (`{host}.celery.pidbox`: `celery inspect`, Flower) is non-exclusive and durable
+  with `x-expires` 10 s (`control_queue_exclusive=False`, `control_queue_durable=True`). An exclusive queue (the
+  default) after a network drop belongs to the old connection until the broker notices its death by heartbeat;
+  the reconnecting worker got `ResourceLocked (405)` and Celery terminated the process. RabbitMQ 4 forbids transient non-exclusive
+  queues (`transient_nonexcl_queues`), hence durable; without consumers the queue deletes itself
+  after 10 s. The kombu warning `A node named … is already using this process mailbox` after a
+  reconnect is the old connection, it goes away by itself. A message handed to the old connection before the drop
+  returns to the queue once the broker closes it (up to ~2 min by heartbeat) and runs again.
 
-RabbitMQ по умолчанию закрывает канал, если задача не подтверждена за 30 минут. Выгрузка 4 ГБ может идти дольше,
-поэтому `consumer_timeout` поднят до 24 часов (`RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS` в compose).
+By default RabbitMQ closes the channel if a task is not acknowledged within 30 minutes. A 4 GB upload can take longer,
+so `consumer_timeout` is raised to 24 hours (`RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS` in compose).
 
-## Захват задачи и поколения
+## Task claims and generations
 
-В сообщении очереди только `task_id` и `generation`, всё остальное лежит в Redis. Перед работой воркер атомарно
-захватывает задачу Lua-скриптом `CLAIM`. Захват не удаётся, если:
-- `generation` в сообщении не совпадает с текущим: сообщение устарело после смены приоритета или повтора;
-- задача уже завершена или отменена;
-- эту же стадию уже захватили, а сообщение не помечено RabbitMQ как повторная доставка (`redelivered`).
+A queue message carries only `task_id` and `generation`, everything else lives in Redis. Before working, the worker atomically
+claims the task with the Lua script `CLAIM`. The claim fails if:
+- the `generation` in the message differs from the current one: the message became stale after a priority change or a retry;
+- the task is already finished or cancelled;
+- the same stage is already claimed and RabbitMQ did not mark the message as redelivered (`redelivered`).
 
-Так дубль сообщения (например, при падении между отправкой в следующую очередь и подтверждением) просто пропускается,
-а настоящая повторная доставка после падения воркера проходит.
+So a duplicate message (for example, after a crash between the publish to the next queue and the ack) is simply skipped,
+while a real redelivery after a worker crash goes through.
 
-Повторная доставка бывает и при живом воркере: при обрыве связи с RabbitMQ неподтверждённое сообщение возвращается в
-очередь, а первый запуск продолжает работать (ack потом не проходит: `Couldn't ack … connection already closed` в логе).
-Поэтому `CLAIM` для `redelivered` той же стадии смотрит на `beat_at`: если heartbeat свежее
-`3 × UPLOAD_HEARTBEAT_INTERVAL` (30 с), ответ — «занято» (`CLAIM_BUSY`), и второй запуск ждёт, проверяя раз в
-`UPLOAD_HEARTBEAT_INTERVAL` (лог `Task … redelivered to … while still running`). Дождавшись, он берёт задачу, только
-если её стадия всё ещё его и она не ждёт другую очередь, то есть первый запуск умер, не закончив; если задача
-завершилась или ушла дальше — сообщение пропускается. Без этого (проверено вживую) после 20-секундной остановки брокера
-вторая копия `uploads.telegram` выгружала тот же файл параллельно, а потом затирала `done` ошибкой
-`internal` на уникальном индексе `files`. Падение воркера при этом стоит до 30 с задержки перед повтором стадии.
+Redelivery also happens with a live worker: when the connection to RabbitMQ drops, the unacknowledged message returns to
+the queue while the first run keeps working (the ack then fails: `Couldn't ack … connection already closed` in the log).
+So `CLAIM` for a `redelivered` message of the same stage looks at `beat_at`: if the heartbeat is fresher than
+`3 × UPLOAD_HEARTBEAT_INTERVAL` (30 s), the answer is "busy" (`CLAIM_BUSY`), and the second run waits, checking every
+`UPLOAD_HEARTBEAT_INTERVAL` (log `Task … redelivered to … while still running`). Once done waiting, it takes the task only
+if its stage is still its own and it is not waiting for another queue, meaning the first run died without finishing; if the task
+finished or moved on, the message is skipped. Without this (verified live), after a 20-second broker stop
+a second copy of `uploads.telegram` uploaded the same file in parallel and then overwrote `done` with the error
+`internal` on the unique index of `files`. In exchange, a worker crash costs up to 30 s of delay before the stage is retried.
 
-## Без дублей в Telegram
+## No duplicates in Telegram
 
-Сразу после отправки воркер записывает в задачу `sent` (file_id, chat_id, message_id), а после коммита в `files` —
-`committed`. Файл из нескольких частей (flows/uploads.md, «Большие файлы частями»): `sent` перезаписывается после
-каждой части — `message` (часть 0), `parts` (все отправленные) и `spans` (`[offset, size]` каждой части, считаются один
-раз перед первой отправкой: `file_limit` из `account:premium` в Redis или `get_me()`, поэтому смена Premium посреди
-загрузки разбиение не меняет). Части уходят по очереди, перед каждой — проверка отмены. При повторной доставке:
-- есть `sent` не со всеми частями — отправка продолжается со следующей части, отправленные не повторяются;
-- есть `sent`, но строки в `files` нет — отправка пропускается, сразу пишется строка;
-- строка уже есть с тем же message_id — задача просто завершается;
-- задача упала или отменена после отправки, но до коммита — сообщение (все уже отправленные части) удаляется из канала.
+Right after sending, the worker writes `sent` (file_id, chat_id, message_id) to the task, and after the commit to `files`,
+`committed`. A multi-part file (flows/uploads.md, "Big files in parts"): `sent` is rewritten after
+every part: `message` (part 0), `parts` (all sent ones) and `spans` (`[offset, size]` of every part, computed once
+before the first send: `file_limit` from `account:premium` in Redis or `get_me()`, so a Premium change in the middle of
+an upload does not change the split). Parts go one after another, with a cancel check before each. On redelivery:
+- `sent` exists but not with all parts: sending continues from the next part, sent parts are not repeated;
+- `sent` exists but there is no row in `files`: sending is skipped, the row is written right away;
+- the row already exists with the same message_id: the task simply finishes;
+- the task failed or was cancelled after sending but before the commit: the message (all parts sent so far) is deleted from the channel.
 
-Окно между «Telegram принял сообщение» и записью `sent` (воркер убит между ними) закрывает `sending` (решение
-владельца). Перед первой отправкой воркер запоминает в задаче `sending = {file_id, chat_id, after, spans}`: `after` —
-id последнего сообщения канала (`TelegramClient.last_message_id`, один `GetHistory limit=1`), `file_id` выбран заранее и
-не меняется при повторе, поэтому подпись `#tc{file_id}` у всех частей одна. При повторной доставке (есть `sent` или
-`sending`) до отправки следующей части `find_sent` читает историю канала после `after` (`iter_messages(min_id=after,
-reverse=True)` — только сообщения, пришедшие после начала отправки этой задачи) и берёт сообщения с нашей подписью,
-которых нет в `sent`: по порядку id сообщение, у которого имя файла и размер совпадают со следующей ожидаемой частью
-(`{uuid}.part{N}.bin` / `{name}.part{N}` / одиночное имя, размер `spans[N]`), принимается в `sent` без повторной
-отправки; остальное (дубли, другой размер, сжатое фото, у которого размер другой) удаляется и отправляется заново.
-Старые сообщения заменяемого файла записываются в задачу (`stale`) до коммита и удаляются после него без гарантии:
-ошибка Telegram только пишется в лог, задача остаётся `done`. Воркер убит после коммита — повторная доставка видит,
-что строка уже указывает на `sent`, удаляет `stale` и только закрывает задачу.
-У одиночных файлов то же самое (одна часть). Старые сообщения заменяемого файла (`replace`, тот же `file_id`) не
-задеваются — у них id ≤ `after`. Задачи без `sending` (созданные до этого поля) берут `after` = последний id из `sent`.
-`fail` (ошибка, отмена) и `on_conflict=skip` так же находят незаписанные сообщения и удаляют их вместе с `sent`; не
-удалось (Telegram недоступен, сессия разлогинена) — предупреждение в лог, задача всё равно закрывается.
-- `prepare` с `encrypt=true` доставлен повторно после шифрования (открытый файл уже удалён) — проверка и шифрование
-  не повторяются, готовый шифротекст из `prepared` снова передаётся в `uploads.telegram`.
+The window between "Telegram accepted the message" and the `sent` write (the worker killed in between) is closed by `sending` (the
+owner's decision). Before the first send the worker stores `sending = {file_id, chat_id, after, spans}` in the task: `after` is the
+id of the channel's last message (`TelegramClient.last_message_id`, one `GetHistory limit=1`), `file_id` is chosen in advance and
+does not change on a retry, so the caption `#tc{file_id}` is the same for all parts. On redelivery (`sent` or
+`sending` exists), before sending the next part `find_sent` reads the channel history after `after` (`iter_messages(min_id=after,
+reverse=True)`, only messages that arrived after this task started sending) and takes the messages with our caption
+that are not in `sent`: in id order, a message whose file name and size match the next expected part
+(`{uuid}.part{N}.bin` / `{name}.part{N}` / the single name, size `spans[N]`) is adopted into `sent` without sending it
+again; the rest (duplicates, a different size, a compressed photo whose size differs) is deleted and sent again.
+The old messages of a replaced file are written to the task (`stale`) before the commit and deleted after it without a guarantee:
+a Telegram error is only logged, the task stays `done`. If the worker is killed after the commit, the redelivery sees
+that the row already points to `sent`, deletes `stale` and only closes the task.
+Single files work the same way (one part). The old messages of a replaced file (`replace`, the same `file_id`) are not
+touched: their ids are ≤ `after`. Tasks without `sending` (created before this field) take `after` = the last id from `sent`.
+`fail` (error, cancel) and `on_conflict=skip` find unrecorded messages the same way and delete them together with `sent`; if that
+fails (Telegram unavailable, session signed out), a warning goes to the log and the task is closed anyway.
+- `prepare` with `encrypt=true` redelivered after encryption (the plaintext file is already deleted): the checks and encryption
+  are not repeated, the ready ciphertext from `prepared` is passed to `uploads.telegram` again.
 
-## Приоритет
+## Priority
 
-`priority`: `low` (1), `normal` (5, по умолчанию), `high` (9; только admin и root, у `user` понижается до `normal`,
-flows/uploads.md). Все очереди объявлены с `x-max-priority=9`, приоритет
-передаётся от стадии к стадии. Задача `high` обгоняет уже стоящие в очереди `low`, но не прерывает те, что выполняются.
-Тест — `tests/integration/test_queue_priority.py` на настоящем RabbitMQ.
+`priority`: `low` (1), `normal` (5, the default), `high` (9; admin and root only, lowered to `normal` for `user`,
+flows/uploads.md). All queues are declared with `x-max-priority=9`, the priority
+is passed from stage to stage. A `high` task overtakes `low` ones already waiting in the queue but does not interrupt running ones.
+Test: `tests/integration/test_queue_priority.py` on a real RabbitMQ.
 
-`POST /api/tasks/{id}/priority {"priority": "high"}` меняет приоритет задачи, которая ждёт в очереди. RabbitMQ не умеет
-переставлять сообщения, поэтому `REQUEUE` увеличивает `generation`, и задача ставится в ту же очередь заново. Старое
-сообщение воркер пропустит. Если задача не ждёт в очереди (выполняется, ждёт FloodWait, завершена), ответ
+`POST /api/tasks/{id}/priority {"priority": "high"}` changes the priority of a task waiting in a queue. RabbitMQ cannot
+reorder messages, so `REQUEUE` increments `generation` and the task is published to the same queue again. The worker
+skips the old message. If the task is not waiting in a queue (running, waiting for FloodWait, finished), the answer is
 `409 task_not_queued`.
 
-## Отмена
+## Cancel
 
 `POST /api/tasks/{id}/cancel`:
-- задача ждёт в очереди — сразу `cancelled`, путь освобождается, временные файлы удаляются; сообщение в очереди воркер
-  пропустит;
-- задача выполняется — ставится флаг `cancel`, ответ `running` с `cancel_requested: true`. Воркер замечает его не позже
-  чем через `CANCEL_POLL` (1 с): `UploadPipeline._watch` раз в секунду читает `cancel` (`HGET`) и помечает задачу, а
-  каждый колбэк прогресса (`progress` — скачивание, SHA-256, отправка в ClamAV, шифрование, отправка в Telegram,
-  сборка архива) и каждое ожидание (`_disk_slot`, `_retry`, пауза FloodWait — сон кусками по `CANCEL_POLL`) бросает
-  `TaskCancelledError`. Работа в потоке (SHA-256, шифрование) прерывается на следующем блоке. Дальше `fail` удаляет
-  уже ушедшее, но не закоммиченное сообщение Telegram (`sent`), освобождает путь и слот диска, удаляет временные
-  файлы задачи (`params.file`, `prepared.send_path`, `prepared.thumb`) и ставит `cancelled`. Отмена посреди
-  отправки файла рвёт загрузку кусков: сообщения ещё нет, удалять нечего (у файла из нескольких частей удаляются
-  уже отправленные части из `sent.parts` и незаписанные сообщения с подписью задачи после `sending.after`);
-- задача завершена — `409 task_finished`.
+- the task waits in a queue: `cancelled` at once, the path is released, temp files are deleted; the worker skips the message
+  in the queue;
+- the task is running: the `cancel` flag is set, the answer is `running` with `cancel_requested: true`. The worker notices it within
+  `CANCEL_POLL` (1 s): `UploadPipeline._watch` reads `cancel` (`HGET`) every second and marks the task, and
+  every progress callback (`progress`: download, SHA-256, sending to ClamAV, encryption, sending to Telegram,
+  archive build) and every wait (`_disk_slot`, `_retry`, the FloodWait pause sleeping in `CANCEL_POLL` slices) raises
+  `TaskCancelledError`. Work in a thread (SHA-256, encryption) stops at the next block. Then `fail` deletes
+  a Telegram message that was already sent but not committed (`sent`), releases the path and the disk slot, deletes the task's temp
+  files (`params.file`, `prepared.send_path`, `prepared.thumb`) and sets `cancelled`. A cancel in the middle of
+  sending a file breaks the chunk upload: there is no message yet, nothing to delete (for a multi-part file the
+  parts already sent from `sent.parts` and unrecorded messages with the task's caption after `sending.after` are deleted);
+- the task is finished: `409 task_finished`.
 
-Тело запроса `POST /api/uploads` пишется во временный файл до создания задачи, поэтому браузер, оборвавший поток
-посреди тела, не оставляет ни задачи, ни файла, ни занятого слота диска (`UploadService.upload` удаляет файл и снимает
-блокировку пути на любом исключении).
+The body of `POST /api/uploads` is written to a temp file before the task is created, so a browser that drops the stream
+in the middle of the body leaves no task, no file and no taken disk slot (`UploadService.upload` deletes the file and releases
+the path lock on any exception).
 
-| Где была задача | Как останавливается | Что убирается |
+| Where the task was | How it stops | What is cleaned up |
 |---|---|---|
-| в очереди (`queued_for_*`) | сразу в API (`CANCEL`) | путь, временные файлы, место в индексе очереди |
-| `downloading`, ожидание `disk_slots` | колбэк прогресса / опрос слота | недокачанный файл, слот диска |
-| `analyzing`, `scanning`, ожидание `retry` | колбэк SHA-256 / ClamAV, сон кусками | файл, превью видео |
-| `encrypting`, `previewing`, `converting` | колбэк шифрования / проверка перед следующим шагом | исходник и частичный шифротекст |
-| `sending`, пауза `flood_wait` | колбэк частей Telethon / сон кусками | файлы; отправленное сообщение удаляется |
-| `finishing` | проверка после отправки | сообщение в Telegram, если коммита в БД ещё не было |
+| in a queue (`queued_for_*`) | at once in the API (`CANCEL`) | path, temp files, the queue index entry |
+| `downloading`, waiting for `disk_slots` | progress callback / slot poll | the partly downloaded file, the disk slot |
+| `analyzing`, `scanning`, waiting for `retry` | SHA-256 / ClamAV callback, sliced sleep | file, video preview |
+| `encrypting`, `previewing`, `converting` | encryption callback / check before the next step | source and partial ciphertext |
+| `sending`, `flood_wait` pause | Telethon part callback / sliced sleep | files; a sent message is deleted |
+| `finishing` | check after sending | the Telegram message if the DB commit has not happened yet |
 
-Вебхук `cancelled` уходит в обоих случаях: из очереди его отправляет API в фоне (при остановке API дожидается отправки),
-во время работы — воркер.
+The `cancelled` webhook is sent in both cases: from a queue the API sends it in the background (on shutdown the API waits for it),
+while running the worker sends it.
 
-## Повтор
+## Retry
 
-`POST /api/tasks/{id}/retry` — только для загрузок по ссылке в статусе `failed` или `cancelled`: файл скачивается заново,
-`generation` увеличивается, id задачи и пачка сохраняются. Файлы с устройства после ошибки не хранятся —
-`409 task_not_retryable`, загрузите заново. Повтор снова проверяет лимит активных задач и занятость пути.
+`POST /api/tasks/{id}/retry` works only for URL uploads in status `failed` or `cancelled`: the file is downloaded again,
+`generation` is incremented, the task id and the batch are kept. Device uploads are not kept after an error:
+`409 task_not_retryable`, upload again. A retry checks the active task limit and whether the path is taken again.
 
-## Статусы и стадии
+## Statuses and stages
 
-`status` — `queued → running → done | failed | cancelled` (`TaskStatus`), `stage` — `downloading` (только по ссылке)
-`→ scanning → uploading_tg → done`, у архива `archiving → done` (`TaskStage`, `src/infrastructure/enums`). `queued`
-бывает только до первого `CLAIM`: между стадиями задача остаётся `running`, а в очереди её видно по `waiting`.
+`status` is `queued → running → done | failed | cancelled` (`TaskStatus`), `stage` is `downloading` (URLs only)
+`→ scanning → uploading_tg → done`, for an archive `archiving → done` (`TaskStage`, `src/infrastructure/enums`). `queued`
+happens only before the first `CLAIM`: between stages the task stays `running`, and in a queue it is visible through `waiting`.
 
-`step` (`TaskStep`) — шаг внутри стадии, для подписи в UI; коды стабильны, таблица — в flows/uploads.md
-(«Шаги»). `step_progress` (0..1) — `bytes_done / bytes_total` у измеряемых шагов во время `running`, иначе `null`.
-Каждый измеряемый шаг сбрасывает `bytes_done`, `bytes_total` и `stage_started`, так что `progress`, `speed` и `eta`
-относятся к текущему шагу. Шаг пишется в Redis один раз при смене, прогресс — не чаще раза в `UPLOAD_WEBHOOK_INTERVAL`
-(тот же троттлинг, что был у прогресса). У завершённой задачи `step` — последний пройденный шаг (видно, где её
-отменили или где она упала).
+`step` (`TaskStep`) is the step within a stage, for a UI label; the codes are stable, the table is in flows/uploads.md
+("Steps"). `step_progress` (0..1) is `bytes_done / bytes_total` for measurable steps while `running`, otherwise `null`.
+Every measurable step resets `bytes_done`, `bytes_total` and `stage_started`, so `progress`, `speed` and `eta`
+refer to the current step. The step is written to Redis once on change, progress at most once per `UPLOAD_WEBHOOK_INTERVAL`
+(the same throttling progress had). For a finished task `step` is the last step passed (it shows where it was
+cancelled or where it failed).
 
 ```mermaid
 stateDiagram-v2
     direction LR
-    [*] --> queued: создана в API
-    [*] --> done: on_conflict=skip и файл уже есть
-    queued --> running: CLAIM воркером
-    queued --> cancelled: cancel в очереди
-    queued --> failed: queue_unavailable или lost
+    [*] --> queued: created in the API
+    [*] --> done: on_conflict=skip and the file exists
+    queued --> running: CLAIM by a worker
+    queued --> cancelled: cancel in the queue
+    queued --> failed: queue_unavailable or lost
     state running {
-        [*] --> downloading: по ссылке
-        [*] --> analyzing: с устройства
-        [*] --> archiving: архив
+        [*] --> downloading: from a URL
+        [*] --> analyzing: from a device
+        [*] --> archiving: archive
         downloading --> queued_for_prepare
         queued_for_prepare --> analyzing
         analyzing --> scanning
-        scanning --> converting: фото не jpeg/png или видео
+        scanning --> converting: photo not jpeg/png or video
         scanning --> encrypting: encrypt
         converting --> encrypting: encrypt
-        encrypting --> previewing: фото, GIF, видео
+        encrypting --> previewing: photo, GIF, video
         scanning --> queued_for_telegram
         converting --> queued_for_telegram
         encrypting --> queued_for_telegram
@@ -320,222 +320,222 @@ stateDiagram-v2
         sending --> finishing
     }
     running --> done
-    running --> failed: ошибка или lost
-    running --> cancelled: cancel на любом шаге
-    failed --> queued: retry, только по ссылке
-    cancelled --> queued: retry, только по ссылке
+    running --> failed: error or lost
+    running --> cancelled: cancel at any step
+    failed --> queued: retry, URLs only
+    cancelled --> queued: retry, URLs only
 ```
 
-`waiting` — почему задача сейчас стоит. В Redis — `{"reason", "until"?}`; API отдаёт `{reason, code, params, seconds}`,
-где `code` — часть `reason` до `:`, а `params.queue` — после (`TaskService.render`). Все коды ожидания и предупреждений
-с параметрами — в flows/uploads.md.
+`waiting` is why the task is standing right now. In Redis it is `{"reason", "until"?}`; the API returns `{reason, code, params, seconds}`,
+where `code` is the part of `reason` before `:` and `params.queue` the part after it (`TaskService.render`). All waiting and warning codes
+with their parameters are in flows/uploads.md.
 
 ```mermaid
 flowchart LR
-    work["waiting = null<br/>воркер работает"]
-    queue["queue<br/>reason queue:{очередь}<br/>есть queue_position"]
-    slots["disk_slots<br/>worker-download ждёт слот<br/>UPLOAD_MAX_FILES_ON_DISK"]
-    retry["retry<br/>сеть Telegram или ClamAV,<br/>seconds до повтора"]
-    flood["flood_wait<br/>пауза всей выгрузки<br/>worker-telegram"]
+    work["waiting = null<br/>a worker is working"]
+    queue["queue<br/>reason queue:{queue}<br/>has queue_position"]
+    slots["disk_slots<br/>worker-download waits for a slot<br/>UPLOAD_MAX_FILES_ON_DISK"]
+    retry["retry<br/>Telegram or ClamAV network,<br/>seconds until the retry"]
+    flood["flood_wait<br/>pause of all uploads<br/>worker-telegram"]
     queue -- CLAIM --> work
-    work -- "_handoff: следующая стадия" --> queue
-    work -- "_disk_slot" --> slots -- слот получен --> work
-    work -- "_retry" --> retry -- пауза прошла --> work
-    work -- "FloodWait > 60 с" --> flood -- пауза прошла --> work
+    work -- "_handoff: next stage" --> queue
+    work -- "_disk_slot" --> slots -- slot acquired --> work
+    work -- "_retry" --> retry -- pause over --> work
+    work -- "FloodWait > 60 s" --> flood -- pause over --> work
 ```
 
-Пока задача ждёт воркера, `waiting = {"reason": "queue:{очередь}", "code": "queue", "params": {"queue": ...}}`
-(очередь — `uploads.download`, `uploads.prepare`, `uploads.telegram` или `archives.build`), а `queue_position` — её
-номер в этой очереди: 1 — следующая на взятие, выполняющиеся задачи не считаются.
+While a task waits for a worker, `waiting = {"reason": "queue:{queue}", "code": "queue", "params": {"queue": ...}}`
+(the queue is `uploads.download`, `uploads.prepare`, `uploads.telegram` or `archives.build`), and `queue_position` is its
+number in that queue: 1 is the next one to be taken, running tasks are not counted.
 
-RabbitMQ позицию не сообщает, поэтому её считает наш индекс: sorted set `tcloud:waiting:{queue}` со счётом
-`(10 − уровень приоритета) × 10¹³ + время постановки в мкс` — тот же порядок, что у RabbitMQ (выше приоритет — раньше,
-внутри приоритета FIFO). Задача попадает в индекс перед публикацией (создание, переход на следующую стадию, повтор,
-смена приоритета — с новым счётом) и выходит из него атомарно в `CLAIM`, а также при отмене, ошибке и `lost`.
-Запись в индекс и публикация идут под одним `asyncio.Lock` процесса (`handoff_lock`), иначе два потока могли бы встать
-в индекс в одном порядке, а в RabbitMQ попасть в другом. Между репликами `worker-prepare` (или API) такая гонка
-возможна: задачи одного приоритета, переданные в одну и ту же миллисекунду, могут поменяться местами на 1.
-`tests/integration/test_workers_e2e.py::test_queue_positions_match_real_order` сверяет снимок позиций с фактическим
-порядком отправки настоящих воркеров на RabbitMQ. Снимок берётся, когда все задачи встали в `uploads.telegram`, и только
-потом запускается `worker-telegram`: иначе под нагрузкой медленный `prepare` не даёт застать все задачи в очереди
-одновременно, а задача, уже выданная RabbitMQ воркеру, но ещё не взятая `CLAIM`, на миллисекунды остаётся в индексе. Во время работы видны `bytes_done`, `progress`, `speed`, `eta`.
-Прогресс пишется в Redis не чаще раза в `UPLOAD_WEBHOOK_INTERVAL`.
+RabbitMQ does not report the position, so our index computes it: the sorted set `tcloud:waiting:{queue}` with the score
+`(10 − priority level) × 10¹³ + enqueue time in µs`, the same order as RabbitMQ (higher priority first,
+FIFO within a priority). A task enters the index before the publish (creation, moving to the next stage, retry,
+priority change with a new score) and leaves it atomically in `CLAIM`, and also on cancel, error and `lost`.
+The index write and the publish go under one process-wide `asyncio.Lock` (`handoff_lock`), otherwise two threads could enter
+the index in one order and reach RabbitMQ in another. Between `worker-prepare` replicas (or the API) such a race is
+possible: tasks of the same priority handed over in the same millisecond can swap places by 1.
+`tests/integration/test_workers_e2e.py::test_queue_positions_match_real_order` compares a snapshot of positions with the actual
+send order of real workers on RabbitMQ. The snapshot is taken when all tasks are in `uploads.telegram`, and only
+then is `worker-telegram` started: otherwise under load a slow `prepare` makes it impossible to catch all tasks in the queue
+at once, and a task already handed to a worker by RabbitMQ but not yet claimed by `CLAIM` stays in the index for milliseconds. While working, `bytes_done`, `progress`, `speed`, `eta` are visible.
+Progress is written to Redis at most once per `UPLOAD_WEBHOOK_INTERVAL`.
 
 ## Redis
 
-Задачи, пачки, блокировки путей, слоты диска, индексы очередей, архивы и heartbeat — полная карта ключей и полей
-задачи в redis.md. Через `UPLOAD_TASK_TTL` (7 дней) задача пропадает из Redis, и `GET /api/tasks/{id}` отвечает
-`404`. Сам файл остаётся в `files`.
+Tasks, batches, path locks, disk slots, queue indexes, archives and heartbeats: the full map of keys and task
+fields is in redis.md. After `UPLOAD_TASK_TTL` (7 days) a task disappears from Redis, and `GET /api/tasks/{id}` answers
+`404`. The file itself stays in `files`.
 
-## Потерянные задачи
+## Lost tasks
 
-Если сообщение пропало из RabbitMQ (очистили очередь, потеряли данные брокера), задача навсегда осталась бы `queued`
-и держала путь. `TaskSweeper` в API раз в `UPLOAD_SWEEP_INTERVAL` (60 с) проходит по активным задачам:
-- задача, которую выполняет воркер, раз в `UPLOAD_HEARTBEAT_INTERVAL` обновляет `beat_at`; ошибка Redis в heartbeat
-  или в проверке отмены (`UploadPipeline._beat`/`_watch`) пишется в лог, цикл продолжается со следующего такта;
-- задача считается потерянной, если она молчит дольше `UPLOAD_STALE_AFTER` (120 с), её очередь пуста и так подряд на
-  двух проходах (второй проход страхует от сообщения, которое воркер как раз взял);
-- потерянная задача получает `failed: lost`, путь освобождается, временные файлы удаляются.
+If a message vanished from RabbitMQ (the queue was purged, the broker lost its data), the task would stay `queued` forever
+and hold the path. `TaskSweeper` in the API walks the active tasks every `UPLOAD_SWEEP_INTERVAL` (60 s):
+- a task a worker is running updates `beat_at` every `UPLOAD_HEARTBEAT_INTERVAL`; a Redis error in the heartbeat
+  or in the cancel check (`UploadPipeline._beat`/`_watch`) goes to the log, the loop continues on the next tick;
+- a task counts as lost if it has been silent longer than `UPLOAD_STALE_AFTER` (120 s), its queue is empty, and that holds on
+  two passes in a row (the second pass guards against a message the worker is just taking);
+- a lost task gets `failed: lost`, the path is released, temp files are deleted.
 
-Пока очередь не пуста, задачи в ней не трогаются: потерянное сообщение обнаружится, когда очередь разберётся.
-Если брокер недоступен, проход пропускается.
+While a queue is not empty, its tasks are not touched: a lost message will show up once the queue drains.
+If the broker is unavailable, the pass is skipped.
 
-## Защита ресурсов
+## Resource protection
 
-- **Диск.** `DiskBudget` — единая точка всех проверок места. Если после загрузки останется меньше
-  `UPLOAD_MIN_FREE_DISK_MB`, ответ `507 insufficient_storage` (у воркера — `failed` с тем же кодом). С шифрованием
-  нужно 2× размер (открытый файл + шифротекст). Из свободного места вычитаются ещё не записанные байты всех
-  процессов: живые сессии частями и общий журнал резервов в Redis `disk:reserved` (тело `POST /api/uploads`,
-  ссылка с известным размером и архив — с постановки, скачивание, шифротекст, сборка архива, превью в воркерах).
-  Держатель продлевает свою запись раз в секунду (срок 30 с), запись между этапами живёт `UPLOAD_LOCK_TTL`, любой
-  конец задачи (`release` → `deactivate`) её стирает, упавший держатель выпадает по сроку. Проверка и запись резерва в
-  API атомарны под Redis-локом `job:disk`. Подробно — flows/uploads.md, «Место на диске».
-- **Размер файла.** Только `uploads.max_file_size` root (`0` — без ограничения, `413 too_large`); лимит сообщения
-  Telegram не ограничивает — большие файлы уходят частями (flows/uploads.md).
-- **Число задач.** По умолчанию не ограничено (`UPLOAD_MAX_ACTIVE_TASKS=0`). Если задать число и активных задач столько
-  же, ответ `429 too_many_tasks` с `retry_after`.
-- **Файлов на сервере.** По умолчанию не ограничено (`UPLOAD_MAX_FILES_ON_DISK=0`): держит только место на диске
-  (`UPLOAD_MIN_FREE_DISK_MB`). Если задать число — не больше стольких файлов одновременно в `tmp`: слот берётся до записи
-  первого байта (у сессии частями — при создании сессии) и освобождается вместе с задачей (готово, ошибка, отмена,
-  потеря) или сессией (`DELETE`, истечение). Загрузка с устройства без свободного
-  слота — `429 too_many_tasks` с `retry_after`. Ссылка не отклоняется: `worker-download` ждёт слот
-  (`waiting.reason = disk_slots`, отмена работает), остальные ссылки ждут в очереди. Слоты — sorted set
-  `tcloud:disk` (Lua: проверка и захват атомарно), повторная доставка той же задачи слот не удваивает, зависшие
-  старше `UPLOAD_LOCK_TTL` выбрасываются.
-- **Один путь — одна загрузка.** `SET NX` по пути: вторая загрузка в тот же путь сразу получает `409 upload_in_progress`.
-  `keep_both` ищет свободное имя (`a-2.jpg`, `a-3.jpg`) среди файлов и занятых путей.
+- **Disk.** `DiskBudget` is the single point of all disk checks. If less than
+  `UPLOAD_MIN_FREE_DISK_MB` would remain after the upload, the answer is `507 insufficient_storage` (for a worker, `failed` with the same code). With encryption
+  2× the size is needed (plaintext file + ciphertext). Bytes not yet written by any
+  process are subtracted from the free space: live chunked sessions and the shared reservation ledger in Redis `disk:reserved` (the `POST /api/uploads` body,
+  a URL with a known size and an archive from queueing, the download, ciphertext, archive build, previews in workers).
+  A holder refreshes its entry every second (30 s expiry), an entry between stages lives `UPLOAD_LOCK_TTL`, any
+  end of the task (`release` → `deactivate`) erases it, a dead holder drops out by expiry. The check and the reservation write in
+  the API are atomic under the Redis lock `job:disk`. Details in flows/uploads.md, "Disk space".
+- **File size.** Only root's `uploads.max_file_size` (`0` means unlimited, `413 too_large`); the Telegram message limit
+  does not restrict it, big files go in parts (flows/uploads.md).
+- **Number of tasks.** Unlimited by default (`UPLOAD_MAX_ACTIVE_TASKS=0`). If a number is set and that many tasks
+  are active, the answer is `429 too_many_tasks` with `retry_after`.
+- **Files on the server.** Unlimited by default (`UPLOAD_MAX_FILES_ON_DISK=0`): only disk space holds it back
+  (`UPLOAD_MIN_FREE_DISK_MB`). If a number is set, at most that many files are in `tmp` at once: the slot is taken before the first
+  byte is written (for a chunked session, when the session is created) and released together with the task (done, error, cancel,
+  lost) or the session (`DELETE`, expiry). A device upload without a free
+  slot gets `429 too_many_tasks` with `retry_after`. A URL is not rejected: `worker-download` waits for a slot
+  (`waiting.reason = disk_slots`, cancel works), the other URLs wait in the queue. Slots are the sorted set
+  `tcloud:disk` (Lua: check and acquire atomically), a redelivery of the same task does not double the slot, stuck ones
+  older than `UPLOAD_LOCK_TTL` are dropped.
+- **One path, one upload.** `SET NX` on the path: a second upload to the same path gets `409 upload_in_progress` at once.
+  `keep_both` looks for a free name (`a-2.jpg`, `a-3.jpg`) among files and taken paths.
 
-## Сбои
+## Failures
 
-- **FloodWait.** Короткий (≤ 60 с) Telethon пережидает сам. Если ожидание дольше, но не больше `TELEGRAM_FLOOD_MAX_WAIT`,
-  вся выгрузка `worker-telegram` встаёт на паузу (`waiting.reason = flood_wait`). Если ещё дольше, задача падает с `retry_after`.
-- **Сеть Telegram и ClamAV.** `UPLOAD_RETRIES` повторов с паузой `UPLOAD_RETRY_DELAY × 2^n` (`waiting.reason = retry`).
-- **Запись в БД не удалась** после отправки: сообщение в Telegram удаляется.
-- **Рестарт API** задачи не трогает: они в RabbitMQ и Redis. Временные файлы старше `UPLOAD_LOCK_TTL` удаляются при
-  старте, кроме файлов активных задач, живых сессий и готовых архивов (`temp.used_files`).
-- **Задачи дольше `UPLOAD_LOCK_TTL`** (долгая очередь, огромный файл): heartbeat воркера и каждый проход `TaskSweeper`
-  по незавершённым задачам вызывают `TaskStore.renew` (Lua `RENEW_TASK`): продлевают блокировку пути (только своей
-  задачи), score в `active` и `disk` (их чистка по возрасту не выбросит живую задачу), отложенный резерв
-  `disk:reserved` (только запись «между этапами», срок дальше 60 с; живой 30-секундный не трогается) и запись квоты
+- **FloodWait.** A short one (≤ 60 s) Telethon waits out by itself. If the wait is longer but not above `TELEGRAM_FLOOD_MAX_WAIT`,
+  all `worker-telegram` uploads pause (`waiting.reason = flood_wait`). If it is longer still, the task fails with `retry_after`.
+- **Telegram and ClamAV network.** `UPLOAD_RETRIES` retries with a pause of `UPLOAD_RETRY_DELAY × 2^n` (`waiting.reason = retry`).
+- **The DB write failed** after sending: the Telegram message is deleted.
+- **An API restart** does not touch tasks: they are in RabbitMQ and Redis. Temp files older than `UPLOAD_LOCK_TTL` are deleted at
+  startup, except the files of active tasks, live sessions and ready archives (`temp.used_files`).
+- **Tasks longer than `UPLOAD_LOCK_TTL`** (a long queue, a huge file): the worker heartbeat and every `TaskSweeper` pass
+  over unfinished tasks call `TaskStore.renew` (Lua `RENEW_TASK`): it extends the path lock (only its own
+  task's), the score in `active` and `disk` (so their cleanup by age does not drop a live task), the parked reservation
+  `disk:reserved` (only an entry "between stages" with an expiry beyond 60 s; a live 30-second one is not touched) and the quota entry
   `disk:usage`.
-- **Сироты в `tmp`.** Готовая, упавшая и отменённая задача удаляет свои файлы сразу. Остатки (API убит посреди приёма
-  тела, сбой при удалении) убирает `TaskSweeper` каждые `UPLOAD_SWEEP_INTERVAL`: файл, который не принадлежит ни одной
-  активной задаче и не менялся дольше `UPLOAD_ORPHAN_AGE` (1 ч), удаляется. Принимаемый файл постоянно обновляется,
-  поэтому под уборку не попадает. Готовые архивы живут до `UPLOAD_ARCHIVE_TTL` и удаляются той же уборкой.
-- **Сессии загрузки частями** (flows/uploads.md). Файл живой сессии уборка не трогает, сколько бы он ни лежал без
-  изменений. Сессия, которой не присылали куски `UPLOAD_SESSION_IDLE_TTL` (1 ч) или которой больше `UPLOAD_SESSION_TTL` (24 ч), удаляется той же `clean_tmp`: под
-  блокировкой `job:upload:{id}` (идёт приём куска — пропуск до следующего прохода) срок перечитывается, затем удаляются
-  файл и ключи сессии, освобождаются путь и слот диска. Работает и без брокера (в отличие от `sweep`).
-- **Воркер упал** — задача вернётся в очередь, стадия начнётся заново, дублей в канале не будет (см. выше).
-- **Брокер недоступен** при постановке в очередь из API: `503 queue_unavailable` примерно через 5–7 с (повторы
-  публикации Celery), задача сразу `failed`, путь и временный файл освобождаются. Воркер, закончивший стадию, пока
-  брокер лежит, не роняет задачу: передача в следующую очередь повторяется каждые 5 с (`waiting.reason = broker`,
-  лог `broker unavailable, handoff to … retried`), отмена работает; только если брокер не вернулся за 10 минут
-  (`BROKER_WAIT` в `pipeline.py`), задача падает с `queue_unavailable`.
+- **Orphans in `tmp`.** A finished, failed or cancelled task deletes its files at once. Leftovers (the API killed in the middle of receiving
+  a body, a failure during deletion) are cleaned up by `TaskSweeper` every `UPLOAD_SWEEP_INTERVAL`: a file that belongs to no
+  active task and has not changed for longer than `UPLOAD_ORPHAN_AGE` (1 h) is deleted. A file being received is updated constantly,
+  so it is never cleaned up. Ready archives live until `UPLOAD_ARCHIVE_TTL` and are deleted by the same cleanup.
+- **Chunked upload sessions** (flows/uploads.md). The cleanup does not touch the file of a live session, however long it sits without
+  changes. A session that got no chunks for `UPLOAD_SESSION_IDLE_TTL` (1 h) or is older than `UPLOAD_SESSION_TTL` (24 h) is deleted by the same `clean_tmp`: under
+  the lock `job:upload:{id}` (a chunk is being received: skip until the next pass) the expiry is re-read, then the
+  file and the session keys are deleted, the path and the disk slot are released. It works without the broker too (unlike `sweep`).
+- **A worker crashed**: the task returns to the queue, the stage starts again, there will be no duplicates in the channel (see above).
+- **The broker is unavailable** when the API enqueues: `503 queue_unavailable` after about 5–7 s (Celery publish
+  retries), the task is `failed` at once, the path and the temp file are released. A worker that finished a stage while
+  the broker is down does not drop the task: the handoff to the next queue is retried every 5 s (`waiting.reason = broker`,
+  log `broker unavailable, handoff to … retried`), cancel works; only if the broker does not come back within 10 minutes
+  (`BROKER_WAIT` in `pipeline.py`) does the task fail with `queue_unavailable`.
 
-### Обрыв RabbitMQ
+### RabbitMQ outage
 
-Очереди durable, сообщения persistent, `task_acks_late` + `task_reject_on_worker_lost`, `prefetch_multiplier=1`,
-публикация с подтверждением брокера (`broker_transport_options = {"confirm_publish": True}`: `send_task` возвращается,
-только когда RabbitMQ записал сообщение на диск). Неподтверждённое воркером сообщение после обрыва возвращается в
-очередь, сообщения, ждавшие в очереди, переживают и `docker stop`, и `docker kill -s KILL` брокера (в dev у контейнера
-анонимный том `/var/lib/rabbitmq`, `hostname` фиксирован, поэтому имя ноды и данные те же). Без `confirm_publish`
-`kill -9` через ~3 с после публикации терял 2 из 5 ждавших сообщений: такие задачи `TaskSweeper` через ~4 мин помечал
-`failed: lost`. Проверено вживую с выгрузками в полёте:
-- API не падает, `/api/health` показывает `queue: false` всё время простоя и зелёный через ~5 с после старта брокера;
-- воркеры сами переподключаются (`Connection to broker lost` → `Cannot connect … ` с растущей паузой → `Connected`),
-  рестарт не нужен, pidbox не мешает (см. «Воркер изнутри»);
-- выгрузки, шедшие в Telegram во время простоя, доходят до `done`; их повторная доставка после восстановления
-  пропускается (`skipped … stale or cancelled`) или ждёт первый запуск (см. «Захват задачи»);
-- задачи, ждавшие в очередях, доставляются после восстановления;
-- Flower переподключает приём событий сам, но пауза между попытками у него удваивается без потолка (1, 2, 4 … с),
-  поэтому после простоя в 90 с события могут вернуться с задержкой до минуты; список воркеров и задач снова живой.
+Queues are durable, messages persistent, `task_acks_late` + `task_reject_on_worker_lost`, `prefetch_multiplier=1`,
+publishing with broker confirms (`broker_transport_options = {"confirm_publish": True}`: `send_task` returns
+only once RabbitMQ has written the message to disk). A message not acknowledged by a worker returns to the
+queue after a drop, and messages waiting in the queue survive both `docker stop` and `docker kill -s KILL` of the broker (in dev the container has
+an anonymous volume `/var/lib/rabbitmq` and a fixed `hostname`, so the node name and data stay the same). Without `confirm_publish`,
+`kill -9` ~3 s after a publish lost 2 of 5 waiting messages: `TaskSweeper` marked such tasks `failed: lost` after ~4 min.
+Verified live with uploads in flight:
+- the API does not crash, `/api/health` shows `queue: false` for the whole downtime and turns green ~5 s after the broker starts;
+- workers reconnect by themselves (`Connection to broker lost` → `Cannot connect … ` with a growing pause → `Connected`),
+  no restart needed, the pidbox does not get in the way (see "Worker internals");
+- uploads that were going to Telegram during the downtime reach `done`; their redelivery after recovery
+  is skipped (`skipped … stale or cancelled`) or waits for the first run (see "Task claims");
+- tasks that waited in queues are delivered after recovery;
+- Flower reconnects its event receiver by itself, but its pause between attempts doubles without a cap (1, 2, 4 … s),
+  so after a 90 s downtime events may come back with up to a minute of delay; the worker and task lists are live again.
 
-## Наблюдение
+## Monitoring
 
-- `GET /api/health`: `queue` — брокер отвечает; `workers` — для каждой очереди, есть ли живой воркер (heartbeat в Redis).
-  `ok` — всё вместе с БД, Telegram, ClamAV и Redis. `details` — по тем же ключам (`db`, `telegram`, `telegram_upload`,
-  `telegram_download`, `antivirus`, `redis`, `queue` и имена очередей): `latency_ms` — сколько шла сама проверка
-  (замер вокруг уже идущих `SELECT 1`, ping Redis, проверки брокера, ping ClamAV, проверки клиентов Telegram),
-  `last_seen_s` — секунд с последнего heartbeat самого свежего воркера очереди; где неприменимо — `null`. Без входа
-  ответ по-прежнему только `{status}`. Проверки БД, обоих клиентов Telegram, ClamAV, Redis и брокера идут
-  параллельно (`asyncio.gather`), ответ ждёт самую медленную, а не их сумму. Брокер (`broker_alive`: соединение с
-  RabbitMQ и `queue_declare` пассивно) и ClamAV (`zPING`) кешируют ответ на 5 с, как Telegram. Воркеры не ищутся
-  `SCAN` по всему Redis: heartbeat вместе со своим ключом пишет его в zset `workers` (score — когда ключ истечёт),
-  `TaskStore.workers` выкидывает истёкшие и читает живые одним `MGET`.
-- Проверки Telegram — настоящий запрос, а не `is_connected()`: `TelegramClient.ping` шлёт `updates.GetState`
-  (таймаут 5 с, `PING_TIMEOUT`; перед ним `ensure_connected`, так что проверка заодно переподключает упавший клиент)
-  и кеширует ответ на 5 с (`PING_TTL`), чтобы частый опрос `/health` не нагружал Telegram. `telegram` и
-  `telegram_download` — ping клиентов API. `telegram_upload` — состояние клиента самого worker-telegram: поток
-  heartbeat раз в `UPLOAD_HEARTBEAT_INTERVAL` вызывает `WorkerRuntime.telegram_state` (тот же `ping` в цикле событий
-  воркера, ≤ 10 с) и пишет его в heartbeat (`{"at", "telegram"}`); `null` — воркер ещё не создавал клиента (не было
-  ни одной задачи Telegram), тогда, как раньше, проверяется наличие файла сессии `upload`.
+- `GET /api/health`: `queue` means the broker answers; `workers` says for every queue whether there is a live worker (heartbeat in Redis).
+  `ok` is everything together with the DB, Telegram, ClamAV and Redis. `details` uses the same keys (`db`, `telegram`, `telegram_upload`,
+  `telegram_download`, `antivirus`, `redis`, `queue` and the queue names): `latency_ms` is how long the check itself took
+  (measured around the existing `SELECT 1`, Redis ping, broker check, ClamAV ping, Telegram client checks),
+  `last_seen_s` is the seconds since the last heartbeat of the queue's freshest worker; `null` where not applicable. Without sign-in
+  the answer is still only `{status}`. The checks of the DB, both Telegram clients, ClamAV, Redis and the broker run
+  in parallel (`asyncio.gather`), the answer waits for the slowest one, not their sum. The broker (`broker_alive`: a connection to
+  RabbitMQ and a passive `queue_declare`) and ClamAV (`zPING`) cache their answer for 5 s, like Telegram. Workers are not looked up with
+  `SCAN` over the whole Redis: the heartbeat writes its key into the zset `workers` together with the key itself (score: when the key expires),
+  `TaskStore.workers` drops expired ones and reads live ones with one `MGET`.
+- Telegram checks are a real request, not `is_connected()`: `TelegramClient.ping` sends `updates.GetState`
+  (5 s timeout, `PING_TIMEOUT`; preceded by `ensure_connected`, so the check also reconnects a dropped client)
+  and caches the answer for 5 s (`PING_TTL`), so frequent `/health` polling does not load Telegram. `telegram` and
+  `telegram_download` are pings of the API clients. `telegram_upload` is the state of worker-telegram's own client: the
+  heartbeat thread calls `WorkerRuntime.telegram_state` every `UPLOAD_HEARTBEAT_INTERVAL` (the same `ping` in the worker
+  event loop, ≤ 10 s) and writes it into the heartbeat (`{"at", "telegram"}`); `null` means the worker has not created a client yet (there was
+  not a single Telegram task), then, as before, the presence of the `upload` session file is checked.
 
 ```mermaid
 flowchart LR
-    hb["heartbeat воркера"] -->|telegram_state: ping в цикле воркера| key[("worker:{queue}:{host}<br/>{at, telegram}")]
-    hb -->|ZADD ключ, срок| reg[("workers<br/>zset")]
-    api["GET /api/health"] --> p1["параллельно: SELECT 1, ping api, download,<br/>ClamAV, Redis, брокер (кеш 5 с)"]
+    hb["worker heartbeat"] -->|telegram_state: ping in the worker loop| key[("worker:{queue}:{host}<br/>{at, telegram}")]
+    hb -->|ZADD key, expiry| reg[("workers<br/>zset")]
+    api["GET /api/health"] --> p1["in parallel: SELECT 1, ping api, download,<br/>ClamAV, Redis, broker (cached 5 s)"]
     api --> reg
-    reg -->|живые ключи, MGET| key
-    key -->|telegram = null| file["файл сессии upload есть?"]
+    reg -->|live keys, MGET| key
+    key -->|telegram = null| file["upload session file exists?"]
     key -->|true / false| up["telegram_upload"]
     file --> up
 ```
-- Flower — `http://127.0.0.1:5555`, логин и пароль `FLOWER_USER` / `FLOWER_PASSWORD`: воркеры, задачи, очереди. Есть в
-  `docker-compose.prod.yml` и в `docker-compose.dev.yml` (профиль `app`, в dev без переменных — `tcloud` / `tcloud`), локально — `make flower`. В compose Flower запускается без `--app`, только с `--broker` и
-  без `.env` (deployment.md).
+- Flower is `http://127.0.0.1:5555`, login and password `FLOWER_USER` / `FLOWER_PASSWORD`: workers, tasks, queues. It is in
+  `docker-compose.prod.yml` and in `docker-compose.dev.yml` (profile `app`, in dev without variables `tcloud` / `tcloud`), locally `make flower`. In compose Flower runs without `--app`, only with `--broker` and
+  without `.env` (deployment.md).
 
-## Вебхуки
+## Webhooks
 
-На каждой смене стадии и не чаще раза в `UPLOAD_WEBHOOK_INTERVAL` во время прогресса воркер (а при отмене из очереди — API,
-код общий: `services/webhook.py`) отправляет на `callback_url`
-POST с телом задачи. Подпись — `X-Tcloud-Signature`, владелец задачи — `X-Tcloud-User` (ниже). При сетевых ошибках и
-5xx делается 3 повтора. Адрес проходит ту же проверку, что и ссылки. Не переданный `callback_url` берётся из настройки `uploads.webhook_url` (flows/settings.md).
+On every stage change and at most once per `UPLOAD_WEBHOOK_INTERVAL` during progress the worker (and the API on cancel from a queue,
+the code is shared: `services/webhook.py`) sends a POST with the task body to `callback_url`.
+The signature is `X-Tcloud-Signature`, the task owner is `X-Tcloud-User` (below). On network errors and
+5xx there are 3 retries. The address goes through the same check as URLs. A missing `callback_url` is taken from the `uploads.webhook_url` setting (flows/settings.md).
 
-Порядок: в процессе на одну задачу летит не больше одного вебхука (`webhook.notify`: слот «есть новое состояние»
-`pending[task]` и один отправитель `sending[task]`). Новое событие, пока отправка идёт, только помечает слот — сколько бы
-их ни было, после текущей отправки уйдёт ещё одна. Тело задачи читается из Redis перед **каждой** попыткой, повтор
-после 5xx тоже шлёт свежее состояние. Поэтому устаревший `running` не приходит после `done` от того же процесса.
-Стадии одной задачи идут в разных процессах (prepare и telegram) — у них слоты свои, но каждый читает текущее
-состояние в момент отправки; получателю для строгого порядка стоит сравнивать `updated_at`.
-При создании задачи и сохранении настройки `check_webhook` сразу отклоняет не-`http(s)` и непубличные IP-литералы
-(`422 unsafe_url`), имена проверяются через DNS при отправке.
+Order: within a process at most one webhook per task is in flight (`webhook.notify`: a "new state available" slot
+`pending[task]` and one sender `sending[task]`). A new event while a send is running only marks the slot; however many
+there are, one more is sent after the current send. The task body is read from Redis before **every** attempt, a retry
+after a 5xx also sends the fresh state. So a stale `running` never arrives after `done` from the same process.
+The stages of one task run in different processes (prepare and telegram), they have their own slots, but each reads the current
+state at send time; a receiver that needs strict ordering should compare `updated_at`.
+When a task is created and when the setting is saved, `check_webhook` rejects non-`http(s)` and non-public IP literals at once
+(`422 unsafe_url`), names are checked through DNS at send time.
 
-### Проверка подписи
+### Verifying the signature
 
-У каждого пользователя свой ключ подписи: `key = HKDF-SHA256(ikm = APP_SECRET_KEY, salt = нет (32 нулевых байта),
-info = "tcloud-webhook:{user_id}", length = 32)` (`security/hashing.webhook_key`, библиотека `cryptography`). Заголовки
-запроса:
+Every user has their own signing key: `key = HKDF-SHA256(ikm = APP_SECRET_KEY, salt = none (32 zero bytes),
+info = "tcloud-webhook:{user_id}", length = 32)` (`security/hashing.webhook_key`, the `cryptography` library). Request
+headers:
 
-| Заголовок | Значение |
+| Header | Value |
 |---|---|
-| `X-Tcloud-User` | uuid владельца задачи (то же, что `user_id` в теле) |
-| `X-Tcloud-Signature` | `sha256=` + hex `HMAC-SHA256(key, сырое тело запроса)` |
+| `X-Tcloud-User` | uuid of the task owner (the same as `user_id` in the body) |
+| `X-Tcloud-Signature` | `sha256=` + hex `HMAC-SHA256(key, raw request body)` |
 
-Получатель берёт свой ключ один раз: `GET /api/account/webhook-secret` → `{"user_id": uuid, "secret": "<64 hex>"}`
-(только свой, по кукам или `X-API-Key`). Проверка: `hmac.compare_digest(header, "sha256=" + HMAC(bytes.fromhex(secret),
-body).hexdigest())` по сырому телу до разбора JSON, плюс `X-Tcloud-User == user_id`. Ключ одного пользователя не
-подходит к вебхукам другого, а `APP_SECRET_KEY` наружу не выдаётся.
+The receiver fetches its key once: `GET /api/account/webhook-secret` → `{"user_id": uuid, "secret": "<64 hex>"}`
+(only one's own, with cookies or `X-API-Key`). Verification: `hmac.compare_digest(header, "sha256=" + HMAC(bytes.fromhex(secret),
+body).hexdigest())` over the raw body before parsing JSON, plus `X-Tcloud-User == user_id`. One user's key does not
+fit another user's webhooks, and `APP_SECRET_KEY` is never handed out.
 
-**Изменение**: раньше подпись была `HMAC(APP_SECRET_KEY, body)` одним ключом на всех. Получатели должны перейти на
-ключ из `/api/account/webhook-secret`; старая подпись больше не присылается. Смена `APP_SECRET_KEY` меняет ключи всех
-пользователей (deployment.md, «Бэкапы и восстановление»).
+**Change**: the signature used to be `HMAC(APP_SECRET_KEY, body)` with one key for everyone. Receivers must switch to
+the key from `/api/account/webhook-secret`; the old signature is no longer sent. Changing `APP_SECRET_KEY` changes the keys of all
+users (deployment.md, "Backups and restore").
 
 ```mermaid
 sequenceDiagram
-    participant W as Воркер / API
+    participant W as Worker / API
     participant H as callback_url
-    participant U as Пользователь
+    participant U as User
     U->>W: GET /api/account/webhook-secret
     W-->>U: {user_id, secret = HKDF(APP_SECRET_KEY, "tcloud-webhook:" + user_id)}
-    W->>H: POST тело задачи, X-Tcloud-User, X-Tcloud-Signature = sha256=HMAC(key, body)
-    H->>H: HMAC(secret, сырое тело) == подпись, X-Tcloud-User == user_id
-    H-->>W: 2xx (5xx и сеть — 3 повтора, каждый со свежим телом)
-    Note over W,H: одна отправка на задачу за раз, события во время неё сливаются в одну следующую
+    W->>H: POST task body, X-Tcloud-User, X-Tcloud-Signature = sha256=HMAC(key, body)
+    H->>H: HMAC(secret, raw body) == signature, X-Tcloud-User == user_id
+    H-->>W: 2xx (5xx and network: 3 retries, each with a fresh body)
+    Note over W,H: one send per task at a time, events during it merge into one next send
 ```
 
-## Пачки
+## Batches
 
-`POST /api/uploads/batch`: до 100 загрузок по ссылкам, каждая создаётся отдельно, ошибка одной не мешает остальным.
-`GET /api/tasks?batch_id=...` возвращает задачи пачки и сводку: число по статусам, байты, сколько закончено и общий процент.
+`POST /api/uploads/batch`: up to 100 URL uploads, each created separately, an error in one does not affect the others.
+`GET /api/tasks?batch_id=...` returns the batch's tasks and a summary: counts per status, bytes, how many finished and the overall percentage.

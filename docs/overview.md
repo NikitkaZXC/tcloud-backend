@@ -1,54 +1,54 @@
-# Обзор
+# Overview
 
-tcloud складывает фото, видео, аудио, GIF и любые другие файлы в приватные каналы Telegram через пользовательский аккаунт
-(Telethon) и даёт к ним REST API. Доступ — по пользователям с ролями `root` (из `.env`), `admin` и `user`; user видит только папки из своих грантов (flows/users.md).
+tcloud puts photos, videos, audio, GIFs and any other files into private Telegram channels through a user account
+(Telethon) and exposes them through a REST API. Access is per user with the roles `root` (from `.env`), `admin` and `user`; a user sees only the folders of their grants (flows/users.md).
 
-## Возможности
+## Features
 
-- Файл любого размера: сообщение Telegram до 2 ГБ (с Premium 4 ГБ), больше — частями. Отправка оригиналом или сжатым медиа.
-- Загрузка с устройства одним запросом, по ссылке и пачками до 100 ссылок; прогресс, номер в очереди, вебхуки.
-- Очереди Celery на RabbitMQ с приоритетом `low/normal/high`: скачивание, проверка и отправка в Telegram — отдельные
-  воркеры, статусы в Redis. Отмена, смена приоритета, повтор, без дублей при падении воркера, Flower и health по воркерам.
-- Проверка типа по содержимому, любые типы файлов, не-медиа только на скачивание (`attachment`, `nosniff`, CSP `sandbox`), строгий ClamAV, защита от SSRF.
-- Архивы папки или выбранных файлов и папок (zip, 7z, tar.gz/bz2/xz) фоновой задачей.
-- Поиск файлов по имени (без учёта регистра, кириллица; сортировка по имени на языке интерфейса, `lang=ru|en`) и фильтрам: тип, MIME, размер, дата, шифрование; в папке, хранилище или везде (`GET /api/files/search`).
-- Карта активности загрузок по дням (`GET /api/files/activity`).
-- Настройки пользователя на сервере (`GET/PATCH/DELETE /api/account/settings`): значения по умолчанию для загрузок и архивов действуют на любом устройстве и для API-ключей, плюс настройки интерфейса и папка чатов «TCloud» в Telegram для всех каналов хранилищ ([flows/settings.md](flows/settings.md)).
-- Листинг папки постранично (`GET /api/folders`: серверная сортировка по имени/типу/размеру/датам с ICU-правилами ru/en, keyset-курсор, по 20 элементов); размеры и число файлов папок в листинге, число каналов аккаунта в `GET /api/account`.
-- Индикаторы чтения и записи по хранилищам для всех клиентов сразу (`GET /api/storages/activity`, метки в Redis на 5 с).
-- Превью фото и видео (`GET /api/files/{id}/thumb`, JPEG ≤ 320 px, с `ETag`): из Telegram, у зашифрованных файлов — своё, зашифрованное в БД; старые файлы без превью дозаполняет фоновая задача root (`POST /api/files/previews/backfill`); root может выключить превью для всех (`uploads.previews`) и стереть сохранённые (`DELETE /api/files/previews`).
-- Загрузка с устройства одним запросом или частями с докачкой после обрыва (`POST /api/uploads/sessions`, куски по 64 МиБ, [flows/uploads.md](flows/uploads.md)).
-- Шифрование по умолчанию (AES-256-GCM, ключ сервера `APP_ENCRYPTION_KEY`) для всех файлов, кроме `send_as=media`; `encrypt=false` выключает. В Telegram только шифротекст.
-- Вход в Telegram через API: QR или код, двухэтапная проверка, старые сессии tcloud отзываются сами.
-- Удалили файл руками в Telegram — запись в БД пропадает сама (события Telethon, плюс проверка при скачивании).
-- FastAPI, PostgreSQL, RabbitMQ, Redis, Celery, Python 3.14 (uv), всё в Docker.
+- Files of any size: a Telegram message holds up to 2 GB (4 GB with Premium), bigger files go in parts. Sent as the original or as compressed media.
+- Uploads from a device in one request, from a URL and in batches of up to 100 URLs; progress, queue position, webhooks.
+- Celery queues on RabbitMQ with priority `low/normal/high`: download, checks and sending to Telegram are separate
+  workers, statuses in Redis. Cancel, priority change, retry, no duplicates when a worker crashes, Flower and per-worker health.
+- Content-based type detection, files of any type, non-media served only as downloads (`attachment`, `nosniff`, CSP `sandbox`), strict ClamAV, SSRF protection.
+- Archives of a folder or of selected files and folders (zip, 7z, tar.gz/bz2/xz) as a background task.
+- File search by name (case-insensitive, Cyrillic included; name sort in the interface language, `lang=ru|en`) and by filters: type, MIME, size, date, encryption; in a folder, a storage or everywhere (`GET /api/files/search`).
+- Upload activity map by day (`GET /api/files/activity`).
+- User settings on the server (`GET/PATCH/DELETE /api/account/settings`): defaults for uploads and archives apply on any device and for API keys, plus interface settings and the "TCloud" Telegram chat folder for all storage channels ([flows/settings.md](flows/settings.md)).
+- Paginated folder listing (`GET /api/folders`: server-side sort by name/type/size/dates with ICU rules for ru/en, keyset cursor, 20 items per page); folder sizes and file counts in the listing, the account's channel count in `GET /api/account`.
+- Read and write indicators per storage for all clients at once (`GET /api/storages/activity`, Redis markers for 5 s).
+- Photo and video previews (`GET /api/files/{id}/thumb`, JPEG ≤ 320 px, with `ETag`): from Telegram, and for encrypted files our own, encrypted in the DB; old files without a preview are backfilled by a root background job (`POST /api/files/previews/backfill`); root can switch previews off for everyone (`uploads.previews`) and erase the stored ones (`DELETE /api/files/previews`).
+- Uploads from a device in one request or in chunks that resume after a dropped connection (`POST /api/uploads/sessions`, 64 MiB chunks, [flows/uploads.md](flows/uploads.md)).
+- Encryption by default (AES-256-GCM, server key `APP_ENCRYPTION_KEY`) for every file except `send_as=media`; `encrypt=false` turns it off. Telegram holds only ciphertext.
+- Telegram sign-in through the API: QR or code, two-step verification, old tcloud sessions are revoked automatically.
+- A file deleted by hand in Telegram drops its DB row automatically (Telethon events, plus a check on download).
+- FastAPI, PostgreSQL, RabbitMQ, Redis, Celery, Python 3.14 (uv), everything in Docker.
 
-## Словарь
+## Glossary
 
-| Термин | Что это |
+| Term | What it is |
 |---|---|
-| **Хранилище** | приватный канал Telegram. В БД — только наш UUID и `tg_chat_id`, название, описание и фото живут в Telegram |
-| **Путь** | `tcloud/{uuid хранилища}/{папки}/{имя}`; папки существуют только в БД |
-| **Файл** | одно сообщение в канале. В подписи — токен `#tc<uuid без дефисов>` для поиска внутри Telegram |
-| **Задача** | одна загрузка или сборка архива папки: `queued → running → done/failed/cancelled`, стадии `downloading → scanning → uploading_tg → done` (архив — `archiving → done`); живёт в Redis 7 дней |
-| **Очередь** | RabbitMQ: `uploads.download`, `uploads.prepare` (проверка), `uploads.telegram` (отправка) и `archives.build` (архивы папок), с приоритетом `low/normal/high` |
-| **Пачка** | до 100 загрузок по ссылкам одним `POST /api/uploads/batch`, с общим прогрессом |
+| **Storage** | a private Telegram channel. The DB holds only our UUID and `tg_chat_id`; title, description and photo live in Telegram |
+| **Path** | `tcloud/{storage uuid}/{folders}/{name}`; folders exist only in the DB |
+| **File** | one message in the channel. The caption carries the token `#tc<uuid without hyphens>` for searching inside Telegram |
+| **Task** | one upload or one folder archive build: `queued → running → done/failed/cancelled`, stages `downloading → scanning → uploading_tg → done` (archive: `archiving → done`); lives in Redis for 7 days |
+| **Queue** | RabbitMQ: `uploads.download`, `uploads.prepare` (checks), `uploads.telegram` (sending) and `archives.build` (folder archives), with priority `low/normal/high` |
+| **Batch** | up to 100 URL uploads in one `POST /api/uploads/batch`, with shared progress |
 
-## Главные правила
+## Main rules
 
-- Все наши id — UUID (v7 — растут во времени, индексы не фрагментируются). Числа — только id Telegram.
-- `file_id` Telegram не храним: он меняется, а `file_reference` протухает. Храним `chat_id` + `message_id`,
-  при скачивании сообщение запрашивается заново.
-- Медиа и файлы любых типов; не-медиа отдаётся только на скачивание (`attachment` + `sandbox`). Тип определяется по содержимому,
-  каждый файл проверяет ClamAV. Файлы никогда не исполняются.
-- Сообщение Telegram — до 2 ГБ, с Premium 4 ГБ (Premium проверяется автоматически); файл больше уходит частями,
-  общий предел — настройка root `uploads.max_file_size` (по умолчанию без ограничения).
-- Загрузки идут через Celery-воркеры; чтение из Telegram — в API. `worker-telegram` — одна реплика.
+- All our ids are UUIDs (v7: they grow over time, indexes do not fragment). Numbers are only Telegram ids.
+- We do not store the Telegram `file_id`: it changes, and `file_reference` expires. We store `chat_id` + `message_id`,
+  and the message is fetched again on download.
+- Media and files of any type; non-media is served only as a download (`attachment` + `sandbox`). The type is detected by content,
+  ClamAV checks every file. Files are never executed.
+- A Telegram message holds up to 2 GB, 4 GB with Premium (Premium is detected automatically); a bigger file goes in parts,
+  the overall limit is root's `uploads.max_file_size` setting (unlimited by default).
+- Uploads go through Celery workers; reads from Telegram happen in the API. `worker-telegram` is a single replica.
 
-## Вне рамок сейчас (планы)
+## Out of scope for now (plans)
 
-- Дробление больших файлов на части и сборка при скачивании.
-- Шифрование файлов секретом пользователя (сейчас — ключом сервера, включено по умолчанию для `send_as=file`).
-- Перемещение и переименование файлов и папок.
-- Периодическая сверка БД с Telegram (удаления, пропущенные за долгий простой API).
-- Восстановление БД из Telegram по UUID в подписях.
+- Splitting big files into parts and joining them on download.
+- Encrypting files with a user secret (currently the server key, on by default for `send_as=file`).
+- Moving and renaming files and folders.
+- Periodic reconciliation of the DB with Telegram (deletions missed during a long API downtime).
+- Rebuilding the DB from Telegram using the UUIDs in captions.

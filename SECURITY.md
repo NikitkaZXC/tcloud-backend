@@ -18,4 +18,4 @@ Please do not open a public issue. Report it privately through
 Include the affected version or commit, steps to reproduce and the impact you expect. You will get a reply within
 7 days; a fix and an advisory follow once the issue is confirmed.
 
-The threat model and the existing protections are described in [docs/security.md](docs/security.md) (Russian).
+The threat model and the existing protections are described in [docs/security.md](docs/security.md).

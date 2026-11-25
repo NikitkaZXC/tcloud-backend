@@ -1,21 +1,21 @@
-# Redis: карта ключей
+# Redis: key map
 
-Redis хранит всё быстрое и временное: задачи загрузок и архивов (таблицы задач в PostgreSQL нет), блокировки путей,
-индексы очередей, heartbeat воркеров, метки активности хранилищ, отозванные access-токены и счётчик входов, а также
-короткие (`REDIS_CACHE_TTL`, 180 с) кеши сведений из Telegram: каналы, аккаунт, аватарки каналов и превью открытых
-файлов (у превью общий потолок `REDIS_THUMB_CACHE_MB`). Сами файлы в Redis не попадают. Все ключи начинаются с `REDIS_PREFIX` (`tcloud`), значения полей задачи — JSON.
+Redis holds everything fast and temporary: upload and archive tasks (there is no tasks table in PostgreSQL), path locks,
+queue indexes, worker heartbeats, storage activity markers, revoked access tokens and the sign-in counter, plus
+short-lived (`REDIS_CACHE_TTL`, 180 s) caches of Telegram data: channels, the account, channel avatars and previews of plaintext
+files (previews share the cap `REDIS_THUMB_CACHE_MB`). Files themselves never go into Redis. All keys start with `REDIS_PREFIX` (`tcloud`), task field values are JSON.
 
-Код: `src/infrastructure/cache/tasks.py` (`TaskStore`, Lua `CLAIM`/`REQUEUE`/`CANCEL`/`DISK_SLOT`/`UNLOCK`/`RENEW`),
+Code: `src/infrastructure/cache/tasks.py` (`TaskStore`, Lua `CLAIM`/`REQUEUE`/`CANCEL`/`DISK_SLOT`/`UNLOCK`/`RENEW`),
 `cache/tokens.py` (`TokenBlacklist`), `cache/limits.py` (`RateLimitStore`), `background/heartbeat.py` (`Heartbeat`).
-Клиент создаёт `cache/factory.py` (`create_redis`, `create_sync_redis` для потока heartbeat).
-Lua-скрипты регистрируются один раз (`register_script`, `TaskStore._run`, `RateLimitStore`) и вызываются по SHA
-(`EVALSHA`): тело скрипта не уходит в Redis с каждым вызовом; после перезапуска Redis (`NOSCRIPT`) redis-py сам
-загружает его заново.
+The client is created by `cache/factory.py` (`create_redis`, `create_sync_redis` for the heartbeat thread).
+Lua scripts are registered once (`register_script`, `TaskStore._run`, `RateLimitStore`) and called by SHA
+(`EVALSHA`): the script body is not sent to Redis on every call; after a Redis restart (`NOSCRIPT`) redis-py
+loads it again by itself.
 
 ```mermaid
 flowchart LR
     subgraph api["API (main.py)"]
-        us["UploadService<br/>FolderService (архивы)"]
+        us["UploadService<br/>FolderService (archives)"]
         ts["TaskService"]
         sw["TaskSweeper"]
         fs["FileService / FolderService<br/>download, delete"]
@@ -24,9 +24,9 @@ flowchart LR
         rl["RateLimiter<br/>api/dependencies/rate_limit.py"]
         acs["AccountService"]
     end
-    subgraph workers["Celery-воркеры"]
+    subgraph workers["Celery workers"]
         pl["UploadPipeline"]
-        hb["Heartbeat (поток)"]
+        hb["Heartbeat (thread)"]
         bf["PreviewBackfill"]
     end
     subgraph redis["Redis"]
@@ -66,61 +66,61 @@ flowchart LR
     rl --> rate
 ```
 
-## Ключи
+## Keys
 
-| Ключ | Тип | Что | Кто пишет / читает | TTL |
+| Key | Type | What | Who writes / reads | TTL |
 |---|---|---|---|---|
-| `tcloud:task:{id}` | hash | задача: каждое поле — JSON, пишется отдельно (`HSET` по полям), прогресс не затирает статус | `TaskStore.create/update/get/get_many`; API и воркеры | `UPLOAD_TASK_TTL` (7 дней), продлевается на каждом `update` |
-| `tcloud:batch:{id}` | list | id задач пачки по порядку (`GET /api/tasks?batch_id=`) | `TaskStore.create`, `batch` | `UPLOAD_TASK_TTL` |
-| `tcloud:user_tasks:{user_id}` | zset | id задач пользователя, score — время создания; `GET /api/tasks/counts` чистит старше TTL и пропавшие | `TaskStore.create`, `statuses`, `FolderService._archive_running` (идёт ли уже архив пользователя), `user_disk` (какие записи `disk:reserved` — этого пользователя: ссылка без `size`, пока скачивается) | `UPLOAD_TASK_TTL` с последней задачи |
-| `tcloud:path:{path}` | string | блокировка пути, значение — id задачи; `SET NX`, снимает только владелец (Lua `UNLOCK`); `SCAN path:tcloud/{storage}/*` — «в хранилище идут загрузки» (`409 storage_busy`) | `lock_path`, `unlock_path`, `path_locked`, `storage_busy`, `renew` (heartbeat и `TaskSweeper` продлевают, Lua `RENEW_TASK`) | `UPLOAD_LOCK_TTL` (24 ч, страховка) |
-| `tcloud:active` | zset | активные задачи, score — время старта; основа `TaskSweeper` и лимита `UPLOAD_MAX_ACTIVE_TASKS` | `activate`, `deactivate`, `active_ids`, `count_active`, `renew` (score = now) | — (записи старше `UPLOAD_LOCK_TTL` выбрасывает `count_active`, `renew` держит живые) |
-| `tcloud:disk` | zset | задачи, чей файл сейчас в `tmp` (`UPLOAD_MAX_FILES_ON_DISK`), score — время захвата; проверка и захват — Lua `DISK_SLOT` | `take_disk_slot`, `release`, `renew` (score = now) | — (зависшие старше `UPLOAD_LOCK_TTL` выбрасываются) |
-| `tcloud:waiting:{queue}` | zset | задачи, ждущие в очереди; score `(10 − уровень) × 10¹³ + мкс` — порядок RabbitMQ; ранг = `queue_position` | `join_queue`, `CLAIM` (выход), `leave_queues`, `positions` | — |
-| `tcloud:archives` | zset | путь готового архива в `tmp` → срок (`UPLOAD_ARCHIVE_TTL`); `TaskSweeper.clean_tmp` не трогает до срока и удаляет после | `keep_archive`, `archives`, `forget_archive` | — |
-| `tcloud:worker:{queue}:{host}` | string | heartbeat воркера, значение — JSON `{"at": unix-время удара, "telegram": true/false/null}` (`telegram` — ping клиента Telegram воркера, `null` — клиента ещё нет; `health.workers`, `health.details.{queue}.last_seen_s`, `health.telegram_upload`) | `Heartbeat` раз в `UPLOAD_HEARTBEAT_INTERVAL`; `TaskStore.workers` | 3 × `UPLOAD_HEARTBEAT_INTERVAL` |
-| `tcloud:workers` | zset | реестр ключей heartbeat: член — `tcloud:worker:{queue}:{host}`, score — unix-время, когда ключ истечёт; `TaskStore.workers` удаляет просроченные (`ZREMRANGEBYSCORE`) и читает живые `MGET`, без `SCAN` по Redis; остановка воркера удаляет свои члены | `Heartbeat` (`ZADD` с каждым ударом); `TaskStore.workers` | — (чистится при чтении) |
-| `tcloud:activity:{storage_id}:{read\|write}` | zset | «с хранилищем сейчас работают» для `GET /api/storages/activity` (flows/storages.md): член — id операции, score — unix-время «живо до» (идёт: сейчас + 5 с, продлевается раз в секунду; закончилась: сейчас + 1 с) | `TaskStore.active` (контекст операции); `activity` — `ZCOUNT (now, +inf)` конвейером | 5 с с последней записи (`ACTIVITY_TTL`, `PEXPIRE`) |
-| `tcloud:channel:{chat_id}` | string | JSON `{title, about, has_photo}` канала хранилища из `GetFullChannel` (flows/storages.md, «Кеш сведений о каналах») | `TaskStore.channel_infos`, `keep_channel_infos`, `forget_channel` (`PATCH`, фото, удаление хранилища); `StorageService.channel_infos` | `REDIS_CACHE_TTL` (180 с) |
-| `tcloud:channel_photo:{chat_id}` | string | JSON-строка base64 с байтами аватарки канала (`""` — фото нет) для `GET /api/storages/{id}/photo` | `TaskStore.cached`/`keep`; `StorageService.get_photo`; `forget_channel` удаляет вместе с `channel:{chat_id}` (наши изменения и события Telegram, flows/storages.md) | `REDIS_CACHE_TTL` (180 с) |
-| `tcloud:thumb:{file_id}:{message_id}` | string | base64 превью открытого файла из Telegram для `GET /api/files/{id}/thumb` (`""` — превью нет) | `TaskStore.thumb`, `keep_thumb` (Lua `KEEP_THUMB`); `FileService.get_thumbnail` | `REDIS_CACHE_TTL` (180 с) |
-| `tcloud:thumbs`, `tcloud:thumbs:size`, `tcloud:thumbs:bytes` | zset, hash, string | учёт потолка кеша превью: zset ключ `thumb:…` → время записи, hash ключ → длина base64, сумма длин. `KEEP_THUMB` атомарно выкидывает записи старше TTL (их ключи уже истекли), прежнюю копию того же ключа и самые старые, пока новая не влезет в `REDIS_THUMB_CACHE_MB` (64 МБ); запись больше потолка не кешируется, `0` выключает кеш | `TaskStore.keep_thumb` | — (чистятся при каждой записи) |
-| `tcloud:account:premium`, `tcloud:account:channels` | string | JSON: Premium API-аккаунта (`true`/`false`, от него размер части большого файла) и `channels_used` (flows/storages.md, «Сколько каналов ещё можно создать») | `TaskStore.cached`/`keep`; `AccountService.is_premium`, `channels_used`, `UploadPipeline._spans` (worker-telegram, только для файлов > 2000 МиБ); `forget_account` — создание/удаление хранилища, `TELEGRAM_CHATS`, вход в API-сессию, события Telegram | `REDIS_CACHE_TTL` (180 с) |
-| `tcloud:disk:reserved` | hash | журнал резервов места: владелец (id задачи, у превью — id файла) → байты, которые ещё будут записаны в `tmp` (flows/uploads.md, «Место на диске») | `TaskStore.reserve_disk` (`DiskBudget.reserve`/`hold`/`park`, держатель — раз в секунду), `drop_disk` (`Reservation.release`, `deactivate`), `reserved_bytes` (Lua `RESERVED`: сумма живых без `exclude`, просроченные стирает) | — (срок записи — в `disk:reserved:exp`) |
-| `tcloud:disk:reserved:exp` | zset | владелец → срок записи (unix): живой держатель — now + 30 с (`RESERVATION_TTL`), продлевается раз в секунду; запись между этапами — now + `UPLOAD_LOCK_TTL` | те же | — |
-| `tcloud:disk:usage` | hash | квота пользователя: владелец (id задачи, у готового архива `archive:{id}`) → `{user_id}:{байты}` — сколько задача занимает или займёт в `tmp` целиком (тело ×2 при шифровании, архив — оценка, потом размер готового); в отличие от `disk:reserved` не уменьшается по мере записи, поэтому в общую проверку места не входит | `TaskStore.use_disk` (`POST /api/uploads` и `from-url` с `size` под `job:disk`, последний кусок сессии, архив при постановке и готовый, воркер по ссылке без `size` раз в секунду во время скачивания и после него), `deactivate` (каждый `release`) стирает, `user_disk` (Lua `USAGE`: записи пользователя, просроченные стирает) | — (срок — в `disk:usage:exp`) |
-| `tcloud:disk:usage:exp` | zset | владелец → срок записи (unix): задача — now + `UPLOAD_LOCK_TTL` (продлевается heartbeat'ом и `TaskSweeper`), готовый архив — его `expires_at` | те же | — |
-| `tcloud:job:{name}` | string | одна фоновая задача на имя (`job:previews` — дозаполнение превью; `job:upload:{session_id}` — приём куска сессии, `TaskStore.holding`, flows/uploads.md «частями»; `job:disk` — проверка места + запись резерва, `TaskStore.disk_lock`, TTL 5 с без продления, значение — случайный владелец), значение — id задачи Celery; `SET NX`, свой ключ продлевается (Lua `RENEW`), снимает только владелец (Lua `UNLOCK`) | `TaskStore.hold_job`, `release_job`; `PreviewBackfill` | 120 с (`JOB_TTL`), продлевается каждые 30 с |
-| `tcloud:upload_session:{id}` | string | JSON сессии загрузки частями: `task` (будущая задача целиком, с `params.file`), `offset` (принято байт), `started_at` (unix, создание), `expires_at` (unix, `min(последний кусок + UPLOAD_SESSION_IDLE_TTL, started_at + UPLOAD_SESSION_TTL)`) | `TaskStore.save_session` (создание и каждый кусок; заодно продлевает `path:{path}` на `UPLOAD_LOCK_TTL` и score в `disk`), `get_session`, `session_bytes`, `user_sessions` (квота пользователя, список, отмена), `drop_session` (последний кусок, `DELETE`, уборка, блокировка и удаление пользователя) | 2 × `UPLOAD_SESSION_TTL` (страховка; срок — `expires_at`) |
-| `tcloud:upload_sessions` | zset | id сессий → `expires_at`; `TaskSweeper.clean_tmp` не трогает файлы живых и удаляет просроченные | `save_session`, `sessions`, `session_bytes` (сумма резерва живых сессий для проверки диска), `drop_session` | — |
-| `tcloud:user_sessions:{user_id}` | zset | id сессий пользователя → `expires_at`: индекс, чтобы квота, список и отмена при блокировке читали только его сессии, а не все | `save_session` (добавляет и продлевает ключ), `user_sessions` (сначала стирает просроченные по score, затем `ZRANGE` + `MGET` своих; пропавшие сессии пропускает), `drop_session` (с `user_id`: последний кусок, `DELETE`, уборка, блокировка и удаление); из него читают `user_disk` (под `job:disk`), `GET /api/uploads/sessions`, `temp.cancel_user_sessions` | 2 × `UPLOAD_SESSION_TTL` с последней записи |
-| `tcloud:revoked:{jti}` | string | отозванный access-токен (logout, refresh, смена пароля) | `TokenBlacklist.revoke/revoked` | `JWT_ACCESS_TOKEN_EXPIRATION_MINUTES` |
-| `tcloud:rate_limit:{scope}:ip:{ip}`, `tcloud:rate_limit:{scope}:user:{user_id}`, `tcloud:rate_limit:signin_login:{login}` | zset | скользящее окно: время Redis (мс) каждого принятого запроса, Lua `RATE_LIMIT_SCRIPT`; правила и scope — security.md, «Rate limiting» (в том числе квоты отправок `telegram_send_minute`/`telegram_send_day`); Redis недоступен — запрос пропускается (fail open) | `RateLimitStore.hit` (из `api/dependencies/rate_limit.py` и `UploadService._check_send` с `record=False` — только проверка, `_record_send` — запись) | окно правила (`PEXPIRE` на каждом обращении) |
+| `tcloud:task:{id}` | hash | a task: every field is JSON, written separately (`HSET` per field), progress never overwrites the status | `TaskStore.create/update/get/get_many`; API and workers | `UPLOAD_TASK_TTL` (7 days), extended on every `update` |
+| `tcloud:batch:{id}` | list | ids of a batch's tasks in order (`GET /api/tasks?batch_id=`) | `TaskStore.create`, `batch` | `UPLOAD_TASK_TTL` |
+| `tcloud:user_tasks:{user_id}` | zset | a user's task ids, score is the creation time; `GET /api/tasks/counts` drops ones older than the TTL and missing ones | `TaskStore.create`, `statuses`, `FolderService._archive_running` (whether the user already has an archive running), `user_disk` (which `disk:reserved` entries belong to the user: a URL without `size` while downloading) | `UPLOAD_TASK_TTL` from the last task |
+| `tcloud:path:{path}` | string | path lock, the value is the task id; `SET NX`, only the owner releases it (Lua `UNLOCK`); `SCAN path:tcloud/{storage}/*` means "uploads are running in the storage" (`409 storage_busy`) | `lock_path`, `unlock_path`, `path_locked`, `storage_busy`, `renew` (heartbeat and `TaskSweeper` extend it, Lua `RENEW_TASK`) | `UPLOAD_LOCK_TTL` (24 h, safety net) |
+| `tcloud:active` | zset | active tasks, score is the start time; the basis of `TaskSweeper` and of the `UPLOAD_MAX_ACTIVE_TASKS` limit | `activate`, `deactivate`, `active_ids`, `count_active`, `renew` (score = now) | none (`count_active` drops entries older than `UPLOAD_LOCK_TTL`, `renew` keeps live ones) |
+| `tcloud:disk` | zset | tasks whose file is currently in `tmp` (`UPLOAD_MAX_FILES_ON_DISK`), score is the acquire time; check and acquire are Lua `DISK_SLOT` | `take_disk_slot`, `release`, `renew` (score = now) | none (stuck entries older than `UPLOAD_LOCK_TTL` are dropped) |
+| `tcloud:waiting:{queue}` | zset | tasks waiting in a queue; score `(10 − level) × 10¹³ + µs` follows the RabbitMQ order; the rank is `queue_position` | `join_queue`, `CLAIM` (leave), `leave_queues`, `positions` | none |
+| `tcloud:archives` | zset | path of a ready archive in `tmp` → expiry (`UPLOAD_ARCHIVE_TTL`); `TaskSweeper.clean_tmp` leaves it until then and deletes it after | `keep_archive`, `archives`, `forget_archive` | none |
+| `tcloud:worker:{queue}:{host}` | string | worker heartbeat, the value is JSON `{"at": unix time of the beat, "telegram": true/false/null}` (`telegram` is a ping of the worker's Telegram client, `null` means no client yet; `health.workers`, `health.details.{queue}.last_seen_s`, `health.telegram_upload`) | `Heartbeat` every `UPLOAD_HEARTBEAT_INTERVAL`; `TaskStore.workers` | 3 × `UPLOAD_HEARTBEAT_INTERVAL` |
+| `tcloud:workers` | zset | registry of heartbeat keys: the member is `tcloud:worker:{queue}:{host}`, the score is the unix time the key expires; `TaskStore.workers` removes expired ones (`ZREMRANGEBYSCORE`) and reads live ones with `MGET`, no `SCAN` over Redis; a stopping worker removes its members | `Heartbeat` (`ZADD` on every beat); `TaskStore.workers` | none (cleaned on read) |
+| `tcloud:activity:{storage_id}:{read\|write}` | zset | "the storage is being worked on" for `GET /api/storages/activity` (flows/storages.md): the member is an operation id, the score is the unix time it is "alive until" (running: now + 5 s, refreshed every second; finished: now + 1 s) | `TaskStore.active` (operation context); `activity` is a pipelined `ZCOUNT (now, +inf)` | 5 s from the last write (`ACTIVITY_TTL`, `PEXPIRE`) |
+| `tcloud:channel:{chat_id}` | string | JSON `{title, about, has_photo}` of a storage channel from `GetFullChannel` (flows/storages.md, "Channel info cache") | `TaskStore.channel_infos`, `keep_channel_infos`, `forget_channel` (`PATCH`, photo, storage delete); `StorageService.channel_infos` | `REDIS_CACHE_TTL` (180 s) |
+| `tcloud:channel_photo:{chat_id}` | string | JSON string with base64 bytes of the channel avatar (`""` means no photo) for `GET /api/storages/{id}/photo` | `TaskStore.cached`/`keep`; `StorageService.get_photo`; `forget_channel` deletes it together with `channel:{chat_id}` (our changes and Telegram events, flows/storages.md) | `REDIS_CACHE_TTL` (180 s) |
+| `tcloud:thumb:{file_id}:{message_id}` | string | base64 preview of a plaintext file from Telegram for `GET /api/files/{id}/thumb` (`""` means no preview) | `TaskStore.thumb`, `keep_thumb` (Lua `KEEP_THUMB`); `FileService.get_thumbnail` | `REDIS_CACHE_TTL` (180 s) |
+| `tcloud:thumbs`, `tcloud:thumbs:size`, `tcloud:thumbs:bytes` | zset, hash, string | accounting of the preview cache cap: zset key `thumb:…` → write time, hash key → base64 length, the sum of lengths. `KEEP_THUMB` atomically drops entries older than the TTL (their keys have already expired), the previous copy of the same key and the oldest ones until the new one fits into `REDIS_THUMB_CACHE_MB` (64 MB); an entry bigger than the cap is not cached, `0` disables the cache | `TaskStore.keep_thumb` | none (cleaned on every write) |
+| `tcloud:account:premium`, `tcloud:account:channels` | string | JSON: Premium of the API account (`true`/`false`, it sets the part size of big files) and `channels_used` (flows/storages.md, "How many channels can still be created") | `TaskStore.cached`/`keep`; `AccountService.is_premium`, `channels_used`, `UploadPipeline._spans` (worker-telegram, only for files > 2000 MiB); `forget_account` on storage create/delete, `TELEGRAM_CHATS`, API session sign-in, Telegram events | `REDIS_CACHE_TTL` (180 s) |
+| `tcloud:disk:reserved` | hash | disk reservation ledger: owner (task id, file id for previews) → bytes still to be written to `tmp` (flows/uploads.md, "Disk space") | `TaskStore.reserve_disk` (`DiskBudget.reserve`/`hold`/`park`, the holder once per second), `drop_disk` (`Reservation.release`, `deactivate`), `reserved_bytes` (Lua `RESERVED`: sum of live ones except `exclude`, erases expired ones) | none (the entry's expiry is in `disk:reserved:exp`) |
+| `tcloud:disk:reserved:exp` | zset | owner → entry expiry (unix): a live holder is now + 30 s (`RESERVATION_TTL`), refreshed every second; an entry between stages is now + `UPLOAD_LOCK_TTL` | the same | none |
+| `tcloud:disk:usage` | hash | user quota: owner (task id, `archive:{id}` for a ready archive) → `{user_id}:{bytes}`, how much the task takes or will take in `tmp` in total (body ×2 when encrypted, an archive is an estimate, then the size of the ready one); unlike `disk:reserved` it does not shrink as bytes are written, so it is not part of the global disk check | `TaskStore.use_disk` (`POST /api/uploads` and `from-url` with `size` under `job:disk`, the last session chunk, an archive when queued and when ready, the worker for a URL without `size` once per second while downloading and after), `deactivate` (every `release`) erases it, `user_disk` (Lua `USAGE`: the user's entries, erases expired ones) | none (the expiry is in `disk:usage:exp`) |
+| `tcloud:disk:usage:exp` | zset | owner → entry expiry (unix): a task is now + `UPLOAD_LOCK_TTL` (extended by the heartbeat and `TaskSweeper`), a ready archive is its `expires_at` | the same | none |
+| `tcloud:job:{name}` | string | one background job per name (`job:previews` for preview backfill; `job:upload:{session_id}` for receiving a session chunk, `TaskStore.holding`, flows/uploads.md "From a device in chunks"; `job:disk` for the disk check + reservation write, `TaskStore.disk_lock`, TTL 5 s without renewal, the value is a random owner), the value is the Celery task id; `SET NX`, the own key is renewed (Lua `RENEW`), only the owner releases it (Lua `UNLOCK`) | `TaskStore.hold_job`, `release_job`; `PreviewBackfill` | 120 s (`JOB_TTL`), renewed every 30 s |
+| `tcloud:upload_session:{id}` | string | JSON of a chunked upload session: `task` (the whole future task, with `params.file`), `offset` (bytes received), `started_at` (unix, creation), `expires_at` (unix, `min(last chunk + UPLOAD_SESSION_IDLE_TTL, started_at + UPLOAD_SESSION_TTL)`) | `TaskStore.save_session` (creation and every chunk; it also extends `path:{path}` by `UPLOAD_LOCK_TTL` and the score in `disk`), `get_session`, `session_bytes`, `user_sessions` (user quota, list, cancel), `drop_session` (last chunk, `DELETE`, cleanup, blocking and deleting a user) | 2 × `UPLOAD_SESSION_TTL` (safety net; the real expiry is `expires_at`) |
+| `tcloud:upload_sessions` | zset | session ids → `expires_at`; `TaskSweeper.clean_tmp` keeps the files of live ones and deletes expired ones | `save_session`, `sessions`, `session_bytes` (reserved bytes of live sessions for the disk check), `drop_session` | none |
+| `tcloud:user_sessions:{user_id}` | zset | a user's session ids → `expires_at`: an index so that the quota, the list and cancel on blocking read only that user's sessions instead of all | `save_session` (adds and extends the key), `user_sessions` (first erases expired ones by score, then `ZRANGE` + `MGET` of its own; skips missing sessions), `drop_session` (with `user_id`: last chunk, `DELETE`, cleanup, blocking and deleting); read by `user_disk` (under `job:disk`), `GET /api/uploads/sessions`, `temp.cancel_user_sessions` | 2 × `UPLOAD_SESSION_TTL` from the last write |
+| `tcloud:revoked:{jti}` | string | a revoked access token (logout, refresh, password change) | `TokenBlacklist.revoke/revoked` | `JWT_ACCESS_TOKEN_EXPIRATION_MINUTES` |
+| `tcloud:rate_limit:{scope}:ip:{ip}`, `tcloud:rate_limit:{scope}:user:{user_id}`, `tcloud:rate_limit:signin_login:{login}` | zset | sliding window: Redis time (ms) of every accepted request, Lua `RATE_LIMIT_SCRIPT`; rules and scopes in security.md, "Rate limiting" (including the send quotas `telegram_send_minute`/`telegram_send_day`); when Redis is down the request passes (fail open) | `RateLimitStore.hit` (from `api/dependencies/rate_limit.py` and `UploadService._check_send` with `record=False` for a check only, `_record_send` for the write) | the rule's window (`PEXPIRE` on every access) |
 
-## Поля задачи (`task:{id}`)
+## Task fields (`task:{id}`)
 
-| Поле | Что |
+| Field | What |
 |---|---|
-| `id`, `batch_id`, `user_id`, `path`, `created_at`, `updated_at` | идентичность и владелец |
-| `source` | `device` / `url` / `archive` (копия `params.source` на верхнем уровне, чтобы `TaskService` не читал `params`); у старых задач нет |
-| `status`, `stage`, `priority`, `priority_level`, `generation` | состояние (background-tasks.md, «Статусы и стадии») |
-| `step` | шаг внутри стадии (`TaskStep`, flows/uploads.md «Шаги»); пишется при смене, `step_progress` считается при чтении |
-| `bytes_done`, `bytes_total`, `stage_started` | прогресс; `speed`/`eta` считаются при чтении (`TaskService.render`) |
-| `waiting` | `{"reason": "queue:{queue}" \| "disk_slots" \| "retry" \| "flood_wait", "until"?}`; код для API — часть `reason` до `:` |
-| `params` | параметры загрузки (`source`, `send_as`, `on_conflict`, `encrypt`, `callback_url`, `url`, `limit` — `uploads.max_file_size` или 2⁶³−1, `file`) или архива (`storage_id`, `folder`, `format`, `file_ids`, `file`) |
-| `archive` | `{name, format, files, path, size, expires_at}` у архивов |
-| `error`, `warnings`, `file_id` | итог |
-| `claimed` | очередь, в которой задачу захватил воркер (`CLAIM`) |
-| `cancel` | флаг отмены во время работы |
-| `prepared` | результат проверки: `send_path`, `thumb`, `media`, `sha256`, `as_file`, `warnings`, у шифрования `encryption_header`, `plain_size`, `thumbnail` (base64 превью до ~27 КБ; после записи в `files` вместе с `committed` заменяется на `null`) |
-| `sending` | отправка в Telegram началась: `{file_id, chat_id, after, spans}`; `after` — id последнего сообщения канала перед первой частью, по нему повтор находит отправленные, но не записанные в `sent` сообщения (background-tasks.md «Без дублей в Telegram»); сбрасывается при `fail` и `retry` |
-| `sent`, `committed` | отправлено в Telegram (`{file_id, chat_id, message}`, у файла из частей ещё `parts` и `spans`) / записано в `files` — защита от дублей при повторной доставке |
-| `stale` | `replace`: id старых сообщений заменяемого файла, пишутся до коммита и удаляются из Telegram после него (повторная доставка после коммита удаляет их ещё раз); сбрасывается при `retry` |
-| `beat_at` | heartbeat задачи для `TaskSweeper` и `CLAIM` (повторная доставка ждёт, пока он свежий) |
+| `id`, `batch_id`, `user_id`, `path`, `created_at`, `updated_at` | identity and owner |
+| `source` | `device` / `url` / `archive` (a top-level copy of `params.source`, so that `TaskService` does not read `params`); old tasks lack it |
+| `status`, `stage`, `priority`, `priority_level`, `generation` | state (background-tasks.md, "Statuses and stages") |
+| `step` | step within a stage (`TaskStep`, flows/uploads.md "Steps"); written on change, `step_progress` is computed on read |
+| `bytes_done`, `bytes_total`, `stage_started` | progress; `speed`/`eta` are computed on read (`TaskService.render`) |
+| `waiting` | `{"reason": "queue:{queue}" \| "disk_slots" \| "retry" \| "flood_wait", "until"?}`; the API code is the part of `reason` before `:` |
+| `params` | upload parameters (`source`, `send_as`, `on_conflict`, `encrypt`, `callback_url`, `url`, `limit` = `uploads.max_file_size` or 2⁶³−1, `file`) or archive parameters (`storage_id`, `folder`, `format`, `file_ids`, `file`) |
+| `archive` | `{name, format, files, path, size, expires_at}` for archives |
+| `error`, `warnings`, `file_id` | the outcome |
+| `claimed` | the queue in which a worker claimed the task (`CLAIM`) |
+| `cancel` | cancel flag while running |
+| `prepared` | result of the checks: `send_path`, `thumb`, `media`, `sha256`, `as_file`, `warnings`, for encryption `encryption_header`, `plain_size`, `thumbnail` (base64 preview up to ~27 KB; replaced with `null` together with `committed` after the `files` write) |
+| `sending` | sending to Telegram has started: `{file_id, chat_id, after, spans}`; `after` is the id of the channel's last message before the first part, a redelivery uses it to find messages that were sent but not recorded in `sent` (background-tasks.md "No duplicates in Telegram"); reset on `fail` and `retry` |
+| `sent`, `committed` | sent to Telegram (`{file_id, chat_id, message}`, plus `parts` and `spans` for a multi-part file) / written to `files`: protection against duplicates on redelivery |
+| `stale` | `replace`: ids of the old messages of the replaced file, written before the commit and deleted from Telegram after it (a redelivery after the commit deletes them again); reset on `retry` |
+| `beat_at` | task heartbeat for `TaskSweeper` and `CLAIM` (a redelivery waits while it is fresh) |
 
-Чтение полей: `GET /api/tasks/{id}`, `GET /api/tasks?ids=`, пачки и вебхуки (`TaskService.get`/`get_many`) читают
-только поля для ответа (`VIEW_FIELDS` в `services/task.py`, `HMGET` конвейером) — без `prepared`, `params`, `sent`;
-тик прогресса воркера (`UploadPipeline._save_progress`) читает только `cancel` и `params` (нужен `callback_url`).
-Целиком (`HGETALL`) задачу читают только воркер на своих шагах, отмена и `TaskSweeper`.
+Reading fields: `GET /api/tasks/{id}`, `GET /api/tasks?ids=`, batches and webhooks (`TaskService.get`/`get_many`) read
+only the fields needed for the response (`VIEW_FIELDS` in `services/task.py`, pipelined `HMGET`), without `prepared`, `params`, `sent`;
+the worker progress tick (`UploadPipeline._save_progress`) reads only `cancel` and `params` (it needs `callback_url`).
+The whole task (`HGETALL`) is read only by the worker in its own steps, by cancel and by `TaskSweeper`.
 
-Через `UPLOAD_TASK_TTL` задача пропадает, `GET /api/tasks/{id}` отвечает `404`; сам файл остаётся в `files`.
+After `UPLOAD_TASK_TTL` the task disappears and `GET /api/tasks/{id}` answers `404`; the file itself stays in `files`.
