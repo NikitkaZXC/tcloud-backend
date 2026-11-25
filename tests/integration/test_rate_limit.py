@@ -51,3 +51,11 @@ async def test_rate_limit_runs_by_sha(redis):
         await store.hit("sha:ip:1", 10, 60)
     stats = await redis.info("commandstats")
     assert stats["cmdstat_evalsha"]["calls"] == 3 and "cmdstat_eval" not in stats
+
+
+async def test_check_without_recording(redis, store):
+    assert (await store.hit("scope:ip:5", 1, 60, False))[0] == 1
+    assert await redis.zcard(key("scope:ip:5")) == 0
+    await store.hit("scope:ip:5", 1, 60)
+    assert (await store.hit("scope:ip:5", 1, 60, False))[0] == 2
+    assert await redis.zcard(key("scope:ip:5")) == 1

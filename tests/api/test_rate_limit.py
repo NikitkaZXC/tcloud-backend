@@ -4,7 +4,7 @@ from httpx import ASGITransport, AsyncClient
 
 import main
 from src.config import settings
-from tests.api.conftest import path, wait_task
+from tests.api.conftest import Remote, path, wait_task
 from tests.factories import make_image
 
 
@@ -138,3 +138,54 @@ async def test_storage_create_is_limited(client, monkeypatch):
     first = await client.post("/storages", json={"name": "one"})
     assert first.status_code == 201
     assert limited(await client.post("/storages", json={"name": "two"}))
+
+
+async def sends(user, scope: str) -> int:
+    count, _ = await main.app.state.runtime.rate_limits.hit(
+        f"{scope}:user:{user.user_id}", 10_000, 86400, False
+    )
+    return count - 1
+
+
+async def test_batch_over_minute_limit_records_only_accepted(
+    client, storage, make_user, remote, monkeypatch
+):
+    monkeypatch.setattr(settings.rate_limit.TELEGRAM_SEND_MINUTE_USER, "limit", 2)
+    user = await make_user("batcher", "admin")
+    Remote.files["/a.jpg"] = make_image()
+    items = [
+        {"url": f"{remote}/a.jpg", "path": path(storage, f"batch/{index}.jpg")}
+        for index in range(4)
+    ]
+    body = (await user.post("/uploads/batch", json={"items": items})).json()
+    errors = [item["error"] and item["error"]["code"] for item in body["items"]]
+    assert errors == [None, None, "send_quota_exceeded", "send_quota_exceeded"]
+    assert await sends(user, "telegram_send_day") == 2
+    assert await sends(user, "telegram_send_minute") == 2
+    for item in body["items"][:2]:
+        await wait_task(user, item["task"]["id"])
+
+
+async def test_rejected_uploads_record_no_send(
+    client, storage, make_user, telegram, monkeypatch
+):
+    user = await make_user(
+        "rejected", "user", {"path": path(storage, "r"), "can_upload": True}
+    )
+    telegram.delay = 1
+    params = {"path": path(storage, "r/a.bin"), "encrypt": "false"}
+    first = await user.post("/uploads", params=params, content=b"x" * 100)
+    assert first.status_code == 202
+    busy = await user.post("/uploads", params=params, content=b"x" * 100)
+    assert code(busy) == "upload_in_progress"
+    monkeypatch.setattr(settings.upload, "USER_DISK_QUOTA_MB", 1)
+    big = await user.post(
+        "/uploads",
+        params={"path": path(storage, "r/b.bin"), "encrypt": "false"},
+        content=b"x" * (2 * 1024 * 1024),
+    )
+    assert code(big) == "temp_quota_exceeded"
+    assert await sends(user, "telegram_send_minute") == 1
+    assert await sends(user, "telegram_send_day") == 1
+    telegram.delay = 0
+    await wait_task(user, first.json()["id"])

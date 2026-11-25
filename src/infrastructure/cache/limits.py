@@ -15,7 +15,7 @@ local time = redis.call('TIME')
 local now = tonumber(time[1]) * 1000 + math.floor(tonumber(time[2]) / 1000)
 redis.call('ZREMRANGEBYSCORE', key, '-inf', now - window)
 local count = redis.call('ZCARD', key) + 1
-if count <= limit then
+if count <= limit and ARGV[4] == '1' then
     redis.call('ZADD', key, now, now .. ':' .. ARGV[3])
 end
 redis.call('PEXPIRE', key, window)
@@ -34,8 +34,11 @@ class RateLimitStore:
         self._script = redis.register_script(RATE_LIMIT_SCRIPT)
         self._prefix = f"{settings.redis.PREFIX}:{settings.rate_limit.PREFIX}"
 
-    async def hit(self, key: str, limit: int, window: int) -> tuple[int, int]:
+    async def hit(
+        self, key: str, limit: int, window: int, record: bool = True
+    ) -> tuple[int, int]:
         count, retry_after = await self._script(
-            keys=[f"{self._prefix}:{key}"], args=[window * 1000, limit, token_hex(8)]
+            keys=[f"{self._prefix}:{key}"],
+            args=[window * 1000, limit, token_hex(8), int(record)],
         )
         return int(count), int(retry_after)

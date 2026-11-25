@@ -262,21 +262,24 @@ class UploadService:
             )
             await self._store.create(task)
             return task, False
-        await self._count_send(actor)
+        await self._check_send(actor)
         if not await self._store.lock_path(path, task["id"]):
             raise UploadInProgressError(f"{path} is already being uploaded")
         return task, True
 
-    async def _count_send(self, actor: Actor) -> None:
+    @staticmethod
+    def _send_rules(actor: Actor) -> tuple:
         if actor.role == UserRole.ROOT or not settings.rate_limit.ENABLED:
-            return
-        rules = (
-            ("telegram_send_day", settings.rate_limit.TELEGRAM_SEND_DAY_USER),
+            return ()
+        return (
             ("telegram_send_minute", settings.rate_limit.TELEGRAM_SEND_MINUTE_USER),
+            ("telegram_send_day", settings.rate_limit.TELEGRAM_SEND_DAY_USER),
         )
-        for scope, rule in rules:
+
+    async def _check_send(self, actor: Actor) -> None:
+        for scope, rule in self._send_rules(actor):
             count, retry_after = await self._runtime.rate_limits.hit(
-                f"{scope}:user:{actor.user_id}", rule.limit, rule.window
+                f"{scope}:user:{actor.user_id}", rule.limit, rule.window, False
             )
             if count > rule.limit:
                 raise SendQuotaExceededError(
@@ -285,6 +288,15 @@ class UploadService:
                     limit=rule.limit,
                     window=rule.window,
                 )
+
+    async def _record_send(self, actor: Actor) -> None:
+        for scope, rule in self._send_rules(actor):
+            try:
+                await self._runtime.rate_limits.hit(
+                    f"{scope}:user:{actor.user_id}", rule.limit, rule.window
+                )
+            except Exception:
+                logger.exception("Telegram send quota not recorded: scope={}", scope)
 
     async def _take_disk_slot(self, task: dict) -> None:
         if not await self._store.take_disk_slot(task["id"]):
@@ -305,6 +317,7 @@ class UploadService:
         except BaseException:
             await self._drop_upload(task)
             raise
+        await self._record_send(actor)
         return await self._tasks.get(task["id"], actor)
 
     async def upload(
@@ -530,6 +543,7 @@ class UploadService:
             await self._hold_url(actor, task)
             await self._store.create(task)
             await start_task(self._runtime, task, UploadQueue.DOWNLOAD, 0)
+            await self._record_send(actor)
         return await self._tasks.get(task["id"], actor)
 
     async def cancel(self, actor: Actor, task_id: UUID) -> TaskServiceRead:
@@ -569,7 +583,7 @@ class UploadService:
         if task["status"] not in (TaskStatus.FAILED, TaskStatus.CANCELLED):
             raise TaskNotRetryableError("only failed or cancelled tasks can be retried")
         await self._check_active()
-        await self._count_send(actor)
+        await self._check_send(actor)
         if not await self._store.lock_path(task["path"], task_id):
             raise UploadInProgressError(f"{task['path']} is already being uploaded")
         await self._hold_url(actor, task)
@@ -595,6 +609,7 @@ class UploadService:
             committed=False,
         )
         await start_task(self._runtime, task, UploadQueue.DOWNLOAD, generation)
+        await self._record_send(actor)
         return await self._tasks.get(task_id, actor)
 
     async def create_batch(

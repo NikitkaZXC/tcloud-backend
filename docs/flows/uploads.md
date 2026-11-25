@@ -157,9 +157,12 @@ sequenceDiagram
 
 Все загрузки идут через один аккаунт Telegram, поэтому у каждого пользователя, кроме root, есть квота на задачи,
 которые отправят файл в Telegram: `RATE_LIMIT_TELEGRAM_SEND_MINUTE_USER` (30 / 60 с) и
-`RATE_LIMIT_TELEGRAM_SEND_DAY_USER` (2000 / 86400 с), скользящее окно как у остальных правил (security.md). Считается
-при создании задачи, до блокировки пути: `POST /api/uploads`, `POST /api/uploads/sessions`, `/uploads/from-url`,
-каждый пункт `/uploads/batch` и `POST /api/tasks/{id}/retry`. Пропуск `skip` существующего файла не считается, архивы —
+`RATE_LIMIT_TELEGRAM_SEND_DAY_USER` (2000 / 86400 с), скользящее окно как у остальных правил (security.md). Оба правила
+проверяются без записи при создании задачи, до блокировки пути (`POST /api/uploads`, `POST /api/uploads/sessions`,
+`/uploads/from-url`, каждый пункт `/uploads/batch` и `POST /api/tasks/{id}/retry`), а отправка записывается в оба окна
+только когда задача поставлена в очередь (`UploadService._check_send` / `_record_send`; для сессии — после последнего
+куска). Отклонённые попытки (превышение другого правила, `upload_in_progress`, квота, диск, несовпадение размера) квоту
+не тратят; параллельные запросы между проверкой и записью могут немного превысить лимит. Пропуск `skip` существующего файла не считается, архивы —
 тоже (в Telegram они не пишут). Превышение — `429 send_quota_exceeded` с `retry_after`, `limit`, `window` и
 заголовком `Retry-After`; в пачке — в `error` своего пункта. Admin тоже считается, root — нет. Выключить вместе с
 остальными лимитами: `RATE_LIMIT_ENABLED=false`.
