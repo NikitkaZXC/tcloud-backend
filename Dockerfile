@@ -1,5 +1,8 @@
 FROM python:3.14-slim
 
+LABEL org.opencontainers.image.source="https://github.com/NikitkaZXC/tcloud-backend" \
+      org.opencontainers.image.licenses="MIT"
+
 COPY --from=ghcr.io/astral-sh/uv:0.13.2 /uv /usr/local/bin/uv
 
 ENV PYTHONUNBUFFERED=1 \

@@ -20,7 +20,12 @@ uv run alembic revision --autogenerate -m "msg"
 
 CI (`.github/workflows/ci.yml`, на push в `main` и на pull request; `concurrency` отменяет прошлый прогон той же ветки): `lint` (black/isort `--check`), `test` (весь `pytest` с Postgres, Redis, RabbitMQ и ffmpeg), `audit` (pip-audit). Dependabot (`.github/dependabot.yml`) раз в месяц обновляет uv, Docker, docker-compose и GitHub Actions: все обновления экосистемы (major, minor, patch) в одной группе, то есть один PR на экосистему, не больше 2 открытых.
 
-Токен CI только на чтение (`permissions: contents: read`). Actions закреплены по SHA коммита, а не по тегу (тег можно
+Релиз (`.github/workflows/release.yml`, на push тега `v*.*.*`): собирает `Dockerfile` и публикует образ в
+`ghcr.io/nikitkazxc/tcloud-backend` с тегами `{version}`, `{major}.{minor}` и `latest` и OCI-метками (source, MIT,
+description); токену дано ещё `packages: write`. Выпуск версии: поднять `version` в `pyproject.toml` (и `uv.lock`) и
+`APP_VERSION` по умолчанию (`src/config/models/app.py`), дописать `CHANGELOG.md`, затем `git tag vX.Y.Z && git push --tags`.
+
+Токен workflow только на чтение (`permissions: contents: read`). Actions закреплены по SHA коммита, а не по тегу (тег можно
 перевесить); комментариев в YAML нет, соответствие — здесь. Dependabot обновляет SHA сам; при ручной смене версии SHA
 берётся из `git ls-remote --tags https://github.com/{owner}/{repo} 'refs/tags/{tag}*'` (у аннотированного тега — строка
 `^{}`, это и есть коммит) или `gh api repos/{owner}/{repo}/git/ref/tags/{tag}` (для `object.type = tag` ещё
@@ -30,6 +35,9 @@ CI (`.github/workflows/ci.yml`, на push в `main` и на pull request; `concu
 |---|---|---|
 | `actions/checkout` | `v7` (= `v7.0.1`) | `3d3c42e5aac5ba805825da76410c181273ba90b1` |
 | `astral-sh/setup-uv` | `v10.4.0` | `1db35dd8eee11c5894872e0b383ae6c406cf738d` |
+| `docker/login-action` | `v4` (= `v4.8.0`) | `8aa5831fb8d48d8f76594c7ddde61ae58019f550` |
+| `docker/metadata-action` | `v6` (= `v6.2.0`) | `dc802804100637a589fabce1cb79ff13a1411302` |
+| `docker/build-push-action` | `v7` (= `v7.4.0`) | `c3c9e263c25d99ce0380d002d59b67737d91b0dc` |
 
 Локально без ffmpeg тесты, которым он нужен, пропускаются — полный прогон `make test-docker`.
 

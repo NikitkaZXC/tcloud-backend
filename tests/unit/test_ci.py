@@ -1,11 +1,15 @@
 import re
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).parents[2]
+WORKFLOWS = sorted((ROOT / ".github/workflows").glob("*.yml"))
 
 
-def test_ci_token_is_read_only_and_actions_are_pinned():
-    workflow = (ROOT / ".github/workflows/ci.yml").read_text()
+@pytest.mark.parametrize("path", WORKFLOWS, ids=lambda path: path.name)
+def test_workflow_token_is_scoped_and_actions_are_pinned(path):
+    workflow = path.read_text()
     assert "permissions:\n  contents: read\n" in workflow
     uses = re.findall(r"uses: (\S+)@(\S+)", workflow)
     assert uses
