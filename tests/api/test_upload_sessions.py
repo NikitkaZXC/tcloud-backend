@@ -13,7 +13,7 @@ import pytest
 from starlette.requests import ClientDisconnect
 
 import main
-from src.application.services import TaskSweeper
+from src.application.services import TaskSweeper, temp
 from src.application.services.temp import append_body
 from src.config import settings
 from src.infrastructure.cache import TaskStore
@@ -758,6 +758,50 @@ async def test_block_or_delete_cancels_tasks(
     assert (await store().user_disk(user.user_id)) == (0, 0)
     for name in ("a", "b", "c"):
         assert not await store().path_locked(path(storage, f"quitter/{name}.bin"))
+
+
+async def test_one_failed_cancellation_does_not_stop_the_rest(
+    client, storage, make_user, telegram, monkeypatch
+):
+    user = await granted(make_user, storage, "partial")
+    sessions = [
+        await open_session(user, path(storage, f"partial/s{index}.bin"), 10)
+        for index in range(2)
+    ]
+    telegram.delay = 1
+    ids = []
+    for name in ("a", "b"):
+        response = await user.post(
+            "/uploads",
+            params={"path": path(storage, f"partial/{name}.bin"), "encrypt": "false"},
+            content=b"x" * 1000,
+        )
+        ids.append(response.json()["id"])
+    real_task, real_session = temp.cancel_task, temp.drop_session
+    failed = []
+
+    async def cancel_task(store, task_id, spawn):
+        if "task" not in failed:
+            failed.append("task")
+            raise RuntimeError("redis hiccup")
+        return await real_task(store, task_id, spawn)
+
+    async def drop_session(store, session):
+        if "session" not in failed:
+            failed.append("session")
+            raise RuntimeError("redis hiccup")
+        await real_session(store, session)
+
+    monkeypatch.setattr(temp, "cancel_task", cancel_task)
+    monkeypatch.setattr(temp, "drop_session", drop_session)
+    response = await client.patch(f"/users/{user.user_id}", json={"blocked": True})
+    assert response.status_code == 200 and response.json()["blocked"] is True
+    assert sorted(failed) == ["session", "task"]
+    left = [await store().get_session(item["session_id"]) for item in sessions]
+    assert sum(item is None for item in left) == 1
+    telegram.delay = 0
+    statuses = sorted([(await wait_task(client, task_id))["status"] for task_id in ids])
+    assert statuses == ["cancelled", "done"]
 
 
 async def test_block_sends_cancelled_webhook(

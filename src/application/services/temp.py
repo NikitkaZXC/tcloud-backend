@@ -109,11 +109,16 @@ async def cancel_user_sessions(store: TaskStore, user_id: UUID) -> int:
     for session_id, _, session in await store.sessions():
         if not session or session["task"]["user_id"] != str(user_id):
             continue
-        async with store.holding(f"upload:{session_id}") as held:
-            session = await store.get_session(session_id)
-            if held and session:
-                await drop_session(store, session)
-                cancelled += 1
+        try:
+            async with store.holding(f"upload:{session_id}") as held:
+                session = await store.get_session(session_id)
+                if held and session:
+                    await drop_session(store, session)
+                    cancelled += 1
+        except Exception:
+            logger.exception(
+                "Upload session {} of user {} not cancelled", session_id, user_id
+            )
     if cancelled:
         logger.info("{} upload sessions of user {} cancelled", cancelled, user_id)
     return cancelled
@@ -140,9 +145,13 @@ async def cancel_user_tasks(
     tasks = await store.get_many(await store.user_task_ids(user_id), ("status",))
     cancelled = 0
     for task in tasks:
-        if task["status"] not in TaskStatus.finished():
+        if task["status"] in TaskStatus.finished():
+            continue
+        try:
             await cancel_task(store, task["id"], spawn)
             cancelled += 1
+        except Exception:
+            logger.exception("Task {} of user {} not cancelled", task["id"], user_id)
     if cancelled:
         logger.info("{} tasks of user {} cancelled", cancelled, user_id)
     return cancelled
