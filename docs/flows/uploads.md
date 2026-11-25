@@ -338,8 +338,9 @@ DEK файла и ложится в `files.thumbnail`; `/thumb` его расш�
 Задача хранится 7 дней (`UPLOAD_TASK_TTL`). Вебхук описан в background-tasks.md.
 
 Для фронтенда: `source` — откуда задача: `device` (`POST /api/uploads` и загрузка частями), `url` (по ссылке, пачка),
-`archive` (сборка архива); `null` у задач, созданных до этого поля (поле задачи `source` в Redis, копия
-`params.source`). `retryable: boolean` — `true` только у `source = url` в статусе `failed` или `cancelled`: показывать
+`archive` (сборка архива); поле задачи `source` в Redis — копия `params.source`; у задач, созданных до этого поля,
+оно берётся из `params.source` (`TaskService.render_many` дочитывает `params` только для таких задач), `null` — если нет
+и его. `retryable: boolean` — `true` только у `source = url` в статусе `failed` или `cancelled`: показывать
 «Повторить» (`POST /api/tasks/{id}/retry`) только при нём; права на папку всё равно проверяются при повторе.
 
 Опрос многих задач одним запросом: `GET /api/tasks?ids={id}&ids={id}…` — до 100 id (больше → `422 validation_error`),

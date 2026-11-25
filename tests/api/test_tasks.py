@@ -141,6 +141,20 @@ async def test_retry_failed_url_upload(client, telegram, storage, remote):
     assert len(telegram.messages()) == 1
 
 
+async def test_legacy_url_task_without_top_level_source_is_retryable(
+    client, storage, remote
+):
+    body = {"url": f"{remote}/gone.jpg", "path": path(storage, "gone.jpg")}
+    task_id = (await client.post("/uploads/from-url", json=body)).json()["id"]
+    await wait_task(client, task_id)
+    store = main.app.state.runtime.store
+    await store._redis.hdel(store._key("task", task_id), "source")
+    task = (await client.get(f"/tasks/{task_id}")).json()
+    assert task["source"] == "url" and task["retryable"] is True
+    listed = (await client.get("/tasks", params={"ids": [task_id]})).json()["items"]
+    assert [item["retryable"] for item in listed if item["id"] == task_id] == [True]
+
+
 async def test_retry_rules(client, telegram, storage):
     task = await upload(client, path(storage, "a.jpg"), make_image())
     response = await client.post(f"/tasks/{task['id']}/retry")

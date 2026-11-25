@@ -110,6 +110,20 @@ class TaskService:
         return view
 
     async def render_many(self, tasks: list[dict]) -> list[TaskServiceRead]:
+        legacy = [str(task["id"]) for task in tasks if not task.get("source")]
+        if legacy:
+            found = await self._store.get_many(legacy, ("params",))
+            sources = {
+                item["id"]: (item.get("params") or {}).get("source") for item in found
+            }
+            tasks = [
+                (
+                    task
+                    if task.get("source")
+                    else {**task, "source": sources.get(task["id"])}
+                )
+                for task in tasks
+            ]
         files = await self._files.get_many_with_chat(
             [UUID(task["file_id"]) for task in tasks if task.get("file_id")]
         )
