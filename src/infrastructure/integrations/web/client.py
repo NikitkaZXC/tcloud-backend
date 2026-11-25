@@ -27,10 +27,10 @@ def ip_allowed(ip: str) -> bool:
         address = ipaddress.ip_address(ip)
     except ValueError:
         return False
-    if address.version == 6 and any(address in net for net in EMBEDDED_V4):
-        return False
     if address.version == 6 and address.ipv4_mapped:
         address = address.ipv4_mapped
+    elif address.version == 6 and any(address in net for net in EMBEDDED_V4):
+        address = ipaddress.IPv4Address(int(address) & 0xFFFFFFFF)
     return address.is_global and not address.is_multicast
 
 
