@@ -99,16 +99,14 @@ def remove_task_files(task: dict) -> None:
 
 async def drop_session(store: TaskStore, session: dict) -> None:
     task = session["task"]
-    await store.drop_session(task["id"])
+    await store.drop_session(task["id"], task["user_id"])
     Path(task["params"]["file"]).unlink(missing_ok=True)
     await store.release(task["id"], task["path"])
 
 
 async def cancel_user_sessions(store: TaskStore, user_id: UUID) -> int:
     cancelled = 0
-    for session_id, _, session in await store.sessions():
-        if not session or session["task"]["user_id"] != str(user_id):
-            continue
+    for session_id, _, _ in await store.user_sessions(user_id):
         try:
             async with store.holding(f"upload:{session_id}") as held:
                 session = await store.get_session(session_id)

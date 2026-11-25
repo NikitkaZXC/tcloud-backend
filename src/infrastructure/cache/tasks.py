@@ -395,6 +395,9 @@ class TaskStore:
             pipe.zadd(
                 self._key("upload_sessions"), {str(task["id"]): session["expires_at"]}
             )
+            owner = self._key("user_sessions", task["user_id"])
+            pipe.zadd(owner, {str(task["id"]): session["expires_at"]})
+            pipe.expire(owner, 2 * settings.upload.SESSION_TTL)
             pipe.expire(self._key("path", task["path"]), settings.upload.LOCK_TTL)
             pipe.zadd(self._key("disk"), {str(task["id"]): time.time()}, xx=True)
             await pipe.execute()
@@ -415,6 +418,23 @@ class TaskStore:
         return [
             (item, until, None if value is None else json.loads(value))
             for (item, until), value in zip(expiry, values)
+        ]
+
+    async def user_sessions(
+        self, user_id: UUID | str
+    ) -> list[tuple[str, float, dict | None]]:
+        key = self._key("user_sessions", user_id)
+        await self._redis.zremrangebyscore(key, "-inf", time.time())
+        expiry = await self._redis.zrange(key, 0, -1, withscores=True)
+        if not expiry:
+            return []
+        values = await self._redis.mget(
+            [self._key("upload_session", item) for item, _ in expiry]
+        )
+        return [
+            (item, until, json.loads(value))
+            for (item, until), value in zip(expiry, values)
+            if value is not None
         ]
 
     async def session_bytes(self, exclude: UUID | str | None = None) -> int:
@@ -439,11 +459,7 @@ class TaskStore:
 
     async def user_disk(self, user_id: UUID | str) -> tuple[int, int]:
         now, owner = time.time(), str(user_id)
-        sessions = [
-            session
-            for _, until, session in await self.sessions()
-            if session and until > now and session["task"]["user_id"] == owner
-        ]
+        sessions = [session for _, _, session in await self.user_sessions(owner)]
         held = sum(
             session["task"]["bytes_total"]
             * (2 if session["task"]["params"]["encrypt"] else 1)
@@ -503,10 +519,14 @@ class TaskStore:
             )
         )
 
-    async def drop_session(self, session_id: UUID | str) -> None:
+    async def drop_session(
+        self, session_id: UUID | str, user_id: UUID | str | None = None
+    ) -> None:
         async with self._redis.pipeline(transaction=True) as pipe:
             pipe.delete(self._key("upload_session", session_id))
             pipe.zrem(self._key("upload_sessions"), str(session_id))
+            if user_id:
+                pipe.zrem(self._key("user_sessions", user_id), str(session_id))
             await pipe.execute()
 
     async def renew(self, task_id: UUID | str, path: str) -> None:

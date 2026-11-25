@@ -467,7 +467,7 @@ class UploadService:
             )
             if task["params"]["encrypt"]:
                 await self._runtime.disk.park(session_id, task["bytes_total"])
-            await self._store.drop_session(session_id)
+            await self._store.drop_session(session_id, task["user_id"])
         return await self._queue_device(actor, task)
 
     async def _manages(self, actor: Actor, owner: UUID | str) -> bool:
@@ -498,11 +498,9 @@ class UploadService:
         owner = user_id or actor.user_id
         if not await self._manages(actor, owner):
             raise UploadSessionNotFoundError("upload sessions of this user not found")
-        now = time.time()
         return [
             self._session_read(session)
-            for _, until, session in await self._store.sessions()
-            if session and until > now and session["task"]["user_id"] == str(owner)
+            for _, _, session in await self._store.user_sessions(owner)
         ]
 
     async def abort_session(self, actor: Actor, session_id: UUID) -> None:

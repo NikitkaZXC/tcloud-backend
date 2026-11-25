@@ -406,3 +406,40 @@ async def test_disk_lock_gives_up_waiting_and_keeps_the_foreign_lock(
     async with store.disk_lock():
         assert await redis.get(key) not in (None, "someone")
     assert await redis.get(key) is None
+
+
+def upload_session(user: str, size: int, expires_in: float = 60) -> dict:
+    task_id = str(uuid7())
+    return {
+        "task": {
+            "id": task_id,
+            "user_id": user,
+            "path": f"tcloud/x/{task_id}",
+            "bytes_total": size,
+            "params": {"encrypt": False, "file": f"/tmp/{task_id}"},
+        },
+        "offset": 0,
+        "expires_at": time.time() + expires_in,
+    }
+
+
+async def test_user_sessions_index_reads_only_own_sessions(store, monkeypatch):
+    mine = upload_session("alice", 10)
+    expired = upload_session("alice", 20, expires_in=-1)
+    theirs = upload_session("bob", 30)
+    for session in (mine, expired, theirs):
+        await store.save_session(session)
+
+    async def everything():
+        raise AssertionError("user_disk must not read every session")
+
+    monkeypatch.setattr(store, "sessions", everything)
+    assert [item for item, _, _ in await store.user_sessions("alice")] == [
+        mine["task"]["id"]
+    ]
+    assert await store.user_disk("alice") == (1, 10)
+    assert await store.user_disk("bob") == (1, 30)
+    await store.drop_session(mine["task"]["id"], "alice")
+    assert await store.user_sessions("alice") == []
+    assert await store.user_disk("alice") == (0, 0)
+    assert len(await store.user_sessions("bob")) == 1
