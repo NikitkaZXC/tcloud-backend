@@ -7,5 +7,5 @@ from src.config.base import BaseSettings
 class RootSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="ROOT_")
 
-    LOGIN: str
+    LOGIN: str = Field(min_length=1, max_length=64)
     PASSWORD: SecretStr = Field(min_length=12)

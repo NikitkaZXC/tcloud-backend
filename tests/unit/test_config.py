@@ -56,6 +56,16 @@ def test_short_root_password_rejected(password):
     assert "x" * 11 not in str(error.value)
 
 
+@pytest.mark.parametrize("login", ["", "a" * 65])
+def test_bad_root_login_length_rejected(login):
+    with pytest.raises(ValidationError):
+        RootSettings(LOGIN=login, PASSWORD="x" * 12)
+
+
+def test_root_login_of_64_chars_accepted():
+    assert RootSettings(LOGIN="a" * 64, PASSWORD="x" * 12).LOGIN == "a" * 64
+
+
 def test_root_password_of_12_chars_accepted():
     assert RootSettings(LOGIN="admin", PASSWORD="x" * 12).PASSWORD
 

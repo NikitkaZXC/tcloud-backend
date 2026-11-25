@@ -76,7 +76,7 @@ curl -H "X-API-Key: $TCLOUD_KEY" --data-binary @photo.jpg \
 | `APP_ENCRYPTION_KEY` | пусто — шифрование выключено | 32 байта base64, ключ шифрования файлов; потеря = потеря зашифрованных файлов |
 | `APP_MAX_BODY_SIZE` | `1048576` (1 МиБ) | потолок тела запроса, кроме потоковых загрузок (`413 body_too_large`, security.md) |
 | `APP_ALLOWED_ORIGINS` | `[]` | CORS и проверка `Origin` для фронтенда на другом origin |
-| `ROOT_LOGIN`, `ROOT_PASSWORD` | — | root, синхронизируется при каждом старте API; `ROOT_PASSWORD` ≥ 12 символов, иначе настройки не загружаются |
+| `ROOT_LOGIN`, `ROOT_PASSWORD` | — | root, синхронизируется при каждом старте API; `ROOT_LOGIN` 1–64 символа (как поле `login` входа), `ROOT_PASSWORD` ≥ 12 символов, иначе настройки не загружаются |
 | `JWT_SECURE` | `true` | куки только по HTTPS; `false` для http без TLS |
 | `JWT_PRIVATE_KEY_PATH`, `JWT_PUBLIC_KEY_PATH` | `certs/jwt-*.pem` | ключи RS256 |
 | `JWT_ACCESS_TOKEN_EXPIRATION_MINUTES` / `JWT_REFRESH_TOKEN_EXPIRATION_DAYS` | `15` / `30` | сроки токенов |
