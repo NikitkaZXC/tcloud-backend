@@ -68,14 +68,18 @@ sequenceDiagram
 ## Быстрый старт
 
 ```bash
-make env              # создаёт .env и секреты; заполните TELEGRAM_API_ID / TELEGRAM_API_HASH
-make up && make logs  # прод-compose: API 127.0.0.1:8000 (Swagger выключен), Flower 127.0.0.1:5555
+make env                # .env из .env.exemple и секреты; заполните TELEGRAM_API_ID / TELEGRAM_API_HASH
+make dev-up-all         # всё в Docker: API http://127.0.0.1:8000 (Swagger /docs), Flower 127.0.0.1:5555
+docker compose -f docker-compose.dev.yml logs -f app worker-download worker-prepare worker-telegram
+# исходники не монтируются: после правок пересоберите
+docker compose -f docker-compose.dev.yml --profile app up -d --build app worker-download worker-prepare worker-telegram flower
+make install && make test-all   # тесты (uv sync, затем pytest)
 ```
 
-Войдите как root (`ROOT_LOGIN` / `ROOT_PASSWORD` из `.env`) и войдите в Telegram для сессий `api`, `upload` и
-`download`: в prod — на странице `/telegram` фронтенда (Swagger там выключен, [docs/deployment.md](docs/deployment.md)),
-в dev — на `/docs`, раздел **Telegram** ([docs/flows/auth.md](docs/flows/auth.md)).
+Войдите как root (`ROOT_LOGIN` / `ROOT_PASSWORD` из `.env`), затем войдите в Telegram для сессий `api`, `upload` и
+`download` на `/docs`, раздел **Telegram** ([docs/flows/auth.md](docs/flows/auth.md)). Flower: `FLOWER_USER` / `FLOWER_PASSWORD`.
 
-Для разработки запустите `make dev-up-all` (всё в Docker из исходников) или `make dev-up` + `make app` + `make worker-*`. Тесты запускаются через `make test-all`.
+Прод: `make up && make logs`. Swagger там выключен, вход в Telegram делается на странице `/telegram` фронтенда
+([docs/deployment.md](docs/deployment.md)). Локальный запуск без Docker: `make dev-up` + `make app` + `make worker-*`.
 
 Описание `.env`, CI и миграций — в [docs/development.md](docs/development.md). Тесты и нагрузка — в [docs/testing.md](docs/testing.md), прод — в [docs/deployment.md](docs/deployment.md). Указатель документации — [docs/README.md](docs/README.md).
