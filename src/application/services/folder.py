@@ -348,16 +348,21 @@ class FolderService:
 
     async def _archive_running(self, actor: Actor) -> bool:
         store = self._runtime.store
-        tasks = await store.get_many(
-            await store.active_ids(), ("user_id", "status", "params")
-        )
-        return any(
-            task.get("user_id") == str(actor.user_id)
-            and task["params"]["source"] == TaskSource.ARCHIVE
-            and task["status"] not in TaskStatus.finished()
-            for task in tasks
-            if task.get("params")
-        )
+        tasks = [
+            task
+            for task in await store.get_many(
+                await store.user_task_ids(actor.user_id), ("source", "status")
+            )
+            if task.get("status") not in TaskStatus.finished()
+        ]
+        legacy = [task["id"] for task in tasks if "source" not in task]
+        if legacy:
+            tasks += [
+                {"source": task["params"].get("source")}
+                for task in await store.get_many(legacy, ("params",))
+                if task.get("params")
+            ]
+        return any(task.get("source") == TaskSource.ARCHIVE for task in tasks)
 
     async def _queue_archive(
         self,

@@ -250,3 +250,21 @@ async def test_one_running_archive_per_user(client, storage, make_user, monkeypa
     again = await client.post("/folders/archive", params={"path": path(storage, "a")})
     assert again.status_code == 202
     await wait_task(client, again.json()["id"])
+
+
+async def test_legacy_archive_without_top_level_source_still_blocks(client, storage):
+    await stored(client, storage, "a/x.pdf")
+    store = main.app.state.runtime.store
+    first = await select(client, folders=[path(storage, "a")])
+    task_id = first.json()["id"]
+    await wait_task(client, task_id)
+    await store.update(task_id, status="running")
+    await store._redis.hdel(store._key("task", task_id), "source")
+    second = await client.post("/folders/archive", params={"path": path(storage, "a")})
+    assert second.status_code == 409 and code(second) == "archive_in_progress"
+    await store.update(task_id, status="done")
+    upload_task = await upload(client, path(storage, "b.pdf"), PDF)
+    await store.update(upload_task["id"], status="running")
+    again = await client.post("/folders/archive", params={"path": path(storage, "a")})
+    assert again.status_code == 202
+    await wait_task(client, again.json()["id"])
